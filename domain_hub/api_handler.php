@@ -79,6 +79,74 @@ function api_setting_enabled($value): bool {
     return in_array($normalized, ['1', 'on', 'yes', 'true', 'enabled'], true);
 }
 
+function api_should_skip_provider_exists_check(array $providerContext, array $settings): bool {
+    if (!api_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')) {
+        return false;
+    }
+
+    $providerType = strtolower(trim((string)($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
+    if ($providerType !== '') {
+        return $providerType === 'powerdns';
+    }
+
+    $client = $providerContext['client'] ?? null;
+    return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
+}
+
+function api_provider_error_text($result): string {
+    if (is_string($result)) {
+        return $result;
+    }
+    if (!is_array($result)) {
+        return '';
+    }
+
+    $parts = [];
+    if (isset($result['code'])) {
+        $parts[] = 'code:' . $result['code'];
+    }
+    if (isset($result['http_code'])) {
+        $parts[] = 'http:' . $result['http_code'];
+    }
+
+    $errors = $result['errors'] ?? null;
+    if (is_array($errors) && !empty($errors)) {
+        $parts[] = json_encode($errors, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } elseif (is_string($errors) && trim($errors) !== '') {
+        $parts[] = $errors;
+    }
+
+    $message = $result['message'] ?? ($result['error'] ?? null);
+    if (is_array($message) && !empty($message)) {
+        $parts[] = json_encode($message, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } elseif (is_string($message) && trim($message) !== '') {
+        $parts[] = $message;
+    }
+
+    return trim(implode(' | ', array_filter($parts)));
+}
+
+function api_provider_not_found($result): bool {
+    if (is_array($result)) {
+        $code = $result['code'] ?? ($result['http_code'] ?? null);
+        if ($code === 404 || $code === '404') {
+            return true;
+        }
+    }
+
+    $message = api_provider_error_text($result);
+    if ($message === '') {
+        return false;
+    }
+
+    $normalized = strtolower($message);
+    return strpos($normalized, 'not found') !== false
+        || strpos($normalized, 'does not exist') !== false
+        || strpos($normalized, 'no such') !== false
+        || strpos($normalized, 'record not found') !== false
+        || strpos($message, '不存在') !== false;
+}
+
 function api_handle_subdomain_register(array $data, $keyRow, array $settings): array {
     $code = 200;
     $result = null;
@@ -199,7 +267,8 @@ function api_handle_subdomain_register(array $data, $keyRow, array $settings): a
         $result = ['error' => 'root not found'];
         return [$code, $result];
     }
-    if ($cf->checkDomainExists($zone, $full)) {
+    $skipProviderExistsCheck = api_should_skip_provider_exists_check($providerContext, $settings);
+    if (!$skipProviderExistsCheck && $cf->checkDomainExists($zone, $full)) {
         $code = 400;
         $result = ['error' => 'already exists on DNS'];
         return [$code, $result];
@@ -1595,15 +1664,36 @@ function handleApiRequest(){
                                 $result = ['error' => 'provider unavailable'];
                             } else {
                                 $cf = $providerContext['client'];
+                                $deleteFailed = null;
                                 if ($rid) {
-                                    $cf->deleteSubdomain($zone ?: ($s->cloudflare_zone_id ?: $s->rootdomain), $rid, [
-                                        'name' => $rec->name ?? null,
-                                        'type' => $rec->type ?? null,
-                                        'content' => $rec->content ?? null,
-                                    ]);
+                                    try {
+                                        $delRes = $cf->deleteSubdomain($zone ?: ($s->cloudflare_zone_id ?: $s->rootdomain), $rid, [
+                                            'name' => $rec->name ?? null,
+                                            'type' => $rec->type ?? null,
+                                            'content' => $rec->content ?? null,
+                                        ]);
+                                        if (!($delRes['success'] ?? false) && !api_provider_not_found($delRes)) {
+                                            $deleteFailed = api_provider_error_text($delRes);
+                                        }
+                                    } catch (\Throwable $e) {
+                                        $deleteFailed = $e->getMessage();
+                                    }
                                 }
-                                Capsule::table('mod_cloudflare_dns_records')->where('id', $rec->id)->delete();
-                                $result = ['success' => true, 'message' => 'DNS record deleted successfully'];
+
+                                if ($deleteFailed !== null) {
+                                    $deleteErrorText = trim((string) $deleteFailed);
+                                    if ($deleteErrorText === '') {
+                                        $deleteErrorText = 'provider delete failed';
+                                    }
+                                    $code = 502;
+                                    $result = [
+                                        'error' => 'provider delete failed',
+                                        'message' => cfmod_format_provider_error($deleteErrorText),
+                                    ];
+                                } else {
+                                    Capsule::table('mod_cloudflare_dns_records')->where('id', $rec->id)->delete();
+                                    $result = ['success' => true, 'message' => 'DNS record deleted successfully'];
+                                }
                             }
                         }
                     }

@@ -932,7 +932,11 @@ if($_POST['action'] == "register") {
                                     $zone_id = $cf->getZoneId($rootdomain);
 
                                     if ($zone_id) {
-                                        $existsOnCF = $cf->checkDomainExists($zone_id, $fullsub);
+                                        $skipProviderExistsCheck = self::shouldSkipProviderExistsCheck($providerContext, $module_settings);
+                                        $existsOnCF = false;
+                                        if (!$skipProviderExistsCheck) {
+                                            $existsOnCF = $cf->checkDomainExists($zone_id, $fullsub);
+                                        }
                                         if ($existsOnCF) {
                                             $msg = self::actionText('register.provider_exists', '该域名在阿里云DNS上已存在解析记录，无法注册');
                                             $msg_type = 'danger';
@@ -2604,6 +2608,21 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         }
         static $supported = ['create_dns', 'update_dns', 'delete_dns_record', 'replace_ns_group', 'toggle_cdn', 'toggle_record_cdn'];
         return in_array($action, $supported, true);
+    }
+
+    private static function shouldSkipProviderExistsCheck(array $providerContext, array $settings): bool
+    {
+        if (!cfmod_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')) {
+            return false;
+        }
+
+        $providerType = strtolower(trim((string) ($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
+        if ($providerType !== '') {
+            return $providerType === 'powerdns';
+        }
+
+        $client = $providerContext['client'] ?? null;
+        return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
     }
 
     private static function enqueueAsyncDnsJob(int $userid, string $action): ?int

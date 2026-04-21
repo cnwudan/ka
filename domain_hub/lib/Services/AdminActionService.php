@@ -2883,43 +2883,53 @@ class CfAdminActionService
         $totalDnsDeleted = 0;
 
         try {
+            $failedMessages = [];
             foreach ($selected as $rawId) {
                 $subId = intval($rawId);
                 if ($subId <= 0) {
                     continue;
                 }
-                $record = Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->first();
-                if (!$record) {
-                    continue;
+                try {
+                    $record = Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->first();
+                    if (!$record) {
+                        continue;
+                    }
+                    $client = null;
+                    if (function_exists('cfmod_acquire_provider_client_for_subdomain')) {
+                        $providerContext = cfmod_acquire_provider_client_for_subdomain($record, $moduleSettings);
+                        $client = $providerContext['client'] ?? null;
+                    }
+                    $deletedDns = 0;
+                    if (function_exists('cfmod_admin_deep_delete_subdomain')) {
+                        $deletedDns = intval(cfmod_admin_deep_delete_subdomain($client, $record));
+                    }
+                    Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->delete();
+                    Capsule::table('mod_cloudflare_subdomain_quotas')
+                        ->where('userid', $record->userid)
+                        ->decrement('used_count');
+                    if (function_exists('cloudflare_subdomain_log')) {
+                        cloudflare_subdomain_log('admin_batch_delete_subdomain', [
+                            'subdomain' => $record->subdomain,
+                            'dns_records_deleted' => $deletedDns,
+                        ], $record->userid, $record->id);
+                    }
+                    $deletedCount++;
+                    $totalDnsDeleted += $deletedDns;
+                } catch (\Throwable $inner) {
+                    $failedMessages[] = 'ID ' . $subId . '：' . $inner->getMessage();
                 }
-                $client = null;
-                if (function_exists('cfmod_acquire_provider_client_for_subdomain')) {
-                    $providerContext = cfmod_acquire_provider_client_for_subdomain($record, $moduleSettings);
-                    $client = $providerContext['client'] ?? null;
-                }
-                $deletedDns = 0;
-                if (function_exists('cfmod_admin_deep_delete_subdomain')) {
-                    $deletedDns = intval(cfmod_admin_deep_delete_subdomain($client, $record));
-                }
-                Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->delete();
-                Capsule::table('mod_cloudflare_subdomain_quotas')
-                    ->where('userid', $record->userid)
-                    ->decrement('used_count');
-                if (function_exists('cloudflare_subdomain_log')) {
-                    cloudflare_subdomain_log('admin_batch_delete_subdomain', [
-                        'subdomain' => $record->subdomain,
-                        'dns_records_deleted' => $deletedDns,
-                    ], $record->userid, $record->id);
-                }
-                $deletedCount++;
-                $totalDnsDeleted += $deletedDns;
             }
 
             if ($deletedCount === 0) {
-                self::flash('未删除任何子域名，请选择要处理的记录后再试。', 'warning');
+                if (!empty($failedMessages)) {
+                    self::flashError('批量删除失败：' . htmlspecialchars(implode('；', array_slice($failedMessages, 0, 3)), ENT_QUOTES, 'UTF-8'));
+                } else {
+                    self::flash('未删除任何子域名，请选择要处理的记录后再试。', 'warning');
+                }
             } else {
                 $dnsSummary = $totalDnsDeleted > 0 ? '，清理 DNS 记录 ' . $totalDnsDeleted . ' 条' : '';
-                self::flashSuccess('批量删除成功，共删除 ' . $deletedCount . ' 个子域名' . $dnsSummary);
+                $warnSummary = !empty($failedMessages) ? ('（跳过 ' . count($failedMessages) . ' 个失败项）') : '';
+                self::flashSuccess('批量删除成功，共删除 ' . $deletedCount . ' 个子域名' . $dnsSummary . $warnSummary);
             }
         } catch (Exception $e) {
             self::flashError('批量删除失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));

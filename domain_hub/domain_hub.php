@@ -1343,6 +1343,12 @@ function domain_hub_config() {
                 "Default" => "local",
                 "Description" => "选择同步校准时优先生效的数据来源。\n以本地记录为准：修复阿里云缺失并删除阿里云多出的记录。\n以阿里云记录为准：仅补齐本地记录，不会删除阿里云多出的记录。",
             ],
+            "pdns_register_local_check_only" => [
+                "FriendlyName" => "PowerDNS 注册跳过远端重复检查",
+                "Type" => "yesno",
+                "Default" => "yes",
+                "Description" => "开启后，当根域供应商为 PowerDNS 时，注册流程仅依赖本地唯一性校验，避免因远端全区查询导致卡顿。",
+            ],
             "calibration_batch_size" => [
                 "FriendlyName" => "校准批量大小",
                 "Type" => "text",

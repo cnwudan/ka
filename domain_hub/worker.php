@@ -199,6 +199,134 @@ function cfmod_track_sync_stat(array &$stats, string $kind, string $action): voi
     }
 }
 
+function cfmod_worker_normalize_record_content($content, ?string $type = null): string {
+    if (is_array($content) || is_object($content)) {
+        $encoded = json_encode($content, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        $content = $encoded === false ? '' : $encoded;
+    }
+    $value = trim((string) $content);
+    if ($value === '') {
+        return '';
+    }
+
+    if (strlen($value) >= 2 && substr($value, 0, 1) === '"' && substr($value, -1) === '"') {
+        $value = substr($value, 1, -1);
+    }
+    if (strpos($value, ' ') === false && substr($value, -1) === '.') {
+        $value = rtrim($value, '.');
+    }
+
+    $recordType = strtoupper((string) ($type ?? ''));
+    if ($recordType === 'TXT') {
+        return $value;
+    }
+
+    return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+}
+
+function cfmod_worker_group_records_by_content(array $records): array {
+    $grouped = [];
+    foreach ($records as $record) {
+        if (is_array($record)) {
+            $content = $record['content'] ?? '';
+            $type = $record['type'] ?? null;
+        } else {
+            $content = $record->content ?? '';
+            $type = $record->type ?? null;
+        }
+        $key = cfmod_worker_normalize_record_content($content, is_string($type) ? $type : null);
+        if (!isset($grouped[$key])) {
+            $grouped[$key] = [];
+        }
+        $grouped[$key][] = $record;
+    }
+    return $grouped;
+}
+
+function cfmod_worker_provider_error_text($result): string {
+    if (is_string($result)) {
+        return trim($result);
+    }
+    if (!is_array($result)) {
+        return '';
+    }
+
+    $parts = [];
+    if (isset($result['code'])) {
+        $parts[] = 'code:' . $result['code'];
+    }
+    if (isset($result['http_code'])) {
+        $parts[] = 'http:' . $result['http_code'];
+    }
+
+    $errors = $result['errors'] ?? null;
+    if (is_array($errors) && !empty($errors)) {
+        $parts[] = json_encode($errors, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } elseif (is_string($errors) && trim($errors) !== '') {
+        $parts[] = $errors;
+    }
+
+    $message = $result['message'] ?? ($result['error'] ?? null);
+    if (is_array($message) && !empty($message)) {
+        $parts[] = json_encode($message, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    } elseif (is_string($message) && trim($message) !== '') {
+        $parts[] = $message;
+    }
+
+    return trim(implode(' | ', array_filter($parts)));
+}
+
+function cfmod_worker_provider_not_found($result): bool {
+    if (is_array($result)) {
+        $code = $result['code'] ?? ($result['http_code'] ?? null);
+        if ($code === 404 || $code === '404') {
+            return true;
+        }
+    }
+
+    $message = strtolower(cfmod_worker_provider_error_text($result));
+    if ($message === '') {
+        return false;
+    }
+
+    return strpos($message, 'not found') !== false
+        || strpos($message, 'record not found') !== false
+        || strpos($message, 'does not exist') !== false
+        || strpos($message, 'no such') !== false
+        || strpos($message, '不存在') !== false;
+}
+
+function cfmod_worker_consume_remote_match(array &$remoteIndex, string $name, string $type, string $content): ?array {
+    $n = strtolower($name);
+    $t = strtoupper($type);
+    $target = cfmod_worker_normalize_record_content($content, $t);
+
+    if (empty($remoteIndex[$n][$t]) || !is_array($remoteIndex[$n][$t])) {
+        return null;
+    }
+
+    foreach ($remoteIndex[$n][$t] as $idx => $record) {
+        $recordContent = cfmod_worker_normalize_record_content($record['content'] ?? '', $t);
+        if ($recordContent !== $target) {
+            continue;
+        }
+        $matched = $record;
+        unset($remoteIndex[$n][$t][$idx]);
+        if (empty($remoteIndex[$n][$t])) {
+            unset($remoteIndex[$n][$t]);
+            if (empty($remoteIndex[$n])) {
+                unset($remoteIndex[$n]);
+            }
+        } else {
+            $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
+        }
+        return $matched;
+    }
+
+    return null;
+}
+
+
 function cfmod_risk_scan_response_error($response): string
 {
     if (!is_array($response)) {
@@ -573,13 +701,6 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
     $locals = Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $sub->id)->get();
     $stats['processed_records'] = ($stats['processed_records'] ?? 0) + count($locals);
 
-    $localMap = [];
-    foreach ($locals as $lr) {
-        $n = strtolower($lr->name);
-        $t = strtoupper($lr->type);
-        $localMap[$n][$t][] = $lr;
-    }
-
     $remoteIndex = cfmod_worker_build_remote_index_for_subdomain($cf, $zoneId, $sub, $locals, $zoneCache, $stats);
 
     foreach ($locals as $lr) {
@@ -596,14 +717,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
 
         $n = strtolower($lr->name);
         $t = strtoupper($lr->type);
-        $cfList = $remoteIndex[$n][$t] ?? [];
-        $matched = null;
-        foreach ($cfList as $cr) {
-            if (($cr['content'] ?? '') === $lr->content) {
-                $matched = $cr;
-                break;
-            }
-        }
+        $matched = cfmod_worker_consume_remote_match($remoteIndex, $n, $t, (string) $lr->content);
         if (!$matched) {
             $action = 'noop';
             if ($mode === 'fix') {
@@ -615,9 +729,9 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                         'record_id' => $newId,
                         'updated_at' => date('Y-m-d H:i:s')
                     ]);
-                    if (isset($res['result'])) {
-                        $remoteIndex[strtolower($lr->name)][strtoupper($t)][] = $res['result'];
-                    }
+                } else {
+                    $action = 'create_failed';
+                    $stats['warnings'][] = 'create_failed:' . $sub->id . ':' . $n . ':' . $t;
                 }
             }
             cfmod_sync_result($jobId, $sub->id, 'missing_on_cf', $action, [
@@ -645,6 +759,9 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                 ], $update));
                 if ($res['success'] ?? false) {
                     $action = 'updated_on_cf';
+                } else {
+                    $action = 'update_failed';
+                    $stats['warnings'][] = 'update_failed:' . ($matched['id'] ?? $sub->id);
                 }
             }
             cfmod_sync_result($jobId, $sub->id, 'mismatch', $action, [
@@ -663,11 +780,6 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
         }
         foreach ($typeToList as $t => $list) {
             foreach ($list as $idx => $cr) {
-                $hasLocal = !empty(($localMap[$n][$t] ?? []));
-                if ($hasLocal) {
-                    continue;
-                }
-
                 $action = 'noop';
                 if ($priority === 'local') {
                     if ($mode === 'fix' && !empty($cr['id'])) {
@@ -676,7 +788,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                             'type' => $t,
                             'content' => $cr['content'] ?? null,
                         ]);
-                        if ($res['success'] ?? false) {
+                        if (($res['success'] ?? false) || cfmod_worker_provider_not_found($res)) {
                             $action = 'deleted_on_cf';
                             unset($remoteIndex[$n][$t][$idx]);
                             $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
@@ -684,6 +796,9 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                             $action = 'delete_failed';
                             $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
                         }
+                    } elseif ($mode === 'fix') {
+                        $action = 'delete_skipped_no_id';
+                        $stats['warnings'][] = 'delete_skipped_no_id:' . $sub->id . ':' . $n . ':' . $t;
                     }
                     cfmod_sync_result($jobId, $sub->id, 'extra_on_cf', $action, [
                         'name' => $n,
@@ -715,6 +830,8 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                         CfSubdomainService::markHasDnsHistory($sub->id);
                         $action = 'imported_local';
                     } catch (\Throwable $e) {
+                        $action = 'import_failed';
+                        $stats['warnings'][] = 'import_failed:' . $sub->id . ':' . $n . ':' . $t;
                         cfmod_report_exception('calibrate_import', $e);
                     }
                 }
@@ -729,6 +846,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
         }
     }
 }
+
 
 /**
  * @param CloudflareAPI|DNSPodLegacyAPI|DNSPodIntlAPI|mixed $cf
@@ -2038,100 +2156,184 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
             continue;
         }
         $cf = $providerContext['client'];
+        $zoneCache = [];
 
         foreach ($groupSubs as $s) {
             try {
                 $zone = $s->cloudflare_zone_id ?: $s->rootdomain;
                 $name = strtolower($s->subdomain);
-                $remote = $cf->getDnsRecords($zone, $name, ['per_page' => 1000]);
-                if (!($remote['success'] ?? false)) { throw new \RuntimeException('list failed'); }
-                $cloud = $remote['result'] ?? [];
-                $local = Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $s->id)->orderBy('id','asc')->get();
-                $localKey = [];
-                foreach ($local as $lr) {
-                    $k = strtolower($lr->name).'|'.strtoupper($lr->type);
-                    $localKey[$k] = $lr;
-                }
-                $cloudKey = [];
-                foreach ($cloud as $cr) {
-                    $k = strtolower($cr['name'] ?? '').'|'.strtoupper($cr['type'] ?? '');
-                    $cloudKey[$k] = $cr;
+                $localRows = Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $s->id)->orderBy('id', 'asc')->get();
+                $remoteIndex = cfmod_worker_build_remote_index_for_subdomain($cf, $zone, $s, $localRows, $zoneCache, $stats);
+
+                $localBuckets = [];
+                foreach ($localRows as $lr) {
+                    $recordName = strtolower($lr->name ?? '');
+                    $recordType = strtoupper($lr->type ?? '');
+                    if ($recordName === '' || $recordType === '') {
+                        continue;
+                    }
+                    $localBuckets[$recordName][$recordType][] = $lr;
                 }
 
-                foreach ($cloudKey as $k => $cr) {
-                    if (!isset($localKey[$k])) {
-                        if ($priority === 'local') {
-                            $action = ($mode === 'fix') ? 'deleted_on_cf' : 'diff_cloud_extra';
-                            if ($mode === 'fix' && !empty($cr['id'])) {
-                                $res = $cf->deleteSubdomain($zone, $cr['id'], [
-                                    'name' => $cr['name'] ?? null,
-                                    'type' => $cr['type'] ?? null,
-                                    'content' => $cr['content'] ?? null,
-                                ]);
-                                if (!($res['success'] ?? false)) {
+                $allNames = array_values(array_unique(array_merge(array_keys($localBuckets), array_keys($remoteIndex))));
+                foreach ($allNames as $recordName) {
+                    if (!($recordName === $name || cf_str_ends_with($recordName, '.' . $name))) {
+                        continue;
+                    }
+                    $allTypes = array_values(array_unique(array_merge(
+                        array_keys($localBuckets[$recordName] ?? []),
+                        array_keys($remoteIndex[$recordName] ?? [])
+                    )));
 
-                                    $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
+                    foreach ($allTypes as $recordType) {
+                        $localList = $localBuckets[$recordName][$recordType] ?? [];
+                        $remoteList = $remoteIndex[$recordName][$recordType] ?? [];
+
+                        $localByContent = cfmod_worker_group_records_by_content($localList);
+                        $remoteByContent = cfmod_worker_group_records_by_content($remoteList);
+                        $contentKeys = array_values(array_unique(array_merge(array_keys($localByContent), array_keys($remoteByContent))));
+
+                        foreach ($contentKeys as $contentKey) {
+                            $localsForContent = $localByContent[$contentKey] ?? [];
+                            $remoteForContent = $remoteByContent[$contentKey] ?? [];
+                            $matchedCount = min(count($localsForContent), count($remoteForContent));
+
+                            for ($i = 0; $i < $matchedCount; $i++) {
+                                $lr = $localsForContent[$i];
+                                $cr = $remoteForContent[$i];
+                                $updateData = [];
+                                $remoteContent = (string) ($cr['content'] ?? '');
+                                if ((string) ($lr->content ?? '') !== $remoteContent) {
+                                    $updateData['content'] = $remoteContent;
+                                }
+                                $remoteTtl = cfmod_normalize_ttl($cr['ttl'] ?? 600);
+                                if (intval($lr->ttl ?? 0) !== $remoteTtl) {
+                                    $updateData['ttl'] = $remoteTtl;
+                                }
+                                $remoteRecordId = (string) ($cr['id'] ?? '');
+                                if ($remoteRecordId !== '' && (string) ($lr->record_id ?? '') !== $remoteRecordId) {
+                                    $updateData['record_id'] = $remoteRecordId;
+                                }
+
+                                if (!empty($updateData)) {
+                                    $action = ($mode === 'fix') ? 'update_local' : 'diff_update_local';
+                                    if ($mode === 'fix') {
+                                        $updateData['updated_at'] = $now;
+                                        Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update($updateData);
+                                        $stats['records_updated_local']++;
+                                    }
+                                    cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
+                                        'name' => $recordName,
+                                        'type' => $recordType,
+                                        'record_id' => $remoteRecordId !== '' ? $remoteRecordId : null,
+                                    ]);
+                                    cfmod_track_sync_stat($stats, 'reconcile', $action);
                                 }
                             }
-                            cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
-                                'name' => $cr['name'] ?? '',
-                                'type' => $cr['type'] ?? '',
-                                'record_id' => $cr['id'] ?? null
-                            ]);
-                            cfmod_track_sync_stat($stats, 'reconcile', $action);
-                            continue;
-                        }
 
-                        $action = ($mode === 'fix') ? 'insert_local' : 'diff_insert_local';
-                        if ($mode === 'fix') {
-                            Capsule::table('mod_cloudflare_dns_records')->insert([
-                                'subdomain_id' => $s->id,
-                                'zone_id' => $zone,
-                                'record_id' => $cr['id'] ?? null,
-                                'name' => strtolower($cr['name'] ?? ''),
-                                'type' => strtoupper($cr['type'] ?? ''),
-                                'content' => (string)($cr['content'] ?? ''),
-                                'ttl' => intval($cr['ttl'] ?? 600),
-                                'proxied' => 0,
-                                'priority' => null,
-                                'line' => null,
-                                'created_at' => $now,
-                                'updated_at' => $now
-                            ]);
-                            CfSubdomainService::markHasDnsHistory($s->id);
-                            $stats['records_imported_local']++;
-                        }
-                        cfmod_sync_result($jobId, $s->id, 'reconcile', $action, ['name'=>$cr['name']??'','type'=>$cr['type']??'']);
-                        cfmod_track_sync_stat($stats, 'reconcile', $action);
-                    }
-                }
+                            for ($i = $matchedCount; $i < count($remoteForContent); $i++) {
+                                $cr = $remoteForContent[$i];
+                                if ($priority === 'local') {
+                                    $action = ($mode === 'fix') ? 'deleted_on_cf' : 'diff_cloud_extra';
+                                    if ($mode === 'fix') {
+                                        if (!empty($cr['id'])) {
+                                            $res = $cf->deleteSubdomain($zone, $cr['id'], [
+                                                'name' => $recordName,
+                                                'type' => $recordType,
+                                                'content' => $cr['content'] ?? null,
+                                            ]);
+                                            if (!(($res['success'] ?? false) || cfmod_worker_provider_not_found($res))) {
+                                                $action = 'delete_failed';
+                                                $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
+                                            }
+                                        } else {
+                                            $action = 'delete_skipped_no_id';
+                                            $stats['warnings'][] = 'delete_skipped_no_id:' . $s->id . ':' . $recordName . ':' . $recordType;
+                                        }
+                                    }
+                                    cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
+                                        'name' => $recordName,
+                                        'type' => $recordType,
+                                        'record_id' => $cr['id'] ?? null,
+                                    ]);
+                                    cfmod_track_sync_stat($stats, 'reconcile', $action);
+                                    continue;
+                                }
 
-                foreach ($localKey as $k => $lr) {
-                    if (isset($cloudKey[$k])) {
-                        $cr = $cloudKey[$k];
-                        $need = ((string)$lr->content !== (string)($cr['content'] ?? '')) || (intval($lr->ttl) !== intval($cr['ttl'] ?? 600));
-                        if ($need) {
-                            $action = ($mode === 'fix') ? 'update_local' : 'diff_update_local';
-                            if ($mode === 'fix') {
-                                Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
-                                    'content' => (string)($cr['content'] ?? ''),
-                                    'ttl' => intval($cr['ttl'] ?? 600),
-                                    'updated_at' => $now
+                                $action = ($mode === 'fix') ? 'insert_local' : 'diff_insert_local';
+                                if ($mode === 'fix') {
+                                    Capsule::table('mod_cloudflare_dns_records')->insert([
+                                        'subdomain_id' => $s->id,
+                                        'zone_id' => $zone,
+                                        'record_id' => $cr['id'] ?? null,
+                                        'name' => strtolower($recordName),
+                                        'type' => strtoupper($recordType),
+                                        'content' => (string) ($cr['content'] ?? ''),
+                                        'ttl' => intval($cr['ttl'] ?? 600),
+                                        'proxied' => 0,
+                                        'priority' => null,
+                                        'line' => null,
+                                        'created_at' => $now,
+                                        'updated_at' => $now
+                                    ]);
+                                    CfSubdomainService::markHasDnsHistory($s->id);
+                                    $stats['records_imported_local']++;
+                                }
+                                cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
+                                    'name' => $recordName,
+                                    'type' => $recordType,
+                                    'record_id' => $cr['id'] ?? null,
                                 ]);
-                                $stats['records_updated_local']++;
+                                cfmod_track_sync_stat($stats, 'reconcile', $action);
                             }
-                            cfmod_sync_result($jobId, $s->id, 'reconcile', $action, ['name'=>$cr['name']??'','type'=>$cr['type']??'']);
-                            cfmod_track_sync_stat($stats, 'reconcile', $action);
+
+                            for ($i = $matchedCount; $i < count($localsForContent); $i++) {
+                                $lr = $localsForContent[$i];
+                                if ($priority === 'local') {
+                                    $action = ($mode === 'fix') ? 'created_on_cf' : 'diff_cloud_missing';
+                                    if ($mode === 'fix') {
+                                        $res = $cf->createDnsRecord(
+                                            $zone,
+                                            $recordName,
+                                            $recordType,
+                                            (string) ($lr->content ?? ''),
+                                            intval($lr->ttl ?? 600),
+                                            boolval($lr->proxied ?? false)
+                                        );
+                                        if ($res['success'] ?? false) {
+                                            $newId = $res['result']['id'] ?? null;
+                                            Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
+                                                'record_id' => $newId,
+                                                'updated_at' => $now,
+                                            ]);
+                                        } else {
+                                            $action = 'create_failed';
+                                            $stats['warnings'][] = 'create_failed:' . $s->id . ':' . $recordName . ':' . $recordType;
+                                        }
+                                    }
+                                    cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
+                                        'name' => $recordName,
+                                        'type' => $recordType,
+                                        'content' => (string) ($lr->content ?? ''),
+                                    ]);
+                                    cfmod_track_sync_stat($stats, 'reconcile', $action);
+                                    continue;
+                                }
+
+                                $action = 'diff_cloud_missing';
+                                cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
+                                    'name' => $recordName,
+                                    'type' => $recordType,
+                                    'content' => (string) ($lr->content ?? ''),
+                                ]);
+                                cfmod_track_sync_stat($stats, 'reconcile', $action);
+                            }
                         }
-                    } else {
-                        $action = 'diff_cloud_missing';
-                        cfmod_sync_result($jobId, $s->id, 'reconcile', $action, ['name'=>$lr->name,'type'=>$lr->type]);
-                        cfmod_track_sync_stat($stats, 'reconcile', $action);
                     }
                 }
             } catch (\Throwable $e) {
                 $stats['warnings'][] = 'sub:' . $s->id;
-                cfmod_sync_result($jobId, $s->id, 'reconcile', 'error', ['message'=>substr($e->getMessage(),0,200)]);
+                cfmod_sync_result($jobId, $s->id, 'reconcile', 'error', ['message' => substr($e->getMessage(), 0, 200)]);
                 cfmod_report_exception('reconcile_all', $e);
             }
         }
@@ -2169,6 +2371,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
     $stats['message'] = 'reconcile ' . ($mode === 'fix' ? 'fix' : 'dry');
     return $stats;
 }
+
 
 
 /**

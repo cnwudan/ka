@@ -138,6 +138,7 @@ class CfSettingsRepository
             'domain_expiry_enable_legacy_never' => 'yes',
             'domain_cleanup_batch_size' => '50',
             'domain_cleanup_deep_delete' => 'yes',
+            'pdns_register_local_check_only' => '1',
             'redeem_ticket_url' => '',
             'api_logs_retention_days' => '30',
             'general_logs_retention_days' => '90',
