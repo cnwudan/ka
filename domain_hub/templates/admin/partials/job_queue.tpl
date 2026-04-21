@@ -206,15 +206,38 @@ $buildPageQuery = static function (string $key, int $page) {
     <div class="card mb-4">
       <div class="card-body">
         <h5 class="card-title mb-3"><i class="fas fa-balance-scale"></i> <?php echo $__('queue_diff_title', '本地-云端对账'); ?></h5>
-        <form method="post" class="mb-2">
+        <form method="post" class="row g-2 mb-3">
           <input type="hidden" name="action" value="enqueue_reconcile">
-          <input type="hidden" name="mode" value="dry">
-          <button class="btn btn-outline-primary"><?php echo $__('queue_diff_dry', '对账预演（dry-run）'); ?></button>
-        </form>
-        <form method="post" class="mb-3">
-          <input type="hidden" name="action" value="enqueue_reconcile">
-          <input type="hidden" name="mode" value="fix">
-          <button class="btn btn-primary"><?php echo $__('queue_diff_fix', '对账并修复（fix）'); ?></button>
+          <input type="hidden" name="sync_scope_present" value="1">
+          <div class="col-md-3">
+            <label class="form-label"><?php echo $__('queue_cal_mode', '模式'); ?></label>
+            <select name="mode" class="form-select">
+              <option value="dry"><?php echo $__('queue_diff_dry', '对账预演（dry-run）'); ?></option>
+              <option value="fix"><?php echo $__('queue_diff_fix', '对账并修复（fix）'); ?></option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label"><?php echo $__('queue_cal_root_domain', '根域名'); ?></label>
+            <select name="rootdomain" class="form-select">
+              <option value=""><?php echo $__('queue_all_rootdomains', '全部根域名'); ?></option>
+              <?php foreach ($rootdomainOptions as $option): ?>
+                <option value="<?php echo htmlspecialchars($option['value'] ?? ''); ?>"><?php echo htmlspecialchars($option['label'] ?? ''); ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label"><?php echo $__('queue_target_userid', '用户ID（可选）'); ?></label>
+            <input type="text" name="userid" class="form-control" placeholder="UID">
+          </div>
+          <div class="col-md-3 d-flex align-items-end">
+            <button class="btn btn-primary w-100"><?php echo $__('queue_diff_submit', '提交对账任务'); ?></button>
+          </div>
+          <div class="col-12 d-flex flex-wrap gap-3 align-items-center">
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_ttl" value="1" checked> <?php echo $__('queue_scope_ttl', '修复TTL'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_missing" value="1" checked> <?php echo $__('queue_scope_missing', '补齐缺失'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_extra" value="1" checked> <?php echo $__('queue_scope_extra', '删除多余'); ?></label>
+            <small class="text-muted"><?php echo $__('queue_scope_hint', '仅在 fix 模式生效；dry 模式始终只比对不写入。'); ?></small>
+          </div>
         </form>
         <div class="table-responsive">
           <table class="table table-sm align-middle">
@@ -311,14 +334,33 @@ $buildPageQuery = static function (string $key, int $page) {
       <div class="col-md-6">
         <form method="post" class="row g-2">
           <input type="hidden" name="action" value="enqueue_calibration">
-          <div class="col-6">
+          <input type="hidden" name="sync_scope_present" value="1">
+          <div class="col-4">
             <label class="form-label"><?php echo $__('queue_cal_mode', '模式'); ?></label>
             <select name="mode" class="form-select">
               <option value="dry"><?php echo $__('queue_cal_mode_dry', '干跑（仅比对显示差异）'); ?></option>
               <option value="fix"><?php echo $__('queue_cal_mode_fix', '自动修复（按差异执行）'); ?></option>
             </select>
           </div>
-          <div class="col-6 d-flex align-items-end">
+          <div class="col-4">
+            <label class="form-label"><?php echo $__('queue_cal_root_domain', '根域名'); ?></label>
+            <select name="rootdomain" class="form-select">
+              <option value=""><?php echo $__('queue_all_rootdomains', '全部根域名'); ?></option>
+              <?php foreach ($rootdomainOptions as $option): ?>
+                <option value="<?php echo htmlspecialchars($option['value'] ?? ''); ?>"><?php echo htmlspecialchars($option['label'] ?? ''); ?></option>
+              <?php endforeach; ?>
+            </select>
+          </div>
+          <div class="col-4">
+            <label class="form-label"><?php echo $__('queue_target_userid', '用户ID（可选）'); ?></label>
+            <input type="text" name="userid" class="form-control" placeholder="UID">
+          </div>
+          <div class="col-12 d-flex flex-wrap gap-3 align-items-center">
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_ttl" value="1" checked> <?php echo $__('queue_scope_ttl', '修复TTL'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_missing" value="1" checked> <?php echo $__('queue_scope_missing', '补齐缺失'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_extra" value="1" checked> <?php echo $__('queue_scope_extra', '删除多余'); ?></label>
+          </div>
+          <div class="col-12 d-flex align-items-end">
             <button type="submit" class="btn btn-primary w-100"><?php echo $__('queue_cal_submit', '提交校准作业'); ?></button>
           </div>
         </form>
@@ -326,6 +368,7 @@ $buildPageQuery = static function (string $key, int $page) {
       <div class="col-md-6">
         <form method="post" class="row g-2">
           <input type="hidden" name="action" value="enqueue_root_calibration">
+          <input type="hidden" name="sync_scope_present" value="1">
           <div class="col-6">
             <label class="form-label"><?php echo $__('queue_cal_root_domain', '根域名'); ?></label>
             <select name="rootdomain" class="form-select" <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?> <?php echo $hasRootdomainOptions ? 'required' : ''; ?>>
@@ -348,6 +391,15 @@ $buildPageQuery = static function (string $key, int $page) {
           </div>
           <div class="col-3 d-flex align-items-end">
             <button type="submit" class="btn btn-outline-primary w-100" <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?>><?php echo $__('queue_cal_root_submit', '提交指定根域校准'); ?></button>
+          </div>
+          <div class="col-6">
+            <label class="form-label"><?php echo $__('queue_target_userid', '用户ID（可选）'); ?></label>
+            <input type="text" name="userid" class="form-control" placeholder="UID" <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?>>
+          </div>
+          <div class="col-6 d-flex flex-wrap gap-2 align-items-center">
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_ttl" value="1" checked <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?>> <?php echo $__('queue_scope_ttl', '修复TTL'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_missing" value="1" checked <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?>> <?php echo $__('queue_scope_missing', '补齐缺失'); ?></label>
+            <label class="form-check-label"><input class="form-check-input me-1" type="checkbox" name="fix_extra" value="1" checked <?php echo $hasRootdomainOptions ? '' : 'disabled'; ?>> <?php echo $__('queue_scope_extra', '删除多余'); ?></label>
           </div>
           <div class="col-12">
             <small class="text-muted"><?php echo $hasRootdomainOptions ? $__('queue_cal_root_help', '仅校准所选根域名下的子域。') : $__('queue_cal_root_empty', '暂无根域名可选'); ?></small>

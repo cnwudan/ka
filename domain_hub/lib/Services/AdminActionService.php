@@ -1122,9 +1122,27 @@ class CfAdminActionService
     private static function handleEnqueueCalibration(): void
     {
         try {
+            $mode = self::resolveSyncJobMode();
+            $scope = self::resolveSyncFixScopeFromPost($mode);
+            $targetRoot = self::resolveSyncTargetRootdomain(false);
+            $targetUserId = self::resolveSyncTargetUserId();
+
+            $payload = [
+                'mode' => $mode,
+                'fix_ttl' => $scope['ttl'] ? 1 : 0,
+                'fix_missing' => $scope['missing'] ? 1 : 0,
+                'fix_extra' => $scope['extra'] ? 1 : 0,
+            ];
+            if ($targetRoot !== '') {
+                $payload['rootdomain'] = $targetRoot;
+            }
+            if ($targetUserId > 0) {
+                $payload['userid'] = $targetUserId;
+            }
+
             Capsule::table('mod_cloudflare_jobs')->insert([
                 'type' => 'calibrate_all',
-                'payload_json' => json_encode(['mode' => ($_POST['mode'] ?? 'dry')], JSON_UNESCAPED_UNICODE),
+                'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
                 'priority' => 5,
                 'status' => 'pending',
                 'attempts' => 0,
@@ -1134,9 +1152,11 @@ class CfAdminActionService
             ]);
             self::triggerQueueInBackground();
             if (function_exists('cloudflare_subdomain_log')) {
-                cloudflare_subdomain_log('admin_enqueue_calibration', ['mode' => ($_POST['mode'] ?? 'dry')]);
+                cloudflare_subdomain_log('admin_enqueue_calibration', $payload);
             }
-            self::flashSuccess('已提交校准作业');
+            $scopeText = ($scope['ttl'] ? 'TTL/' : '') . ($scope['missing'] ? '缺失/' : '') . ($scope['extra'] ? '多余/' : '');
+            $scopeText = rtrim($scopeText, '/');
+            self::flashSuccess('已提交校准作业（范围：' . ($scopeText !== '' ? $scopeText : '默认') . '）');
         } catch (Exception $e) {
             self::flashError('提交校准失败: ' . $e->getMessage());
         }
@@ -1146,42 +1166,26 @@ class CfAdminActionService
 
     private static function handleEnqueueRootCalibration(): void
     {
-        $mode = (($_POST['mode'] ?? 'dry') === 'fix') ? 'fix' : 'dry';
-        $rootdomainRaw = trim((string) ($_POST['rootdomain'] ?? ''));
-        $normalizedRoot = strtolower($rootdomainRaw);
-        if ($normalizedRoot === '') {
-            self::flashError('请选择要校准的根域名');
-            self::redirect(self::HASH_JOBS);
-        }
-
-        $exists = false;
         try {
-            $exists = Capsule::table('mod_cloudflare_rootdomains')
-                ->whereRaw('LOWER(domain) = ?', [$normalizedRoot])
-                ->exists();
-        } catch (Exception $e) {
-            $exists = false;
-        }
-        if (!$exists && function_exists('cfmod_get_known_rootdomains')) {
-            try {
-                $known = array_map('strtolower', cfmod_get_known_rootdomains(self::moduleSettings()));
-                $exists = in_array($normalizedRoot, $known, true);
-            } catch (Exception $e) {
-                $exists = false;
+            $mode = self::resolveSyncJobMode();
+            $scope = self::resolveSyncFixScopeFromPost($mode);
+            $targetRoot = self::resolveSyncTargetRootdomain(true);
+            $targetUserId = self::resolveSyncTargetUserId();
+
+            $payload = [
+                'mode' => $mode,
+                'rootdomain' => $targetRoot,
+                'fix_ttl' => $scope['ttl'] ? 1 : 0,
+                'fix_missing' => $scope['missing'] ? 1 : 0,
+                'fix_extra' => $scope['extra'] ? 1 : 0,
+            ];
+            if ($targetUserId > 0) {
+                $payload['userid'] = $targetUserId;
             }
-        }
-        if (!$exists) {
-            self::flashError('未找到该根域名或尚未接入：' . htmlspecialchars($rootdomainRaw, ENT_QUOTES, 'UTF-8'));
-            self::redirect(self::HASH_JOBS);
-        }
 
-        try {
             Capsule::table('mod_cloudflare_jobs')->insert([
                 'type' => 'calibrate_all',
-                'payload_json' => json_encode([
-                    'mode' => $mode,
-                    'rootdomain' => $normalizedRoot,
-                ], JSON_UNESCAPED_UNICODE),
+                'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
                 'priority' => 5,
                 'status' => 'pending',
                 'attempts' => 0,
@@ -1191,12 +1195,9 @@ class CfAdminActionService
             ]);
             self::triggerQueueInBackground();
             if (function_exists('cloudflare_subdomain_log')) {
-                cloudflare_subdomain_log('admin_enqueue_root_calibration', [
-                    'mode' => $mode,
-                    'rootdomain' => $normalizedRoot,
-                ]);
+                cloudflare_subdomain_log('admin_enqueue_root_calibration', $payload);
             }
-            self::flashSuccess(sprintf('已提交根域 %s 的校准作业', htmlspecialchars($rootdomainRaw, ENT_QUOTES, 'UTF-8')));
+            self::flashSuccess(sprintf('已提交根域 %s 的校准作业', htmlspecialchars($targetRoot, ENT_QUOTES, 'UTF-8')));
         } catch (Exception $e) {
             self::flashError('提交校准失败: ' . $e->getMessage());
         }
@@ -1231,10 +1232,27 @@ class CfAdminActionService
     private static function handleEnqueueReconcile(): void
     {
         try {
-            $mode = (($_POST['mode'] ?? 'dry') === 'fix') ? 'fix' : 'dry';
+            $mode = self::resolveSyncJobMode();
+            $scope = self::resolveSyncFixScopeFromPost($mode);
+            $targetRoot = self::resolveSyncTargetRootdomain(false);
+            $targetUserId = self::resolveSyncTargetUserId();
+
+            $payload = [
+                'mode' => $mode,
+                'fix_ttl' => $scope['ttl'] ? 1 : 0,
+                'fix_missing' => $scope['missing'] ? 1 : 0,
+                'fix_extra' => $scope['extra'] ? 1 : 0,
+            ];
+            if ($targetRoot !== '') {
+                $payload['rootdomain'] = $targetRoot;
+            }
+            if ($targetUserId > 0) {
+                $payload['userid'] = $targetUserId;
+            }
+
             Capsule::table('mod_cloudflare_jobs')->insert([
                 'type' => 'reconcile_all',
-                'payload_json' => json_encode(['mode' => $mode], JSON_UNESCAPED_UNICODE),
+                'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
                 'priority' => 5,
                 'status' => 'pending',
                 'attempts' => 0,
@@ -1244,7 +1262,7 @@ class CfAdminActionService
             ]);
             self::triggerQueueInBackground();
             if (function_exists('cloudflare_subdomain_log')) {
-                cloudflare_subdomain_log('admin_enqueue_reconcile', ['mode' => $mode]);
+                cloudflare_subdomain_log('admin_enqueue_reconcile', $payload);
             }
             self::flashSuccess('对账任务已入队（' . ($mode === 'fix' ? 'fix' : 'dry') . '）');
         } catch (Exception $e) {
@@ -1252,6 +1270,111 @@ class CfAdminActionService
         }
 
         self::redirect(self::HASH_JOBS);
+    }
+
+    private static function resolveSyncJobMode(): string
+    {
+        return (($_POST['mode'] ?? 'dry') === 'fix') ? 'fix' : 'dry';
+    }
+
+    private static function resolveSyncFixScopeFromPost(string $mode): array
+    {
+        $scopeExplicit = self::requestFlag('sync_scope_present')
+            || array_key_exists('fix_ttl', $_POST)
+            || array_key_exists('fix_missing', $_POST)
+            || array_key_exists('fix_extra', $_POST);
+
+        if (!$scopeExplicit) {
+            return [
+                'ttl' => true,
+                'missing' => true,
+                'extra' => true,
+            ];
+        }
+
+        $scope = [
+            'ttl' => self::requestFlag('fix_ttl'),
+            'missing' => self::requestFlag('fix_missing'),
+            'extra' => self::requestFlag('fix_extra'),
+        ];
+
+        if ($mode === 'fix' && !$scope['ttl'] && !$scope['missing'] && !$scope['extra']) {
+            throw new Exception('请至少勾选一个修复范围（TTL/缺失/多余）');
+        }
+
+        return $scope;
+    }
+
+    private static function resolveSyncTargetRootdomain(bool $required): string
+    {
+        $rootdomainRaw = trim((string) ($_POST['rootdomain'] ?? ''));
+        $normalizedRoot = strtolower($rootdomainRaw);
+        if ($normalizedRoot === '') {
+            if ($required) {
+                throw new Exception('请选择要校准的根域名');
+            }
+            return '';
+        }
+
+        if (!self::rootdomainExists($normalizedRoot)) {
+            throw new Exception('未找到该根域名或尚未接入：' . htmlspecialchars($rootdomainRaw, ENT_QUOTES, 'UTF-8'));
+        }
+
+        return $normalizedRoot;
+    }
+
+    private static function rootdomainExists(string $normalizedRoot): bool
+    {
+        $exists = false;
+        try {
+            $exists = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [$normalizedRoot])
+                ->exists();
+        } catch (Exception $e) {
+            $exists = false;
+        }
+        if (!$exists && function_exists('cfmod_get_known_rootdomains')) {
+            try {
+                $known = array_map('strtolower', cfmod_get_known_rootdomains(self::moduleSettings()));
+                $exists = in_array($normalizedRoot, $known, true);
+            } catch (Exception $e) {
+                $exists = false;
+            }
+        }
+        return $exists;
+    }
+
+    private static function resolveSyncTargetUserId(): int
+    {
+        $userIdRaw = trim((string) ($_POST['userid'] ?? ''));
+        if ($userIdRaw === '') {
+            return 0;
+        }
+        if (!ctype_digit($userIdRaw)) {
+            throw new Exception('用户ID格式不正确');
+        }
+        $userId = intval($userIdRaw);
+        if ($userId <= 0) {
+            return 0;
+        }
+        $exists = Capsule::table('tblclients')->where('id', $userId)->exists();
+        if (!$exists) {
+            throw new Exception('用户ID不存在：' . $userId);
+        }
+        return $userId;
+    }
+
+    private static function requestFlag(string $key): bool
+    {
+        $value = $_POST[$key] ?? null;
+        if (is_bool($value)) {
+            return $value;
+        }
+        $normalized = strtolower(trim((string) $value));
+        if ($normalized === '') {
+            return false;
+        }
+        return in_array($normalized, ['1', 'on', 'yes', 'true', 'enabled'], true);
     }
 
     private static function handleRunQueueOnce(): void
@@ -2883,43 +3006,53 @@ class CfAdminActionService
         $totalDnsDeleted = 0;
 
         try {
+            $failedMessages = [];
             foreach ($selected as $rawId) {
                 $subId = intval($rawId);
                 if ($subId <= 0) {
                     continue;
                 }
-                $record = Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->first();
-                if (!$record) {
-                    continue;
+                try {
+                    $record = Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->first();
+                    if (!$record) {
+                        continue;
+                    }
+                    $client = null;
+                    if (function_exists('cfmod_acquire_provider_client_for_subdomain')) {
+                        $providerContext = cfmod_acquire_provider_client_for_subdomain($record, $moduleSettings);
+                        $client = $providerContext['client'] ?? null;
+                    }
+                    $deletedDns = 0;
+                    if (function_exists('cfmod_admin_deep_delete_subdomain')) {
+                        $deletedDns = intval(cfmod_admin_deep_delete_subdomain($client, $record));
+                    }
+                    Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->delete();
+                    Capsule::table('mod_cloudflare_subdomain_quotas')
+                        ->where('userid', $record->userid)
+                        ->decrement('used_count');
+                    if (function_exists('cloudflare_subdomain_log')) {
+                        cloudflare_subdomain_log('admin_batch_delete_subdomain', [
+                            'subdomain' => $record->subdomain,
+                            'dns_records_deleted' => $deletedDns,
+                        ], $record->userid, $record->id);
+                    }
+                    $deletedCount++;
+                    $totalDnsDeleted += $deletedDns;
+                } catch (\Throwable $inner) {
+                    $failedMessages[] = 'ID ' . $subId . '：' . $inner->getMessage();
                 }
-                $client = null;
-                if (function_exists('cfmod_acquire_provider_client_for_subdomain')) {
-                    $providerContext = cfmod_acquire_provider_client_for_subdomain($record, $moduleSettings);
-                    $client = $providerContext['client'] ?? null;
-                }
-                $deletedDns = 0;
-                if (function_exists('cfmod_admin_deep_delete_subdomain')) {
-                    $deletedDns = intval(cfmod_admin_deep_delete_subdomain($client, $record));
-                }
-                Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->delete();
-                Capsule::table('mod_cloudflare_subdomain_quotas')
-                    ->where('userid', $record->userid)
-                    ->decrement('used_count');
-                if (function_exists('cloudflare_subdomain_log')) {
-                    cloudflare_subdomain_log('admin_batch_delete_subdomain', [
-                        'subdomain' => $record->subdomain,
-                        'dns_records_deleted' => $deletedDns,
-                    ], $record->userid, $record->id);
-                }
-                $deletedCount++;
-                $totalDnsDeleted += $deletedDns;
             }
 
             if ($deletedCount === 0) {
-                self::flash('未删除任何子域名，请选择要处理的记录后再试。', 'warning');
+                if (!empty($failedMessages)) {
+                    self::flashError('批量删除失败：' . htmlspecialchars(implode('；', array_slice($failedMessages, 0, 3)), ENT_QUOTES, 'UTF-8'));
+                } else {
+                    self::flash('未删除任何子域名，请选择要处理的记录后再试。', 'warning');
+                }
             } else {
                 $dnsSummary = $totalDnsDeleted > 0 ? '，清理 DNS 记录 ' . $totalDnsDeleted . ' 条' : '';
-                self::flashSuccess('批量删除成功，共删除 ' . $deletedCount . ' 个子域名' . $dnsSummary);
+                $warnSummary = !empty($failedMessages) ? ('（跳过 ' . count($failedMessages) . ' 个失败项）') : '';
+                self::flashSuccess('批量删除成功，共删除 ' . $deletedCount . ' 个子域名' . $dnsSummary . $warnSummary);
             }
         } catch (Exception $e) {
             self::flashError('批量删除失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
