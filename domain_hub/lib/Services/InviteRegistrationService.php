@@ -143,13 +143,25 @@ class CfInviteRegistrationService
 
         try {
             $row = Capsule::table(self::TABLE_UNLOCK)
-                ->select('unlocked_at')
+                ->select('id', 'unlocked_at')
                 ->where('userid', $userId)
                 ->first();
-            if (!$row) {
+            if (!$row || empty($row->unlocked_at)) {
                 return false;
             }
-            return !empty($row->unlocked_at);
+
+            if (self::isExistingUser($userId) || self::hasUnlockAuditTrail($userId)) {
+                return true;
+            }
+
+            Capsule::table(self::TABLE_UNLOCK)
+                ->where('id', (int) ($row->id ?? 0))
+                ->update([
+                    'unlocked_at' => null,
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
+
+            return false;
         } catch (\Throwable $e) {
             return false;
         }
@@ -341,7 +353,7 @@ class CfInviteRegistrationService
                 }
             }
 
-            // 获取系统中所有有活动的用户，为他们创建解锁记录
+            // 获取系统中所有有真实业务活动的用户，为他们创建解锁记录
             $existingUserIds = [];
 
             // 从子域名表获取用户
@@ -353,22 +365,45 @@ class CfInviteRegistrationService
                 $existingUserIds = array_merge($existingUserIds, $subdomainUsers);
             }
 
-            // 从配额表获取用户
-            if (Capsule::schema()->hasTable('mod_cloudflare_subdomain_quotas')) {
-                $quotaUsers = Capsule::table('mod_cloudflare_subdomain_quotas')
+            // 从邀请使用记录表获取用户（邀请人/被邀请人）
+            if (Capsule::schema()->hasTable('mod_cloudflare_invitation_claims')) {
+                $inviterUsers = Capsule::table('mod_cloudflare_invitation_claims')
                     ->distinct()
-                    ->pluck('userid')
+                    ->pluck('inviter_userid')
                     ->toArray();
-                $existingUserIds = array_merge($existingUserIds, $quotaUsers);
+                $inviteeUsers = Capsule::table('mod_cloudflare_invitation_claims')
+                    ->distinct()
+                    ->pluck('invitee_userid')
+                    ->toArray();
+                $existingUserIds = array_merge($existingUserIds, $inviterUsers, $inviteeUsers);
             }
 
-            // 从邀请码表获取用户
-            if (Capsule::schema()->hasTable('mod_cloudflare_invitation_codes')) {
-                $inviteUsers = Capsule::table('mod_cloudflare_invitation_codes')
+            // 从 DNS 解锁码表获取用户
+            if (Capsule::schema()->hasTable('mod_cloudflare_dns_unlock_codes')) {
+                $unlockUsers = Capsule::table('mod_cloudflare_dns_unlock_codes')
                     ->distinct()
                     ->pluck('userid')
                     ->toArray();
-                $existingUserIds = array_merge($existingUserIds, $inviteUsers);
+                $existingUserIds = array_merge($existingUserIds, $unlockUsers);
+            }
+
+            // 从用户统计表获取用户
+            if (Capsule::schema()->hasTable('mod_cloudflare_user_stats')) {
+                $statsUsers = Capsule::table('mod_cloudflare_user_stats')
+                    ->distinct()
+                    ->pluck('userid')
+                    ->toArray();
+                $existingUserIds = array_merge($existingUserIds, $statsUsers);
+            }
+
+            // 从操作日志表获取用户
+            if (Capsule::schema()->hasTable('mod_cloudflare_logs')) {
+                $logUsers = Capsule::table('mod_cloudflare_logs')
+                    ->whereNotNull('userid')
+                    ->distinct()
+                    ->pluck('userid')
+                    ->toArray();
+                $existingUserIds = array_merge($existingUserIds, $logUsers);
             }
 
             $existingUserIds = array_unique(array_filter($existingUserIds));
@@ -799,9 +834,24 @@ class CfInviteRegistrationService
         return $prefix . str_repeat('*', $maskLen) . $suffix;
     }
 
+    private static function hasUnlockAuditTrail(int $userId): bool
+    {
+        if ($userId <= 0) {
+            return false;
+        }
+
+        try {
+            return Capsule::table(self::TABLE_LOGS)
+                ->where('invitee_userid', $userId)
+                ->exists();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     /**
      * 创建用户配置
-     * 向后兼容：已有用户（已注册过域名、有配额使用记录、或有邀请记录）自动解锁
+     * 向后兼容：已有真实业务活动的老用户自动解锁
      */
     private static function createProfile(int $userId)
     {
@@ -832,10 +882,10 @@ class CfInviteRegistrationService
      * 检查是否为老用户（向后兼容）
      * 满足以下任一条件即视为老用户，自动解锁：
      * 1. 已注册过子域名
-     * 2. 配额表中有记录（曾使用过系统）
-     * 3. 邀请码表中有记录（老系统生成的邀请码）
-     * 4. 有邀请奖励使用记录
-     * 5. 有DNS解锁记录
+     * 2. 有邀请使用记录（作为邀请人或被邀请人）
+     * 3. 有DNS解锁记录
+     * 4. 有用户统计记录
+     * 5. 有插件操作日志记录
      */
     private static function isExistingUser(int $userId): bool
     {
@@ -854,25 +904,8 @@ class CfInviteRegistrationService
                 }
             }
 
-            // 检查配额表是否有记录
-            if (Capsule::schema()->hasTable('mod_cloudflare_subdomain_quotas')) {
-                $hasQuota = Capsule::table('mod_cloudflare_subdomain_quotas')
-                    ->where('userid', $userId)
-                    ->exists();
-                if ($hasQuota) {
-                    return true;
-                }
-            }
-
-            // 检查老邀请码表是否有记录
-            if (Capsule::schema()->hasTable('mod_cloudflare_invitation_codes')) {
-                $hasInviteCode = Capsule::table('mod_cloudflare_invitation_codes')
-                    ->where('userid', $userId)
-                    ->exists();
-                if ($hasInviteCode) {
-                    return true;
-                }
-            }
+            // 注意：不再使用配额表/邀请码表作为“老用户”判定依据。
+            // 这两类记录会在用户首次访问时自动创建，无法用于区分新老用户。
 
             // 检查是否有邀请使用记录（作为邀请人或被邀请人）
             if (Capsule::schema()->hasTable('mod_cloudflare_invitation_claims')) {
