@@ -32,6 +32,7 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
 (function(){
   var lang = <?php echo json_encode($footerLang, CFMOD_SAFE_JSON_FLAGS); ?> || {};
   var quotaEndpoint = <?php echo json_encode($quotaEndpoint, CFMOD_SAFE_JSON_FLAGS); ?>;
+  var heavyStatsEndpoint = <?php echo json_encode(($footerConfig['api']['heavyStatsEndpoint'] ?? '?module=domain_hub&action=get_admin_heavy_stats'), CFMOD_SAFE_JSON_FLAGS); ?>;
   function format(template, value){
     if (!template) { return ''; }
     return template.replace('%d', value);
@@ -40,6 +41,195 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
   function alertMessage(prefixKey, detail){
     var prefix = lang[prefixKey] || '';
     alert(prefix + detail);
+  }
+
+  function formatLocalDateTime(ts){
+    if (!ts || Number.isNaN(Number(ts))) { return '-'; }
+    try {
+      var date = new Date(Number(ts) * 1000);
+      var yyyy = date.getFullYear();
+      var mm = String(date.getMonth() + 1).padStart(2, '0');
+      var dd = String(date.getDate()).padStart(2, '0');
+      var hh = String(date.getHours()).padStart(2, '0');
+      var mi = String(date.getMinutes()).padStart(2, '0');
+      var ss = String(date.getSeconds()).padStart(2, '0');
+      return yyyy + '-' + mm + '-' + dd + ' ' + hh + ':' + mi + ':' + ss;
+    } catch (e) {
+      return '-';
+    }
+  }
+
+  function updateHeavyStatsStatus(meta){
+    var statusEl = document.getElementById('cfmod-heavy-stats-status');
+    var generatedEl = document.getElementById('cfmod-heavy-stats-generated-at');
+    var statusTextEl = document.getElementById('cfmod-heavy-stats-status-text');
+    if (!statusEl) { return; }
+
+    var stale = !!(meta && meta.stale);
+    var pending = !!(meta && meta.pending);
+    var generatedAt = meta && meta.generated_at ? Number(meta.generated_at) : 0;
+
+    var text = '缓存就绪';
+    if (pending) {
+      text = '统计数据后台刷新中…';
+    } else if (stale) {
+      text = '缓存已过期，等待后台刷新';
+    }
+
+    statusEl.dataset.pending = pending ? '1' : '0';
+    statusEl.dataset.stale = stale ? '1' : '0';
+    statusEl.dataset.generatedAt = String(generatedAt || 0);
+
+    if (statusTextEl) {
+      statusTextEl.textContent = text;
+    }
+
+    var generatedText = formatLocalDateTime(generatedAt);
+    if (generatedEl) {
+      generatedEl.textContent = generatedText;
+      return;
+    }
+    statusEl.textContent = text + '（缓存时间：' + generatedText + '）';
+  }
+
+  function renderRows(tbodyId, rows, options){
+    var tbody = document.getElementById(tbodyId);
+    if (!tbody) { return; }
+    var cfg = options || {};
+    var columns = Number(cfg.columns || 2);
+    var badgeClass = cfg.badgeClass || 'bg-primary';
+    var textKey = cfg.textKey || 'name';
+    var numberKey = cfg.numberKey || 'count';
+    var emptyText = tbody.dataset.emptyText || '暂无数据';
+
+    tbody.innerHTML = '';
+    if (!Array.isArray(rows) || rows.length === 0) {
+      var emptyTr = document.createElement('tr');
+      var emptyTd = document.createElement('td');
+      emptyTd.colSpan = columns;
+      emptyTd.className = 'text-center text-muted';
+      emptyTd.textContent = emptyText;
+      emptyTr.appendChild(emptyTd);
+      tbody.appendChild(emptyTr);
+      return;
+    }
+
+    rows.forEach(function(item){
+      var tr = document.createElement('tr');
+      var tdText = document.createElement('td');
+      var tdValue = document.createElement('td');
+      tdText.textContent = String((item && item[textKey]) || '');
+      var badge = document.createElement('span');
+      badge.className = 'badge ' + badgeClass;
+      badge.textContent = String(Number((item && item[numberKey]) || 0));
+      tdValue.appendChild(badge);
+      tr.appendChild(tdText);
+      tr.appendChild(tdValue);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function applyHeavyStats(stats, meta){
+    if (!stats || typeof stats !== 'object') { return; }
+    var totalSubdomains = document.getElementById('cfmod-stat-total-subdomains');
+    var activeSubdomains = document.getElementById('cfmod-stat-active-subdomains');
+    var registeredUsers = document.getElementById('cfmod-stat-registered-users');
+    var subdomainsCreated = document.getElementById('cfmod-stat-subdomains-created');
+    var dnsOperations = document.getElementById('cfmod-stat-dns-operations');
+
+    if (totalSubdomains) { totalSubdomains.textContent = String(Number(stats.totalSubdomains || 0)); }
+    if (activeSubdomains) { activeSubdomains.textContent = String(Number(stats.activeSubdomains || 0)); }
+    if (registeredUsers) { registeredUsers.textContent = String(Number(stats.registeredUsers || 0)); }
+    if (subdomainsCreated) { subdomainsCreated.textContent = String(Number(stats.subdomainsCreated || 0)); }
+    if (dnsOperations) { dnsOperations.textContent = String(Number(stats.dnsOperations || 0)); }
+
+    renderRows('cfmod-stat-trend-body', stats.registrationTrend || [], {
+      columns: 2,
+      badgeClass: 'bg-primary',
+      textKey: 'date',
+      numberKey: 'count'
+    });
+    renderRows('cfmod-stat-usage-body', stats.usagePatterns || [], {
+      columns: 2,
+      badgeClass: 'bg-secondary',
+      textKey: 'usage_level',
+      numberKey: 'user_count'
+    });
+    renderRows('cfmod-stat-root-body', stats.popularRootdomains || [], {
+      columns: 2,
+      badgeClass: 'bg-info text-dark',
+      textKey: 'rootdomain',
+      numberKey: 'count'
+    });
+    renderRows('cfmod-stat-dns-types-body', stats.dnsRecordTypes || [], {
+      columns: 2,
+      badgeClass: 'bg-success',
+      textKey: 'type',
+      numberKey: 'count'
+    });
+
+    updateHeavyStatsStatus(meta || {});
+  }
+
+  function fetchHeavyStats(refresh, callback){
+    if (!heavyStatsEndpoint) {
+      if (typeof callback === 'function') { callback(null); }
+      return;
+    }
+    var url = heavyStatsEndpoint + '&_=' + Date.now();
+    if (refresh) {
+      url += '&refresh=1';
+    }
+    fetch(url, { credentials: 'same-origin' })
+      .then(function(resp){ return resp.json(); })
+      .then(function(data){
+        if (data && data.success) {
+          applyHeavyStats(data.stats || {}, {
+            generated_at: data.generated_at || 0,
+            stale: !!data.stale,
+            pending: !!data.pending
+          });
+        }
+        if (typeof callback === 'function') {
+          callback(data || null);
+        }
+      })
+      .catch(function(){
+        if (typeof callback === 'function') {
+          callback(null);
+        }
+      });
+  }
+
+  function initHeavyStatsRefresh(){
+    var statusEl = document.getElementById('cfmod-heavy-stats-status');
+    if (!statusEl) { return; }
+
+    var attempts = 0;
+    var maxAttempts = 12;
+
+    fetchHeavyStats(true, function(first){
+      if (!first || !first.success) { return; }
+      var shouldPoll = !!first.pending || !!first.stale;
+      if (!shouldPoll) { return; }
+
+      var timer = setInterval(function(){
+        attempts += 1;
+        fetchHeavyStats(false, function(next){
+          if (!next || !next.success) {
+            if (attempts >= maxAttempts) { clearInterval(timer); }
+            return;
+          }
+          if (!next.pending && !next.stale) {
+            clearInterval(timer);
+            return;
+          }
+          if (attempts >= maxAttempts) {
+            clearInterval(timer);
+          }
+        });
+      }, 5000);
+    });
   }
 
   window.toggleExpiryForm = function(id){
@@ -218,6 +408,7 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
     initSelectAll();
     initPurgeHelper();
     initAnnouncementModal();
+    initHeavyStatsRefresh();
     initModalPolyfill();
     var batchMode = document.getElementById('batchExpiryMode');
     if (batchMode) {

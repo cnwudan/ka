@@ -10,6 +10,7 @@ $registrationTrend = $statsView['registrationTrend'] ?? [];
 $popularRootdomains = $statsView['popularRootdomains'] ?? [];
 $dnsRecordTypes = $statsView['dnsRecordTypes'] ?? [];
 $usagePatterns = $statsView['usagePatterns'] ?? [];
+$emptyText = $__('common_no_data', '暂无数据');
 
 $getField = static function ($row, string $field, $default = '') {
     if (is_array($row)) {
@@ -35,7 +36,7 @@ $getField = static function ($row, string $field, $default = '') {
                 <th><?php echo $__('stats_trend_count', '注册数量'); ?></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="cfmod-stat-trend-body" data-empty-text="<?php echo htmlspecialchars($emptyText); ?>">
               <?php if (!empty($registrationTrend)): ?>
                 <?php foreach ($registrationTrend as $trend): ?>
                   <tr>
@@ -44,7 +45,7 @@ $getField = static function ($row, string $field, $default = '') {
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
-                <tr><td colspan="2" class="text-center text-muted"><?php echo $__('common_no_data', '暂无数据'); ?></td></tr>
+                <tr><td colspan="2" class="text-center text-muted"><?php echo $emptyText; ?></td></tr>
               <?php endif; ?>
             </tbody>
           </table>
@@ -64,7 +65,7 @@ $getField = static function ($row, string $field, $default = '') {
                 <th><?php echo $__('stats_usage_users', '用户数'); ?></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="cfmod-stat-usage-body" data-empty-text="<?php echo htmlspecialchars($emptyText); ?>">
               <?php if (!empty($usagePatterns)): ?>
                 <?php foreach ($usagePatterns as $row): ?>
                   <tr>
@@ -73,7 +74,7 @@ $getField = static function ($row, string $field, $default = '') {
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
-                <tr><td colspan="2" class="text-center text-muted"><?php echo $__('common_no_data', '暂无数据'); ?></td></tr>
+                <tr><td colspan="2" class="text-center text-muted"><?php echo $emptyText; ?></td></tr>
               <?php endif; ?>
             </tbody>
           </table>
@@ -96,7 +97,7 @@ $getField = static function ($row, string $field, $default = '') {
                 <th><?php echo $__('stats_root_count', '子域数量'); ?></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="cfmod-stat-root-body" data-empty-text="<?php echo htmlspecialchars($emptyText); ?>">
               <?php if (!empty($popularRootdomains)): ?>
                 <?php foreach ($popularRootdomains as $row): ?>
                   <tr>
@@ -105,7 +106,7 @@ $getField = static function ($row, string $field, $default = '') {
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
-                <tr><td colspan="2" class="text-center text-muted"><?php echo $__('common_no_data', '暂无数据'); ?></td></tr>
+                <tr><td colspan="2" class="text-center text-muted"><?php echo $emptyText; ?></td></tr>
               <?php endif; ?>
             </tbody>
           </table>
@@ -125,7 +126,7 @@ $getField = static function ($row, string $field, $default = '') {
                 <th><?php echo $__('stats_dns_count', '数量'); ?></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="cfmod-stat-dns-types-body" data-empty-text="<?php echo htmlspecialchars($emptyText); ?>">
               <?php if (!empty($dnsRecordTypes)): ?>
                 <?php foreach ($dnsRecordTypes as $row): ?>
                   <tr>
@@ -134,7 +135,7 @@ $getField = static function ($row, string $field, $default = '') {
                   </tr>
                 <?php endforeach; ?>
               <?php else: ?>
-                <tr><td colspan="2" class="text-center text-muted"><?php echo $__('common_no_data', '暂无数据'); ?></td></tr>
+                <tr><td colspan="2" class="text-center text-muted"><?php echo $emptyText; ?></td></tr>
               <?php endif; ?>
             </tbody>
           </table>

@@ -84,7 +84,12 @@ function api_pdns_register_strategy(array $settings): string {
     if (in_array($strategy, ['local_only', 'hybrid', 'strict_remote'], true)) {
         return $strategy;
     }
-    return api_setting_enabled($settings['pdns_register_local_check_only'] ?? '1') ? 'local_only' : 'strict_remote';
+
+    $legacyRaw = trim((string) ($settings['pdns_register_local_check_only'] ?? '1'));
+    if ($legacyRaw === '') {
+        return 'local_only';
+    }
+    return api_setting_enabled($legacyRaw) ? 'local_only' : 'strict_remote';
 }
 
 function api_is_pdns_provider(array $providerContext): bool {
@@ -97,20 +102,15 @@ function api_is_pdns_provider(array $providerContext): bool {
     return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
 }
 
-function api_count_local_dns_records_by_rootdomain(string $rootdomain): int {
+function api_count_local_subdomains_by_rootdomain(string $rootdomain): int {
     $normalized = strtolower(trim($rootdomain));
     if ($normalized === '') {
         return 0;
     }
 
-    try {
-        return (int) Capsule::table('mod_cloudflare_dns_records as dr')
-            ->join('mod_cloudflare_subdomain as sd', 'dr.subdomain_id', '=', 'sd.id')
-            ->whereRaw('LOWER(sd.rootdomain) = ?', [$normalized])
-            ->count();
-    } catch (\Throwable $e) {
-        return 0;
-    }
+    return (int) Capsule::table('mod_cloudflare_subdomain')
+        ->whereRaw('LOWER(rootdomain) = ?', [$normalized])
+        ->count();
 }
 
 function api_should_skip_provider_exists_check(array $providerContext, array $settings, string $rootdomain = ''): bool {
@@ -126,13 +126,17 @@ function api_should_skip_provider_exists_check(array $providerContext, array $se
         return false;
     }
 
-    $threshold = intval($settings['pdns_register_hybrid_local_threshold'] ?? 2000);
-    if ($threshold <= 0) {
-        $threshold = 2000;
+    $thresholdRaw = trim((string) ($settings['pdns_register_hybrid_local_threshold'] ?? '800'));
+    $threshold = is_numeric($thresholdRaw) ? (int) $thresholdRaw : 800;
+    $threshold = max(100, min(50000, $threshold));
+
+    try {
+        $localSubdomains = api_count_local_subdomains_by_rootdomain($rootdomain);
+    } catch (\Throwable $e) {
+        return true;
     }
 
-    $localRecords = api_count_local_dns_records_by_rootdomain($rootdomain);
-    return $localRecords > $threshold;
+    return $localSubdomains >= $threshold;
 }
 
 function api_provider_error_text($result): string {

@@ -36,7 +36,7 @@ class CfAdminViewModelBuilder
 
         $viewModel = self::initializeBlocks();
         $viewModel['alerts'] = self::buildAlerts();
-        $viewModel['stats'] = self::buildStats();
+        $viewModel['stats'] = self::buildStats($moduleSettings);
         $viewModel['providers'] = $providers;
         $rootdomainsView = self::buildRootdomains($moduleSettings, $providers);
         $viewModel['rootdomains'] = $rootdomainsView;
@@ -68,7 +68,7 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
         ];
     }
 
-    private static function buildStats(): array
+    private static function buildStats(array $moduleSettings = []): array
     {
         $ustPage = max(1, (int) ($_GET['ust_page'] ?? 1));
         $ustPerPage = 10;
@@ -91,14 +91,21 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
             'dnsRecordTypes' => [],
             'usagePatterns' => [],
             'userActivity' => $userActivity,
+            'heavyStatsGeneratedAt' => 0,
+            'heavyStatsStale' => true,
+            'heavyStatsPending' => false,
         ];
 
-        $heavyStats = self::resolveCachedStats();
+        $snapshot = self::resolveCachedStats($moduleSettings);
+        $heavyStats = $snapshot['data'] ?? [];
         foreach ($heavyStats as $key => $value) {
             if (array_key_exists($key, $stats)) {
                 $stats[$key] = $value;
             }
         }
+        $stats['heavyStatsGeneratedAt'] = (int) ($snapshot['generated_at'] ?? 0);
+        $stats['heavyStatsStale'] = !empty($snapshot['stale']);
+        $stats['heavyStatsPending'] = !empty($snapshot['pending']);
 
         try {
             $ustBase = Capsule::table('mod_cloudflare_user_stats');
@@ -1431,24 +1438,50 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
 
     public static function flushStatsCache(): void
     {
+        if (class_exists('CfAdminStatsSnapshotService')) {
+            CfAdminStatsSnapshotService::clearSessionCacheOnly();
+            CfAdminStatsSnapshotService::enqueueRefreshIfNeeded(self::loadModuleSettings(), true, 'admin_action');
+            return;
+        }
+
         if (session_status() === PHP_SESSION_DISABLED) {
             return;
         }
-        self::ensureStatsCacheSession();
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            try {
+                @session_start();
+            } catch (\Throwable $e) {
+            }
+        }
         if (isset($_SESSION[self::STATS_CACHE_SESSION_KEY])) {
             unset($_SESSION[self::STATS_CACHE_SESSION_KEY]);
         }
     }
 
-    private static function resolveCachedStats(): array
+    private static function resolveCachedStats(array $moduleSettings = []): array
     {
-        $cached = self::getCachedStats();
-        if ($cached !== null) {
-            return $cached;
+        if (!class_exists('CfAdminStatsSnapshotService')) {
+            $data = self::computeHeavyStats();
+            return [
+                'data' => $data,
+                'generated_at' => time(),
+                'stale' => false,
+                'pending' => false,
+            ];
         }
-        $fresh = self::computeHeavyStats();
-        self::storeCachedStats($fresh);
-        return $fresh;
+
+        $snapshot = CfAdminStatsSnapshotService::getSnapshot($moduleSettings);
+        if (!empty($snapshot['stale'])) {
+            CfAdminStatsSnapshotService::enqueueRefreshIfNeeded($moduleSettings, false, 'admin_page');
+            $snapshot['pending'] = !empty($snapshot['pending']) || CfAdminStatsSnapshotService::hasPendingRefreshJob();
+        }
+
+        return $snapshot;
+    }
+
+    public static function computeHeavyStatsSnapshot(): array
+    {
+        return self::computeHeavyStats();
     }
 
     private static function computeHeavyStats(): array
@@ -1541,47 +1574,6 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
         }
 
         return $data;
-    }
-
-    private static function getCachedStats(): ?array
-    {
-        if (session_status() === PHP_SESSION_DISABLED) {
-            return null;
-        }
-        self::ensureStatsCacheSession();
-        $cache = $_SESSION[self::STATS_CACHE_SESSION_KEY] ?? null;
-        if (!is_array($cache)) {
-            return null;
-        }
-        $generatedAt = (int) ($cache['generated_at'] ?? 0);
-        if ($generatedAt <= 0 || ($generatedAt + self::STATS_CACHE_TTL_SECONDS) < time()) {
-            return null;
-        }
-        $data = $cache['data'] ?? null;
-        return is_array($data) ? $data : null;
-    }
-
-    private static function storeCachedStats(array $data): void
-    {
-        if (session_status() === PHP_SESSION_DISABLED) {
-            return;
-        }
-        self::ensureStatsCacheSession();
-        $_SESSION[self::STATS_CACHE_SESSION_KEY] = [
-            'generated_at' => time(),
-            'data' => $data,
-        ];
-    }
-
-    private static function ensureStatsCacheSession(): void
-    {
-        if (session_status() === PHP_SESSION_DISABLED || session_status() === PHP_SESSION_ACTIVE) {
-            return;
-        }
-        try {
-            @session_start();
-        } catch (\Throwable $e) {
-        }
     }
 
     private static function normalizeRecords($records): array

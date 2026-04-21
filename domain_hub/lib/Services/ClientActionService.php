@@ -2626,9 +2626,12 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
 
         $strategy = strtolower(trim((string) ($settings['pdns_register_strategy'] ?? '')));
         if (!in_array($strategy, ['local_only', 'hybrid', 'strict_remote'], true)) {
-            $strategy = cfmod_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')
-                ? 'local_only'
-                : 'strict_remote';
+            $legacyRaw = trim((string) ($settings['pdns_register_local_check_only'] ?? '1'));
+            if ($legacyRaw === '') {
+                $strategy = 'local_only';
+            } else {
+                $strategy = cfmod_setting_enabled($legacyRaw) ? 'local_only' : 'strict_remote';
+            }
         }
 
         if ($strategy === 'local_only') {
@@ -2638,10 +2641,9 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
             return false;
         }
 
-        $threshold = intval($settings['pdns_register_hybrid_local_threshold'] ?? 2000);
-        if ($threshold <= 0) {
-            $threshold = 2000;
-        }
+        $thresholdRaw = trim((string) ($settings['pdns_register_hybrid_local_threshold'] ?? '800'));
+        $threshold = is_numeric($thresholdRaw) ? (int) $thresholdRaw : 800;
+        $threshold = max(100, min(50000, $threshold));
 
         $normalizedRoot = strtolower(trim($rootdomain));
         if ($normalizedRoot === '') {
@@ -2649,15 +2651,14 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         }
 
         try {
-            $localRecords = (int) Capsule::table('mod_cloudflare_dns_records as dr')
-                ->join('mod_cloudflare_subdomain as sd', 'dr.subdomain_id', '=', 'sd.id')
-                ->whereRaw('LOWER(sd.rootdomain) = ?', [$normalizedRoot])
+            $localSubdomains = (int) Capsule::table('mod_cloudflare_subdomain')
+                ->whereRaw('LOWER(rootdomain) = ?', [$normalizedRoot])
                 ->count();
         } catch (\Throwable $e) {
-            $localRecords = 0;
+            return true;
         }
 
-        return $localRecords > $threshold;
+        return $localSubdomains >= $threshold;
     }
 
     private static function enqueueAsyncDnsJob(int $userid, string $action): ?int

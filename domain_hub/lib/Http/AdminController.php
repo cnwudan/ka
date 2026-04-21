@@ -75,6 +75,11 @@ class CfAdminController
             return;
         }
 
+        if ($moduleMatches && $action === 'get_admin_heavy_stats') {
+            $this->respondAdminHeavyStats();
+            return;
+        }
+
         if (strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
             return;
         }
@@ -555,6 +560,52 @@ class CfAdminController
         } else {
             echo json_encode(['success' => false]);
         }
+        exit;
+    }
+
+    private function respondAdminHeavyStats(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!isset($_SESSION['adminid']) || (int) $_SESSION['adminid'] <= 0) {
+            echo json_encode(['success' => false, 'error' => 'unauthorized']);
+            exit;
+        }
+
+        $settings = cf_get_module_settings_cached();
+        if (!is_array($settings)) {
+            $settings = [];
+        }
+
+        $requestRefresh = isset($_GET['refresh'])
+            && in_array(strtolower(trim((string) $_GET['refresh'])), ['1', 'on', 'yes', 'true'], true);
+
+        $queued = false;
+        if (class_exists('CfAdminStatsSnapshotService')) {
+            if ($requestRefresh) {
+                $queued = CfAdminStatsSnapshotService::enqueueRefreshIfNeeded($settings, false, 'admin_ajax');
+            }
+            $snapshot = CfAdminStatsSnapshotService::getSnapshot($settings);
+            if (!empty($snapshot['stale'])) {
+                $queued = CfAdminStatsSnapshotService::enqueueRefreshIfNeeded($settings, false, 'admin_ajax') || $queued;
+                $snapshot['pending'] = !empty($snapshot['pending']) || CfAdminStatsSnapshotService::hasPendingRefreshJob();
+            }
+
+            echo json_encode([
+                'success' => true,
+                'queued' => $queued,
+                'generated_at' => (int) ($snapshot['generated_at'] ?? 0),
+                'stale' => !empty($snapshot['stale']),
+                'pending' => !empty($snapshot['pending']),
+                'stats' => is_array($snapshot['data'] ?? null) ? $snapshot['data'] : [],
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => false,
+            'error' => 'stats_service_unavailable',
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 
