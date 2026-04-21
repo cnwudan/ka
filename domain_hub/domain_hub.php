@@ -1347,7 +1347,25 @@ function domain_hub_config() {
                 "FriendlyName" => "PowerDNS 注册跳过远端重复检查",
                 "Type" => "yesno",
                 "Default" => "yes",
-                "Description" => "开启后，当根域供应商为 PowerDNS 时，注册流程仅依赖本地唯一性校验，避免因远端全区查询导致卡顿。",
+                "Description" => "兼容开关：仅在未设置专项策略时生效。开启后，PowerDNS 注册流程默认仅依赖本地唯一性校验。",
+            ],
+            "pdns_register_strategy" => [
+                "FriendlyName" => "PowerDNS 注册策略",
+                "Type" => "dropdown",
+                "Options" => [
+                    "local_only" => "仅本地校验（性能优先）",
+                    "hybrid" => "混合策略（小规模远端校验，大规模仅本地）",
+                    "strict_remote" => "严格远端校验（一致性优先）"
+                ],
+                "Default" => "local_only",
+                "Description" => "PowerDNS 根域注册时的重复检查策略。",
+            ],
+            "pdns_register_hybrid_local_threshold" => [
+                "FriendlyName" => "PowerDNS 混合策略阈值（本地记录数）",
+                "Type" => "text",
+                "Size" => "6",
+                "Default" => "2000",
+                "Description" => "仅在混合策略下生效：当本地该根域记录数超过阈值时，跳过远端重复检查。",
             ],
             "calibration_batch_size" => [
                 "FriendlyName" => "校准批量大小",

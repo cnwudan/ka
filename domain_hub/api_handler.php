@@ -79,11 +79,15 @@ function api_setting_enabled($value): bool {
     return in_array($normalized, ['1', 'on', 'yes', 'true', 'enabled'], true);
 }
 
-function api_should_skip_provider_exists_check(array $providerContext, array $settings): bool {
-    if (!api_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')) {
-        return false;
+function api_pdns_register_strategy(array $settings): string {
+    $strategy = strtolower(trim((string) ($settings['pdns_register_strategy'] ?? '')));
+    if (in_array($strategy, ['local_only', 'hybrid', 'strict_remote'], true)) {
+        return $strategy;
     }
+    return api_setting_enabled($settings['pdns_register_local_check_only'] ?? '1') ? 'local_only' : 'strict_remote';
+}
 
+function api_is_pdns_provider(array $providerContext): bool {
     $providerType = strtolower(trim((string)($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
     if ($providerType !== '') {
         return $providerType === 'powerdns';
@@ -91,6 +95,44 @@ function api_should_skip_provider_exists_check(array $providerContext, array $se
 
     $client = $providerContext['client'] ?? null;
     return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
+}
+
+function api_count_local_dns_records_by_rootdomain(string $rootdomain): int {
+    $normalized = strtolower(trim($rootdomain));
+    if ($normalized === '') {
+        return 0;
+    }
+
+    try {
+        return (int) Capsule::table('mod_cloudflare_dns_records as dr')
+            ->join('mod_cloudflare_subdomain as sd', 'dr.subdomain_id', '=', 'sd.id')
+            ->whereRaw('LOWER(sd.rootdomain) = ?', [$normalized])
+            ->count();
+    } catch (\Throwable $e) {
+        return 0;
+    }
+}
+
+function api_should_skip_provider_exists_check(array $providerContext, array $settings, string $rootdomain = ''): bool {
+    if (!api_is_pdns_provider($providerContext)) {
+        return false;
+    }
+
+    $strategy = api_pdns_register_strategy($settings);
+    if ($strategy === 'local_only') {
+        return true;
+    }
+    if ($strategy === 'strict_remote') {
+        return false;
+    }
+
+    $threshold = intval($settings['pdns_register_hybrid_local_threshold'] ?? 2000);
+    if ($threshold <= 0) {
+        $threshold = 2000;
+    }
+
+    $localRecords = api_count_local_dns_records_by_rootdomain($rootdomain);
+    return $localRecords > $threshold;
 }
 
 function api_provider_error_text($result): string {
@@ -267,7 +309,7 @@ function api_handle_subdomain_register(array $data, $keyRow, array $settings): a
         $result = ['error' => 'root not found'];
         return [$code, $result];
     }
-    $skipProviderExistsCheck = api_should_skip_provider_exists_check($providerContext, $settings);
+    $skipProviderExistsCheck = api_should_skip_provider_exists_check($providerContext, $settings, $root);
     if (!$skipProviderExistsCheck && $cf->checkDomainExists($zone, $full)) {
         $code = 400;
         $result = ['error' => 'already exists on DNS'];

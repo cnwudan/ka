@@ -326,6 +326,43 @@ function cfmod_worker_consume_remote_match(array &$remoteIndex, string $name, st
     return null;
 }
 
+function cfmod_worker_payload_bool(array $payload, string $key, bool $default = false): bool {
+    if (!array_key_exists($key, $payload)) {
+        return $default;
+    }
+    $value = $payload[$key];
+    if (is_bool($value)) {
+        return $value;
+    }
+    $normalized = strtolower(trim((string) $value));
+    if ($normalized === '') {
+        return false;
+    }
+    return in_array($normalized, ['1', 'on', 'yes', 'true', 'enabled'], true);
+}
+
+function cfmod_worker_resolve_fix_scope(array $payload): array {
+    $hasAny = array_key_exists('fix_ttl', $payload)
+        || array_key_exists('fix_missing', $payload)
+        || array_key_exists('fix_extra', $payload);
+
+    $defaults = [
+        'ttl' => true,
+        'missing' => true,
+        'extra' => true,
+    ];
+
+    if (!$hasAny) {
+        return $defaults;
+    }
+
+    return [
+        'ttl' => cfmod_worker_payload_bool($payload, 'fix_ttl', false),
+        'missing' => cfmod_worker_payload_bool($payload, 'fix_missing', false),
+        'extra' => cfmod_worker_payload_bool($payload, 'fix_extra', false),
+    ];
+}
+
 
 function cfmod_risk_scan_response_error($response): string
 {
@@ -558,6 +595,8 @@ function cfmod_job_calibrate_all($job, array $payload): array {
     $batchSize = max(50, min(5000, $batchSize));
     $cursor = intval($payload['cursor_id'] ?? 0);
     $targetRoot = strtolower(trim((string) ($payload['rootdomain'] ?? '')));
+    $targetUserId = intval($payload['userid'] ?? 0);
+    $fixScope = cfmod_worker_resolve_fix_scope($payload);
 
     $subsQuery = Capsule::table('mod_cloudflare_subdomain')
         ->orderBy('id', 'asc');
@@ -566,6 +605,9 @@ function cfmod_job_calibrate_all($job, array $payload): array {
     }
     if ($targetRoot !== '') {
         $subsQuery->whereRaw('LOWER(rootdomain) = ?', [$targetRoot]);
+    }
+    if ($targetUserId > 0) {
+        $subsQuery->where('userid', $targetUserId);
     }
     $subsCollection = $subsQuery
         ->limit($batchSize + 1)
@@ -582,10 +624,14 @@ function cfmod_job_calibrate_all($job, array $payload): array {
             'cursor_start' => $cursor,
             'processed_subdomains' => 0,
             'differences_total' => 0,
-            'warnings' => ['no_subdomains']
+            'warnings' => ['no_subdomains'],
+            'fix_scope' => $fixScope,
         ];
         if ($targetRoot !== '') {
             $emptyStats['rootdomain'] = $targetRoot;
+        }
+        if ($targetUserId > 0) {
+            $emptyStats['userid'] = $targetUserId;
         }
         return $emptyStats;
     }
@@ -607,9 +653,13 @@ function cfmod_job_calibrate_all($job, array $payload): array {
         'action_breakdown' => [],
         'warnings' => [],
         'priority' => $priority,
+        'fix_scope' => $fixScope,
     ];
     if ($targetRoot !== '') {
         $stats['rootdomain'] = $targetRoot;
+    }
+    if ($targetUserId > 0) {
+        $stats['userid'] = $targetUserId;
     }
 
     $providerClients = [];
@@ -644,7 +694,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
             }
 
             try {
-                cfmod_calibrate_subdomain($jobId, $mode, $cf, $s, $zoneCache, $zoneId, $stats, $priority);
+                cfmod_calibrate_subdomain($jobId, $mode, $cf, $s, $zoneCache, $zoneId, $stats, $priority, $fixScope);
             } catch (\Throwable $e) {
                 $stats['warnings'][] = 'calibrate_error:' . $s->id;
                 cfmod_report_exception('calibrate_subdomain', $e);
@@ -662,6 +712,9 @@ function cfmod_job_calibrate_all($job, array $payload): array {
         $newPayload['origin_job_id'] = $payload['origin_job_id'] ?? $jobId;
         if ($targetRoot !== '') {
             $newPayload['rootdomain'] = $targetRoot;
+        }
+        if ($targetUserId > 0) {
+            $newPayload['userid'] = $targetUserId;
         }
 
         try {
@@ -690,13 +743,18 @@ function cfmod_job_calibrate_all($job, array $payload): array {
     return $stats;
 }
 
+
 /**
  * @param CloudflareAPI|DNSPodLegacyAPI|DNSPodIntlAPI|mixed $cf
  */
-function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$zoneCache, string $zoneId, array &$stats, string $priority): void {
+function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$zoneCache, string $zoneId, array &$stats, string $priority, array $fixScope = []): void {
     if (!is_object($cf) || !method_exists($cf, 'getDnsRecords')) {
         throw new \InvalidArgumentException('calibrate_subdomain requires a provider client supporting getDnsRecords');
     }
+    $allowFixTtl = $fixScope['ttl'] ?? true;
+    $allowFixMissing = $fixScope['missing'] ?? true;
+    $allowFixExtra = $fixScope['extra'] ?? true;
+
     $nameSub = strtolower($sub->subdomain);
     $locals = Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $sub->id)->get();
     $stats['processed_records'] = ($stats['processed_records'] ?? 0) + count($locals);
@@ -721,17 +779,21 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
         if (!$matched) {
             $action = 'noop';
             if ($mode === 'fix') {
-                $res = $cf->createDnsRecord($zoneId, $lr->name, $t, $lr->content, $lr->ttl, boolval($lr->proxied));
-                if ($res['success'] ?? false) {
-                    $action = 'created_on_cf';
-                    $newId = $res['result']['id'] ?? null;
-                    Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
-                        'record_id' => $newId,
-                        'updated_at' => date('Y-m-d H:i:s')
-                    ]);
+                if ($allowFixMissing) {
+                    $res = $cf->createDnsRecord($zoneId, $lr->name, $t, $lr->content, $lr->ttl, boolval($lr->proxied));
+                    if ($res['success'] ?? false) {
+                        $action = 'created_on_cf';
+                        $newId = $res['result']['id'] ?? null;
+                        Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
+                            'record_id' => $newId,
+                            'updated_at' => date('Y-m-d H:i:s')
+                        ]);
+                    } else {
+                        $action = 'create_failed';
+                        $stats['warnings'][] = 'create_failed:' . $sub->id . ':' . $n . ':' . $t;
+                    }
                 } else {
-                    $action = 'create_failed';
-                    $stats['warnings'][] = 'create_failed:' . $sub->id . ':' . $n . ':' . $t;
+                    $action = 'scope_skip_missing';
                 }
             }
             cfmod_sync_result($jobId, $sub->id, 'missing_on_cf', $action, [
@@ -752,16 +814,20 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
         if ($needUpdate) {
             $action = 'noop';
             if ($mode === 'fix') {
-                $res = $cf->updateDnsRecord($zoneId, $matched['id'], array_merge([
-                    'type' => $t,
-                    'content' => $lr->content,
-                    'name' => $lr->name
-                ], $update));
-                if ($res['success'] ?? false) {
-                    $action = 'updated_on_cf';
+                if ($allowFixTtl) {
+                    $res = $cf->updateDnsRecord($zoneId, $matched['id'], array_merge([
+                        'type' => $t,
+                        'content' => $lr->content,
+                        'name' => $lr->name
+                    ], $update));
+                    if ($res['success'] ?? false) {
+                        $action = 'updated_on_cf';
+                    } else {
+                        $action = 'update_failed';
+                        $stats['warnings'][] = 'update_failed:' . ($matched['id'] ?? $sub->id);
+                    }
                 } else {
-                    $action = 'update_failed';
-                    $stats['warnings'][] = 'update_failed:' . ($matched['id'] ?? $sub->id);
+                    $action = 'scope_skip_ttl';
                 }
             }
             cfmod_sync_result($jobId, $sub->id, 'mismatch', $action, [
@@ -782,23 +848,27 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
             foreach ($list as $idx => $cr) {
                 $action = 'noop';
                 if ($priority === 'local') {
-                    if ($mode === 'fix' && !empty($cr['id'])) {
-                        $res = $cf->deleteSubdomain($zoneId, $cr['id'], [
-                            'name' => $n,
-                            'type' => $t,
-                            'content' => $cr['content'] ?? null,
-                        ]);
-                        if (($res['success'] ?? false) || cfmod_worker_provider_not_found($res)) {
-                            $action = 'deleted_on_cf';
-                            unset($remoteIndex[$n][$t][$idx]);
-                            $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
+                    if ($mode === 'fix') {
+                        if (!$allowFixExtra) {
+                            $action = 'scope_skip_extra';
+                        } elseif (!empty($cr['id'])) {
+                            $res = $cf->deleteSubdomain($zoneId, $cr['id'], [
+                                'name' => $n,
+                                'type' => $t,
+                                'content' => $cr['content'] ?? null,
+                            ]);
+                            if (($res['success'] ?? false) || cfmod_worker_provider_not_found($res)) {
+                                $action = 'deleted_on_cf';
+                                unset($remoteIndex[$n][$t][$idx]);
+                                $remoteIndex[$n][$t] = array_values($remoteIndex[$n][$t]);
+                            } else {
+                                $action = 'delete_failed';
+                                $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
+                            }
                         } else {
-                            $action = 'delete_failed';
-                            $stats['warnings'][] = 'delete_failed:' . ($cr['id'] ?? '');
+                            $action = 'delete_skipped_no_id';
+                            $stats['warnings'][] = 'delete_skipped_no_id:' . $sub->id . ':' . $n . ':' . $t;
                         }
-                    } elseif ($mode === 'fix') {
-                        $action = 'delete_skipped_no_id';
-                        $stats['warnings'][] = 'delete_skipped_no_id:' . $sub->id . ':' . $n . ':' . $t;
                     }
                     cfmod_sync_result($jobId, $sub->id, 'extra_on_cf', $action, [
                         'name' => $n,
@@ -811,28 +881,32 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                 }
 
                 if ($mode === 'fix') {
-                    try {
-                        Capsule::table('mod_cloudflare_dns_records')->insert([
-                            'subdomain_id' => $sub->id,
-                            'zone_id' => $zoneId,
-                            'record_id' => ($cr['id'] ?? null),
-                            'name' => $n,
-                            'type' => $t,
-                            'content' => ($cr['content'] ?? ''),
-                            'ttl' => intval($cr['ttl'] ?? 600),
-                            'proxied' => 0,
-                            'status' => 'active',
-                            'priority' => null,
-                            'line' => null,
-                            'created_at' => date('Y-m-d H:i:s'),
-                            'updated_at' => date('Y-m-d H:i:s')
-                        ]);
-                        CfSubdomainService::markHasDnsHistory($sub->id);
-                        $action = 'imported_local';
-                    } catch (\Throwable $e) {
-                        $action = 'import_failed';
-                        $stats['warnings'][] = 'import_failed:' . $sub->id . ':' . $n . ':' . $t;
-                        cfmod_report_exception('calibrate_import', $e);
+                    if (!$allowFixMissing) {
+                        $action = 'scope_skip_missing';
+                    } else {
+                        try {
+                            Capsule::table('mod_cloudflare_dns_records')->insert([
+                                'subdomain_id' => $sub->id,
+                                'zone_id' => $zoneId,
+                                'record_id' => ($cr['id'] ?? null),
+                                'name' => $n,
+                                'type' => $t,
+                                'content' => ($cr['content'] ?? ''),
+                                'ttl' => intval($cr['ttl'] ?? 600),
+                                'proxied' => 0,
+                                'status' => 'active',
+                                'priority' => null,
+                                'line' => null,
+                                'created_at' => date('Y-m-d H:i:s'),
+                                'updated_at' => date('Y-m-d H:i:s')
+                            ]);
+                            CfSubdomainService::markHasDnsHistory($sub->id);
+                            $action = 'imported_local';
+                        } catch (\Throwable $e) {
+                            $action = 'import_failed';
+                            $stats['warnings'][] = 'import_failed:' . $sub->id . ':' . $n . ':' . $t;
+                            cfmod_report_exception('calibrate_import', $e);
+                        }
                     }
                 }
 
@@ -2097,6 +2171,12 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
     if ($batchSize <= 0) { $batchSize = 150; }
     $batchSize = max(50, min(5000, $batchSize));
     $cursor = intval($payload['cursor_id'] ?? 0);
+    $targetRoot = strtolower(trim((string) ($payload['rootdomain'] ?? '')));
+    $targetUserId = intval($payload['userid'] ?? 0);
+    $fixScope = cfmod_worker_resolve_fix_scope($payload);
+    $allowFixTtl = $fixScope['ttl'] ?? true;
+    $allowFixMissing = $fixScope['missing'] ?? true;
+    $allowFixExtra = $fixScope['extra'] ?? true;
     $now = date('Y-m-d H:i:s');
 
     $priority = strtolower($settings['sync_authoritative_source'] ?? 'local');
@@ -2114,11 +2194,25 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
         'action_breakdown' => [],
         'warnings' => [],
         'priority' => $priority,
+        'fix_scope' => $fixScope,
     ];
+    if ($targetRoot !== '') {
+        $stats['rootdomain'] = $targetRoot;
+    }
+    if ($targetUserId > 0) {
+        $stats['userid'] = $targetUserId;
+    }
 
-    $subsCollection = Capsule::table('mod_cloudflare_subdomain')
+    $subsQuery = Capsule::table('mod_cloudflare_subdomain')
         ->where('id', '>', $cursor)
-        ->orderBy('id', 'asc')
+        ->orderBy('id', 'asc');
+    if ($targetRoot !== '') {
+        $subsQuery->whereRaw('LOWER(rootdomain) = ?', [$targetRoot]);
+    }
+    if ($targetUserId > 0) {
+        $subsQuery->where('userid', $targetUserId);
+    }
+    $subsCollection = $subsQuery
         ->limit($batchSize + 1)
         ->get();
 
@@ -2218,9 +2312,13 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                 if (!empty($updateData)) {
                                     $action = ($mode === 'fix') ? 'update_local' : 'diff_update_local';
                                     if ($mode === 'fix') {
-                                        $updateData['updated_at'] = $now;
-                                        Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update($updateData);
-                                        $stats['records_updated_local']++;
+                                        if ($allowFixTtl) {
+                                            $updateData['updated_at'] = $now;
+                                            Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update($updateData);
+                                            $stats['records_updated_local']++;
+                                        } else {
+                                            $action = 'scope_skip_ttl';
+                                        }
                                     }
                                     cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
                                         'name' => $recordName,
@@ -2236,7 +2334,9 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                 if ($priority === 'local') {
                                     $action = ($mode === 'fix') ? 'deleted_on_cf' : 'diff_cloud_extra';
                                     if ($mode === 'fix') {
-                                        if (!empty($cr['id'])) {
+                                        if (!$allowFixExtra) {
+                                            $action = 'scope_skip_extra';
+                                        } elseif (!empty($cr['id'])) {
                                             $res = $cf->deleteSubdomain($zone, $cr['id'], [
                                                 'name' => $recordName,
                                                 'type' => $recordType,
@@ -2262,22 +2362,26 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
 
                                 $action = ($mode === 'fix') ? 'insert_local' : 'diff_insert_local';
                                 if ($mode === 'fix') {
-                                    Capsule::table('mod_cloudflare_dns_records')->insert([
-                                        'subdomain_id' => $s->id,
-                                        'zone_id' => $zone,
-                                        'record_id' => $cr['id'] ?? null,
-                                        'name' => strtolower($recordName),
-                                        'type' => strtoupper($recordType),
-                                        'content' => (string) ($cr['content'] ?? ''),
-                                        'ttl' => intval($cr['ttl'] ?? 600),
-                                        'proxied' => 0,
-                                        'priority' => null,
-                                        'line' => null,
-                                        'created_at' => $now,
-                                        'updated_at' => $now
-                                    ]);
-                                    CfSubdomainService::markHasDnsHistory($s->id);
-                                    $stats['records_imported_local']++;
+                                    if (!$allowFixMissing) {
+                                        $action = 'scope_skip_missing';
+                                    } else {
+                                        Capsule::table('mod_cloudflare_dns_records')->insert([
+                                            'subdomain_id' => $s->id,
+                                            'zone_id' => $zone,
+                                            'record_id' => $cr['id'] ?? null,
+                                            'name' => strtolower($recordName),
+                                            'type' => strtoupper($recordType),
+                                            'content' => (string) ($cr['content'] ?? ''),
+                                            'ttl' => intval($cr['ttl'] ?? 600),
+                                            'proxied' => 0,
+                                            'priority' => null,
+                                            'line' => null,
+                                            'created_at' => $now,
+                                            'updated_at' => $now
+                                        ]);
+                                        CfSubdomainService::markHasDnsHistory($s->id);
+                                        $stats['records_imported_local']++;
+                                    }
                                 }
                                 cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
                                     'name' => $recordName,
@@ -2292,23 +2396,27 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                 if ($priority === 'local') {
                                     $action = ($mode === 'fix') ? 'created_on_cf' : 'diff_cloud_missing';
                                     if ($mode === 'fix') {
-                                        $res = $cf->createDnsRecord(
-                                            $zone,
-                                            $recordName,
-                                            $recordType,
-                                            (string) ($lr->content ?? ''),
-                                            intval($lr->ttl ?? 600),
-                                            boolval($lr->proxied ?? false)
-                                        );
-                                        if ($res['success'] ?? false) {
-                                            $newId = $res['result']['id'] ?? null;
-                                            Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
-                                                'record_id' => $newId,
-                                                'updated_at' => $now,
-                                            ]);
+                                        if (!$allowFixMissing) {
+                                            $action = 'scope_skip_missing';
                                         } else {
-                                            $action = 'create_failed';
-                                            $stats['warnings'][] = 'create_failed:' . $s->id . ':' . $recordName . ':' . $recordType;
+                                            $res = $cf->createDnsRecord(
+                                                $zone,
+                                                $recordName,
+                                                $recordType,
+                                                (string) ($lr->content ?? ''),
+                                                intval($lr->ttl ?? 600),
+                                                boolval($lr->proxied ?? false)
+                                            );
+                                            if ($res['success'] ?? false) {
+                                                $newId = $res['result']['id'] ?? null;
+                                                Capsule::table('mod_cloudflare_dns_records')->where('id', $lr->id)->update([
+                                                    'record_id' => $newId,
+                                                    'updated_at' => $now,
+                                                ]);
+                                            } else {
+                                                $action = 'create_failed';
+                                                $stats['warnings'][] = 'create_failed:' . $s->id . ':' . $recordName . ':' . $recordType;
+                                            }
                                         }
                                     }
                                     cfmod_sync_result($jobId, $s->id, 'reconcile', $action, [
@@ -2345,6 +2453,12 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
         $newPayload['cursor_id'] = $lastProcessedId;
         $newPayload['batch_size'] = $batchSize;
         $newPayload['mode'] = $mode;
+        if ($targetRoot !== '') {
+            $newPayload['rootdomain'] = $targetRoot;
+        }
+        if ($targetUserId > 0) {
+            $newPayload['userid'] = $targetUserId;
+        }
         try {
             $continuationId = Capsule::table('mod_cloudflare_jobs')->insertGetId([
                 'type' => 'reconcile_all',

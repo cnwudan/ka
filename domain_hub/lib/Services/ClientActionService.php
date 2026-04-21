@@ -932,7 +932,7 @@ if($_POST['action'] == "register") {
                                     $zone_id = $cf->getZoneId($rootdomain);
 
                                     if ($zone_id) {
-                                        $skipProviderExistsCheck = self::shouldSkipProviderExistsCheck($providerContext, $module_settings);
+                                        $skipProviderExistsCheck = self::shouldSkipProviderExistsCheck($providerContext, $module_settings, $rootdomain);
                                         $existsOnCF = false;
                                         if (!$skipProviderExistsCheck) {
                                             $existsOnCF = $cf->checkDomainExists($zone_id, $fullsub);
@@ -2610,19 +2610,54 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         return in_array($action, $supported, true);
     }
 
-    private static function shouldSkipProviderExistsCheck(array $providerContext, array $settings): bool
+    private static function shouldSkipProviderExistsCheck(array $providerContext, array $settings, string $rootdomain = ''): bool
     {
-        if (!cfmod_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')) {
+        $providerType = strtolower(trim((string) ($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
+        if ($providerType !== '') {
+            $isPdns = ($providerType === 'powerdns');
+        } else {
+            $client = $providerContext['client'] ?? null;
+            $isPdns = is_object($client) && stripos(get_class($client), 'powerdns') !== false;
+        }
+
+        if (!$isPdns) {
             return false;
         }
 
-        $providerType = strtolower(trim((string) ($providerContext['account']['provider_type'] ?? ($providerContext['provider_type'] ?? ''))));
-        if ($providerType !== '') {
-            return $providerType === 'powerdns';
+        $strategy = strtolower(trim((string) ($settings['pdns_register_strategy'] ?? '')));
+        if (!in_array($strategy, ['local_only', 'hybrid', 'strict_remote'], true)) {
+            $strategy = cfmod_setting_enabled($settings['pdns_register_local_check_only'] ?? '1')
+                ? 'local_only'
+                : 'strict_remote';
         }
 
-        $client = $providerContext['client'] ?? null;
-        return is_object($client) && stripos(get_class($client), 'powerdns') !== false;
+        if ($strategy === 'local_only') {
+            return true;
+        }
+        if ($strategy === 'strict_remote') {
+            return false;
+        }
+
+        $threshold = intval($settings['pdns_register_hybrid_local_threshold'] ?? 2000);
+        if ($threshold <= 0) {
+            $threshold = 2000;
+        }
+
+        $normalizedRoot = strtolower(trim($rootdomain));
+        if ($normalizedRoot === '') {
+            return false;
+        }
+
+        try {
+            $localRecords = (int) Capsule::table('mod_cloudflare_dns_records as dr')
+                ->join('mod_cloudflare_subdomain as sd', 'dr.subdomain_id', '=', 'sd.id')
+                ->whereRaw('LOWER(sd.rootdomain) = ?', [$normalizedRoot])
+                ->count();
+        } catch (\Throwable $e) {
+            $localRecords = 0;
+        }
+
+        return $localRecords > $threshold;
     }
 
     private static function enqueueAsyncDnsJob(int $userid, string $action): ?int
