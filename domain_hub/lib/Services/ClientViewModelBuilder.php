@@ -178,6 +178,7 @@ class CfClientViewModelBuilder
         $globals['inviteRegistrationGithubAuthUrl'] = '';
         $globals['inviteRegistrationGithubConfigured'] = false;
         $globals['inviteRegistrationGithubMinMonths'] = 0;
+        $globals['inviteRegistrationGithubMinRepos'] = 0;
         $globals['inviteRegistrationGithubBinding'] = [
             'bound' => false,
             'github_id' => 0,
@@ -198,6 +199,7 @@ class CfClientViewModelBuilder
             if ($githubOptionEnabled && class_exists('CfInviteRegistrationGithubService')) {
                 $globals['inviteRegistrationGithubConfigured'] = CfInviteRegistrationGithubService::isOauthConfigured($moduleSettings);
                 $globals['inviteRegistrationGithubMinMonths'] = CfInviteRegistrationGithubService::getMinAccountAgeMonths($moduleSettings);
+                $globals['inviteRegistrationGithubMinRepos'] = CfInviteRegistrationGithubService::getMinPublicRepoCount($moduleSettings);
                 $globals['inviteRegistrationGithubBinding'] = CfInviteRegistrationGithubService::getBindingForUser($userId);
 
                 $githubEntryScript = class_exists('CfClientController')
@@ -452,6 +454,7 @@ class CfClientViewModelBuilder
             'invite_registration_github_client_id' => '',
             'invite_registration_github_client_secret' => '',
             'invite_registration_github_min_months' => '0',
+            'invite_registration_github_min_repos' => '0',
             'invite_registration_inviter_min_months' => '0',
             'enable_github_star_reward' => '0',
             'github_star_repo_url' => '',

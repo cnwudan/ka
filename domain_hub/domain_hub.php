@@ -1570,6 +1570,13 @@ function domain_hub_config() {
             "Default" => "0",
             "Description" => "GitHub 账号创建时间需至少满 N 个月（0=不限制，建议 6-12）",
         ],
+        "invite_registration_github_min_repos" => [
+            "FriendlyName" => "GitHub 最少公开仓库数",
+            "Type" => "text",
+            "Size" => "5",
+            "Default" => "0",
+            "Description" => "GitHub 账号公开仓库数量需至少为 N（0=不限制）",
+        ],
         "invite_registration_inviter_min_months" => [
             "FriendlyName" => "邀请码发放者最低月龄",
             "Type" => "text",

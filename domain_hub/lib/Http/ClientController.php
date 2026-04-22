@@ -526,6 +526,10 @@ class CfClientController
                     $required = max(0, (int) ($context['required_months'] ?? 0));
                     $actual = max(0, (int) ($context['actual_months'] ?? 0));
                     return self::actionText('cfclient.invite_registration.github.error.account_age_insufficient', '账号年限不足：当前仅 %1$s 个月，需至少 %2$s 个月。', [$actual, $required]);
+                case 'repo_count_insufficient':
+                    $requiredRepos = max(0, (int) ($context['required_repos'] ?? 0));
+                    $actualRepos = max(0, (int) ($context['actual_repos'] ?? 0));
+                    return self::actionText('cfclient.invite_registration.github.error.repo_count_insufficient', '公开仓库数量不足：当前仅 %1$s 个，需至少 %2$s 个。', [$actualRepos, $requiredRepos]);
                 case 'github_already_bound':
                     return self::actionText('cfclient.invite_registration.github.error.already_bound', '该 GitHub 账号已绑定其他平台账户，无法重复激活。');
                 case 'oauth_exchange_failed':
