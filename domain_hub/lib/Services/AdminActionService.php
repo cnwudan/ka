@@ -126,8 +126,18 @@ class CfAdminActionService
 
     private static function triggerQueueInBackground(int $maxJobs = 1): void
     {
-        $worker = __DIR__ . '/../worker.php';
-        if (!file_exists($worker)) {
+        $workerCandidates = [
+            __DIR__ . '/../../worker.php',
+            __DIR__ . '/../worker.php',
+        ];
+        $worker = null;
+        foreach ($workerCandidates as $candidate) {
+            if (file_exists($candidate)) {
+                $worker = $candidate;
+                break;
+            }
+        }
+        if ($worker === null) {
             return;
         }
         $phpBinary = defined('PHP_BINARY') ? PHP_BINARY : 'php';
@@ -859,9 +869,71 @@ class CfAdminActionService
                 self::flashSuccess('迁移任务已加入队列，稍后将在后台逐批处理。');
             } else {
                 $jobStub = (object) ['id' => 0, 'priority' => 5];
-                $stats = cfmod_job_transfer_root_provider($jobStub, $payload);
-                $summary = $stats['message'] ?? '迁移已完成';
-                self::flashSuccess('迁移已完成：' . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8'));
+                $round = 0;
+                $maxRounds = 2000;
+                $cursor = 0;
+                $summaryStats = [
+                    'processed_subdomains' => 0,
+                    'records_created_on_cf' => 0,
+                    'records_updated_on_cf' => 0,
+                    'records_exists_on_cf' => 0,
+                    'records_deleted_on_cf' => 0,
+                    'records_updated_local' => 0,
+                    'records_imported_local' => 0,
+                ];
+                $warningCount = 0;
+                $lastMessage = '迁移已完成';
+                do {
+                    $round++;
+                    $runPayload = $payload;
+                    $runPayload['cursor_id'] = $cursor;
+                    $runPayload['target_zone_identifier'] = $targetZoneId;
+                    $runPayload['disable_continuation_enqueue'] = 1;
+                    $stats = cfmod_job_transfer_root_provider($jobStub, $runPayload);
+                    foreach ($summaryStats as $key => $value) {
+                        $summaryStats[$key] += intval($stats[$key] ?? 0);
+                    }
+                    $warnings = $stats['warnings'] ?? [];
+                    if (is_array($warnings)) {
+                        $warningCount += count($warnings);
+                    }
+                    $lastMessage = $stats['message'] ?? $lastMessage;
+                    $hasMore = !empty($stats['has_more']);
+                    $nextCursor = intval($stats['cursor_end'] ?? $cursor);
+                    if ($hasMore && $nextCursor <= $cursor) {
+                        $hasMore = false;
+                        $warningCount++;
+                    }
+                    $cursor = $nextCursor;
+                } while ($hasMore && $round < $maxRounds);
+
+                $summaryParts = [];
+                $summaryParts[] = '子域 ' . intval($summaryStats['processed_subdomains']) . ' 个';
+                $summaryParts[] = '新增解析 ' . intval($summaryStats['records_created_on_cf']) . ' 条';
+                if (intval($summaryStats['records_exists_on_cf']) > 0) {
+                    $summaryParts[] = '已存在 ' . intval($summaryStats['records_exists_on_cf']) . ' 条';
+                }
+                if (intval($summaryStats['records_updated_on_cf']) > 0) {
+                    $summaryParts[] = '更新解析 ' . intval($summaryStats['records_updated_on_cf']) . ' 条';
+                }
+                if (intval($summaryStats['records_deleted_on_cf']) > 0) {
+                    $summaryParts[] = '删除旧平台解析 ' . intval($summaryStats['records_deleted_on_cf']) . ' 条';
+                }
+                if (intval($summaryStats['records_imported_local']) > 0 || intval($summaryStats['records_updated_local']) > 0) {
+                    $summaryParts[] = '本地同步 ' . (intval($summaryStats['records_imported_local']) + intval($summaryStats['records_updated_local'])) . ' 条';
+                }
+                if ($warningCount > 0) {
+                    $summaryParts[] = '警告 ' . $warningCount . ' 条';
+                }
+                if ($round >= $maxRounds) {
+                    $summaryParts[] = '达到单次执行上限，请改用队列模式继续';
+                }
+
+                $summary = implode('，', array_filter($summaryParts));
+                if ($summary === '') {
+                    $summary = $lastMessage;
+                }
+                self::flashSuccess('迁移执行完成：' . htmlspecialchars($summary, ENT_QUOTES, 'UTF-8'));
             }
 
             if (function_exists('cloudflare_subdomain_log')) {
