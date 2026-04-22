@@ -21,12 +21,13 @@ class CfAdminStatsSnapshotService
 
         $ttl = self::resolveCacheTtlSeconds($settings);
         $stale = empty($data) || $generatedAt <= 0 || ($generatedAt + $ttl) < time();
+        $pending = $stale ? self::hasPendingRefreshJob() : false;
 
         return [
             'data' => self::normalizeStatsPayload($data),
             'generated_at' => $generatedAt,
             'stale' => $stale,
-            'pending' => self::hasPendingRefreshJob(),
+            'pending' => $pending,
             'ttl' => $ttl,
         ];
     }
@@ -91,6 +92,7 @@ class CfAdminStatsSnapshotService
                 'created_at' => $now,
                 'updated_at' => $now,
             ]);
+            self::triggerQueueInBackground();
             return true;
         } catch (\Throwable $e) {
             return false;
@@ -259,5 +261,27 @@ class CfAdminStatsSnapshotService
             $modules[] = $legacy;
         }
         return $modules;
+    }
+
+    private static function triggerQueueInBackground(int $maxJobs = 1): void
+    {
+        $workerCandidates = [
+            __DIR__ . '/../../worker.php',
+            __DIR__ . '/../worker.php',
+        ];
+        $worker = null;
+        foreach ($workerCandidates as $candidate) {
+            if (file_exists($candidate)) {
+                $worker = $candidate;
+                break;
+            }
+        }
+        if ($worker === null) {
+            return;
+        }
+        $phpBinary = defined('PHP_BINARY') ? PHP_BINARY : 'php';
+        $maxJobs = max(1, (int) $maxJobs);
+        $cmd = escapeshellarg($phpBinary) . ' ' . escapeshellarg($worker) . ' ' . $maxJobs . ' > /dev/null 2>&1 &';
+        @exec($cmd);
     }
 }

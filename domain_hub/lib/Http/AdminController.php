@@ -591,6 +591,20 @@ class CfAdminController
                 $snapshot['pending'] = !empty($snapshot['pending']) || CfAdminStatsSnapshotService::hasPendingRefreshJob();
             }
 
+            $snapshotData = is_array($snapshot['data'] ?? null) ? $snapshot['data'] : [];
+            $generatedAt = (int) ($snapshot['generated_at'] ?? 0);
+            if (empty($snapshotData) && $generatedAt <= 0 && class_exists('CfAdminViewModelBuilder')) {
+                try {
+                    $inlineStats = CfAdminViewModelBuilder::computeHeavyStatsSnapshot();
+                    CfAdminStatsSnapshotService::storeSnapshot($inlineStats);
+                    $snapshot['data'] = $inlineStats;
+                    $snapshot['generated_at'] = time();
+                    $snapshot['stale'] = false;
+                    $snapshot['pending'] = false;
+                } catch (\Throwable $e) {
+                }
+            }
+
             echo json_encode([
                 'success' => true,
                 'queued' => $queued,
