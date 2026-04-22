@@ -443,7 +443,89 @@ function cfmod_worker_acquire_provider_client_cached($providerAccountId, array $
     return $clientContext;
 }
 
+function cfmod_recover_stalled_running_jobs(array $settings = []): int
+{
+    $timeoutMinutes = intval($settings['job_running_timeout_minutes'] ?? 120);
+    if ($timeoutMinutes <= 0) {
+        $timeoutMinutes = 120;
+    }
+    $timeoutMinutes = max(5, min(10080, $timeoutMinutes));
+
+    $now = date('Y-m-d H:i:s');
+    $cutoff = date('Y-m-d H:i:s', time() - $timeoutMinutes * 60);
+    $metricsSupported = cfmod_job_metrics_supported();
+
+    try {
+        $stalledJobs = Capsule::table('mod_cloudflare_jobs')
+            ->where('status', 'running')
+            ->where('updated_at', '<=', $cutoff)
+            ->orderBy('id', 'asc')
+            ->limit(200)
+            ->get();
+    } catch (\Throwable $e) {
+        return 0;
+    }
+
+    $recovered = 0;
+    foreach ($stalledJobs as $job) {
+        try {
+            $attempts = intval($job->attempts ?? 0);
+            if ($attempts <= 0) {
+                $attempts = 1;
+            }
+            $toFailed = $attempts >= 5;
+            $reason = 'Recovered stalled running job after ' . $timeoutMinutes . ' minutes';
+            $prevError = trim((string) ($job->last_error ?? ''));
+            $combinedError = $prevError !== '' ? ($prevError . ' | ' . $reason) : $reason;
+
+            $updateData = [
+                'status' => $toFailed ? 'failed' : 'pending',
+                'next_run_at' => $toFailed ? null : $now,
+                'updated_at' => $now,
+                'last_error' => substr($combinedError, 0, 1000),
+            ];
+
+            if ($metricsSupported) {
+                if ($toFailed) {
+                    $updateData['finished_at'] = $now;
+                    if (!empty($job->started_at)) {
+                        $duration = time() - strtotime((string) $job->started_at);
+                        $updateData['duration_seconds'] = max(0, intval($duration));
+                    }
+                } else {
+                    $updateData['started_at'] = null;
+                    $updateData['finished_at'] = null;
+                    $updateData['duration_seconds'] = null;
+                    $updateData['stats_json'] = null;
+                }
+            }
+
+            $updated = Capsule::table('mod_cloudflare_jobs')
+                ->where('id', $job->id)
+                ->where('status', 'running')
+                ->update($updateData);
+            if ($updated > 0) {
+                $recovered++;
+            }
+        } catch (\Throwable $e) {
+            cfmod_report_exception('recover_stalled_job', $e);
+        }
+    }
+
+    if ($recovered > 0 && function_exists('cloudflare_subdomain_log')) {
+        cloudflare_subdomain_log('queue_recover_stalled_jobs', [
+            'recovered' => $recovered,
+            'timeout_minutes' => $timeoutMinutes,
+        ]);
+    }
+
+    return $recovered;
+}
+
 function run_cf_queue_once(int $maxJobs = 3): void {
+    $settings = cfmod_get_settings();
+    cfmod_recover_stalled_running_jobs($settings);
+
     $now = date('Y-m-d H:i:s');
     $metricsSupported = cfmod_job_metrics_supported();
     $jobs = Capsule::table('mod_cloudflare_jobs')
