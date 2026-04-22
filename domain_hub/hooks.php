@@ -96,6 +96,41 @@ add_hook('AfterCronJob', 1, function($vars) {
             }
         }
 
+        $autoUnbanIntervalMin = intval($settings['auto_unban_interval_minutes'] ?? 15);
+        $autoUnbanIntervalMin = max(5, min(1440, $autoUnbanIntervalMin));
+        $hasPendingAutoUnban = Capsule::table('mod_cloudflare_jobs')
+            ->where('type', 'auto_unban_due')
+            ->whereIn('status', ['pending', 'running'])
+            ->exists();
+        if (!$hasPendingAutoUnban) {
+            $lastAutoUnban = Capsule::table('mod_cloudflare_jobs')
+                ->where('type', 'auto_unban_due')
+                ->orderBy('id', 'desc')
+                ->first();
+            $shouldAutoUnban = false;
+            if (!$lastAutoUnban) {
+                $shouldAutoUnban = true;
+            } elseif (in_array($lastAutoUnban->status, ['failed', 'done', 'cancelled'], true)) {
+                $lastTime = $lastAutoUnban->updated_at ?? $lastAutoUnban->created_at;
+                if (!$lastTime || strtotime($lastTime) <= time() - $autoUnbanIntervalMin * 60) {
+                    $shouldAutoUnban = true;
+                }
+            }
+
+            if ($shouldAutoUnban) {
+                Capsule::table('mod_cloudflare_jobs')->insert([
+                    'type' => 'auto_unban_due',
+                    'payload_json' => json_encode(['auto' => true], JSON_UNESCAPED_UNICODE),
+                    'priority' => 4,
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        }
+
         if (class_exists('CfAdminStatsSnapshotService')) {
             CfAdminStatsSnapshotService::enqueueRefreshIfNeeded($settings, false, 'cron');
         }

@@ -338,6 +338,19 @@ class CfClientController
                 return;
             }
 
+            $banState = function_exists('cfmod_resolve_user_ban_state')
+                ? cfmod_resolve_user_ban_state($userId)
+                : ['is_banned' => false, 'reason' => ''];
+            if (!empty($banState['is_banned'])) {
+                $message = self::actionText('cfclient.banned.operation_blocked', '您的账号已被封禁或停用，当前操作已禁用。');
+                $banReason = trim((string) ($banState['reason'] ?? ''));
+                if ($banReason !== '') {
+                    $message .= ' ' . $banReason;
+                }
+                $this->flashClientMessage('warning', $message, 'invite_gate');
+                $this->redirectToInviteRegistrationBase();
+            }
+
             $settings = function_exists('cf_get_module_settings_cached') ? cf_get_module_settings_cached() : [];
             if (!is_array($settings)) {
                 $settings = [];
@@ -540,6 +553,30 @@ class CfClientController
                                 self::enforceAjaxRateLimit($action, $userId);
                             } catch (CfRateLimitExceededException $e) {
                                 self::respondAjaxRateLimitError($e);
+                            }
+
+                            $banState = (isset($globals['banState']) && is_array($globals['banState']))
+                                ? $globals['banState']
+                                : (function_exists('cfmod_resolve_user_ban_state') ? cfmod_resolve_user_ban_state($userId) : ['is_banned' => false, 'reason' => '']);
+                            $isUserBannedOrInactive = !empty($globals['isUserBannedOrInactive'])
+                                || !empty($banState['is_banned'])
+                                || (isset($client->status) && strtolower((string) $client->status) !== 'active');
+                            if ($isUserBannedOrInactive && self::shouldBlockActionWhenBanned((string) $action)) {
+                                $banReasonText = trim((string) ($banState['reason'] ?? ''));
+                                $message = self::actionText(
+                                    'cfclient.banned.operation_blocked',
+                                    '您的账号已被封禁或停用，当前操作已禁用。'
+                                );
+                                if ($banReasonText !== '') {
+                                    $message .= ' ' . $banReasonText;
+                                }
+                                header('Content-Type: application/json; charset=utf-8');
+                                echo json_encode([
+                                    'success' => false,
+                                    'error' => $message,
+                                    'reason' => 'user_banned',
+                                ], JSON_UNESCAPED_UNICODE);
+                                exit;
                             }
 
                             // VPN检测（AJAX）- 用于前端弹窗时预检
@@ -1707,6 +1744,14 @@ class CfClientController
             'retry_after_minutes' => $minutes,
         ]);
         exit;
+    }
+
+    private static function shouldBlockActionWhenBanned(string $action): bool
+    {
+        if ($action === '') {
+            return false;
+        }
+        return strpos($action, 'ajax_') === 0;
     }
 
     private static function actionText(string $key, string $default, array $params = []): string

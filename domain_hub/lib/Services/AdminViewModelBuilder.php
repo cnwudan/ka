@@ -1476,6 +1476,24 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
             $snapshot['pending'] = !empty($snapshot['pending']) || CfAdminStatsSnapshotService::hasPendingRefreshJob();
         }
 
+        $snapshotData = is_array($snapshot['data'] ?? null) ? $snapshot['data'] : [];
+        $generatedAt = (int) ($snapshot['generated_at'] ?? 0);
+        if (empty($snapshotData) && $generatedAt <= 0) {
+            try {
+                $inlineStats = self::computeHeavyStats();
+                if (class_exists('CfAdminStatsSnapshotService')) {
+                    CfAdminStatsSnapshotService::storeSnapshot($inlineStats);
+                }
+                $snapshot = [
+                    'data' => $inlineStats,
+                    'generated_at' => time(),
+                    'stale' => false,
+                    'pending' => false,
+                ];
+            } catch (\Throwable $e) {
+            }
+        }
+
         return $snapshot;
     }
 

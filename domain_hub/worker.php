@@ -443,7 +443,89 @@ function cfmod_worker_acquire_provider_client_cached($providerAccountId, array $
     return $clientContext;
 }
 
+function cfmod_recover_stalled_running_jobs(array $settings = []): int
+{
+    $timeoutMinutes = intval($settings['job_running_timeout_minutes'] ?? 120);
+    if ($timeoutMinutes <= 0) {
+        $timeoutMinutes = 120;
+    }
+    $timeoutMinutes = max(5, min(10080, $timeoutMinutes));
+
+    $now = date('Y-m-d H:i:s');
+    $cutoff = date('Y-m-d H:i:s', time() - $timeoutMinutes * 60);
+    $metricsSupported = cfmod_job_metrics_supported();
+
+    try {
+        $stalledJobs = Capsule::table('mod_cloudflare_jobs')
+            ->where('status', 'running')
+            ->where('updated_at', '<=', $cutoff)
+            ->orderBy('id', 'asc')
+            ->limit(200)
+            ->get();
+    } catch (\Throwable $e) {
+        return 0;
+    }
+
+    $recovered = 0;
+    foreach ($stalledJobs as $job) {
+        try {
+            $attempts = intval($job->attempts ?? 0);
+            if ($attempts <= 0) {
+                $attempts = 1;
+            }
+            $toFailed = $attempts >= 5;
+            $reason = 'Recovered stalled running job after ' . $timeoutMinutes . ' minutes';
+            $prevError = trim((string) ($job->last_error ?? ''));
+            $combinedError = $prevError !== '' ? ($prevError . ' | ' . $reason) : $reason;
+
+            $updateData = [
+                'status' => $toFailed ? 'failed' : 'pending',
+                'next_run_at' => $toFailed ? null : $now,
+                'updated_at' => $now,
+                'last_error' => substr($combinedError, 0, 1000),
+            ];
+
+            if ($metricsSupported) {
+                if ($toFailed) {
+                    $updateData['finished_at'] = $now;
+                    if (!empty($job->started_at)) {
+                        $duration = time() - strtotime((string) $job->started_at);
+                        $updateData['duration_seconds'] = max(0, intval($duration));
+                    }
+                } else {
+                    $updateData['started_at'] = null;
+                    $updateData['finished_at'] = null;
+                    $updateData['duration_seconds'] = null;
+                    $updateData['stats_json'] = null;
+                }
+            }
+
+            $updated = Capsule::table('mod_cloudflare_jobs')
+                ->where('id', $job->id)
+                ->where('status', 'running')
+                ->update($updateData);
+            if ($updated > 0) {
+                $recovered++;
+            }
+        } catch (\Throwable $e) {
+            cfmod_report_exception('recover_stalled_job', $e);
+        }
+    }
+
+    if ($recovered > 0 && function_exists('cloudflare_subdomain_log')) {
+        cloudflare_subdomain_log('queue_recover_stalled_jobs', [
+            'recovered' => $recovered,
+            'timeout_minutes' => $timeoutMinutes,
+        ]);
+    }
+
+    return $recovered;
+}
+
 function run_cf_queue_once(int $maxJobs = 3): void {
+    $settings = cfmod_get_settings();
+    cfmod_recover_stalled_running_jobs($settings);
+
     $now = date('Y-m-d H:i:s');
     $metricsSupported = cfmod_job_metrics_supported();
     $jobs = Capsule::table('mod_cloudflare_jobs')
@@ -1644,6 +1726,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     $batchSize = max(25, min(5000, $batchSize));
     $cursor = intval($payload['cursor_id'] ?? 0);
     $deleteOld = !empty($payload['delete_old_records']);
+    $disableContinuationEnqueue = !empty($payload['disable_continuation_enqueue']);
     $autoResume = !empty($payload['auto_resume']);
     $resumeStatus = isset($payload['resume_status']) ? (string)$payload['resume_status'] : null;
     $targetZone = trim((string)($payload['target_zone_identifier'] ?? ''));
@@ -1669,6 +1752,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         'processed_subdomains' => 0,
         'records_created_on_cf' => 0,
         'records_updated_on_cf' => 0,
+        'records_exists_on_cf' => 0,
         'records_deleted_on_cf' => 0,
         'records_updated_local' => 0,
         'records_imported_local' => 0,
@@ -1747,29 +1831,50 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 }
             }
 
-            $records = [];
+            $recordPool = [];
+            $appendRecord = static function (array $candidate) use (&$recordPool, $subdomainName): void {
+                $normalized = cfmod_worker_transfer_normalize_record($candidate, $subdomainName);
+                if ($normalized === null) {
+                    return;
+                }
+                $recordKey = strtolower($normalized['name']) . '|' . strtoupper($normalized['type']) . '|' . $normalized['content'] . '|' . (string) ($normalized['priority'] ?? '');
+                if (!isset($recordPool[$recordKey])) {
+                    $recordPool[$recordKey] = $normalized;
+                    return;
+                }
+                $existing = $recordPool[$recordKey];
+                if ($existing['priority'] === null && $normalized['priority'] !== null) {
+                    $recordPool[$recordKey]['priority'] = $normalized['priority'];
+                }
+                if (intval($existing['ttl'] ?? 0) <= 0 && intval($normalized['ttl'] ?? 0) > 0) {
+                    $recordPool[$recordKey]['ttl'] = intval($normalized['ttl']);
+                }
+            };
+
             if (!empty($allLocalRecords[$sid])) {
                 foreach ($allLocalRecords[$sid] as $recordRow) {
-                    $records[] = [
+                    $appendRecord([
                         'name' => strtolower($recordRow->name ?? $subdomainName),
                         'type' => strtoupper($recordRow->type ?? ''),
                         'content' => (string) ($recordRow->content ?? ''),
                         'ttl' => intval($recordRow->ttl ?? 600),
                         'priority' => isset($recordRow->priority) ? intval($recordRow->priority) : null,
-                    ];
+                    ]);
                 }
-            } elseif ($sourceCf) {
+            }
+
+            if ($sourceCf) {
                 try {
                     $remote = $sourceCf->getDnsRecords($s->cloudflare_zone_id ?: $rootdomain, $subdomainName, ['per_page' => 1000]);
                     if (($remote['success'] ?? false)) {
                         foreach (($remote['result'] ?? []) as $rr) {
-                            $records[] = [
+                            $appendRecord([
                                 'name' => strtolower($rr['name'] ?? $subdomainName),
                                 'type' => strtoupper($rr['type'] ?? ''),
                                 'content' => (string) ($rr['content'] ?? ''),
                                 'ttl' => intval($rr['ttl'] ?? 600),
                                 'priority' => isset($rr['priority']) ? intval($rr['priority']) : null,
-                            ];
+                            ]);
                         }
                     } else {
                         $stats['warnings'][] = 'remote_records_unavailable:' . $sid;
@@ -1779,6 +1884,8 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                     cfmod_report_exception('transfer_root_provider_remote_fetch', $e);
                 }
             }
+
+            $records = array_values($recordPool);
 
             if (empty($records)) {
                 $stats['warnings'][] = 'no_records:' . $sid;
@@ -1792,34 +1899,17 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                     $ttl = 600;
                 }
                 try {
-                    $res = $targetCf->createDnsRecord($targetZone, $name, $type, $rec['content'], $ttl, false);
+                    $res = cfmod_worker_transfer_create_on_target($targetCf, $targetZone, $name, $type, $rec, $ttl);
                     if ($res['success'] ?? false) {
                         $stats['records_created_on_cf']++;
                         continue;
                     }
-                    $existing = $targetCf->getDnsRecords($targetZone, $name, ['type' => $type]);
-                    if (($existing['success'] ?? false) && !empty($existing['result'])) {
-                        $existingId = $existing['result'][0]['id'] ?? null;
-                        if ($existingId) {
-                            $updatePayload = [
-                                'type' => $type,
-                                'name' => $name,
-                                'content' => $rec['content'],
-                                'ttl' => $ttl,
-                            ];
-                            if ($type === 'MX' && $rec['priority'] !== null) {
-                                $updatePayload['priority'] = intval($rec['priority']);
-                            }
-                            $update = $targetCf->updateDnsRecord($targetZone, $existingId, $updatePayload);
-                            if ($update['success'] ?? false) {
-                                $stats['records_updated_on_cf']++;
-                            } else {
-                                $stats['warnings'][] = 'update_failed:' . $sid;
-                            }
-                        }
-                    } else {
-                        $stats['warnings'][] = 'create_failed:' . $sid;
+                    $existing = $targetCf->getDnsRecords($targetZone, $name, ['type' => $type, 'per_page' => 1000]);
+                    if (($existing['success'] ?? false) && cfmod_worker_transfer_remote_record_exists($existing['result'] ?? [], $rec)) {
+                        $stats['records_exists_on_cf']++;
+                        continue;
                     }
+                    $stats['warnings'][] = 'create_failed:' . $sid;
                 } catch (\Throwable $e) {
                     $stats['warnings'][] = 'write_failed:' . $sid;
                     cfmod_report_exception('transfer_root_provider_write', $e);
@@ -1839,36 +1929,18 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                         if ($name === $subdomainName && $rid && $primaryRecordId === null) {
                             $primaryRecordId = $rid;
                         }
-                        $existing = Capsule::table('mod_cloudflare_dns_records')
-                            ->where('subdomain_id', $sid)
-                            ->where('name', $name)
-                            ->where('type', $type)
-                            ->first();
-                        if ($existing) {
-                            Capsule::table('mod_cloudflare_dns_records')->where('id', $existing->id)->update([
-                                'zone_id' => $targetZone,
-                                'record_id' => $rid,
-                                'content' => $content,
-                                'ttl' => $ttl,
-                                'updated_at' => $now,
-                            ]);
+                        $localSyncResult = cfmod_worker_transfer_upsert_local_record($sid, $targetZone, [
+                            'id' => $rid,
+                            'name' => $name,
+                            'type' => $type,
+                            'content' => $content,
+                            'ttl' => $ttl,
+                            'priority' => $fr['priority'] ?? null,
+                            'proxied' => !empty($fr['proxied']) ? 1 : 0,
+                        ], $now);
+                        if ($localSyncResult === 'updated') {
                             $stats['records_updated_local']++;
-                        } else {
-                            Capsule::table('mod_cloudflare_dns_records')->insert([
-                                'subdomain_id' => $sid,
-                                'zone_id' => $targetZone,
-                                'record_id' => $rid,
-                                'name' => $name,
-                                'type' => $type,
-                                'content' => $content,
-                                'ttl' => $ttl,
-                                'proxied' => 0,
-                                'priority' => null,
-                                'line' => null,
-                                'created_at' => $now,
-                                'updated_at' => $now,
-                            ]);
-                            CfSubdomainService::markHasDnsHistory($sid);
+                        } elseif ($localSyncResult === 'inserted') {
                             $stats['records_imported_local']++;
                         }
                     }
@@ -1928,23 +2000,25 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
 
     if ($hasMore && $lastId > 0) {
         $stats['has_more'] = true;
-        try {
-            $nextPayload = $payload;
-            $nextPayload['cursor_id'] = $lastId;
-            $nextPayload['target_zone_identifier'] = $targetZone;
-            Capsule::table('mod_cloudflare_jobs')->insert([
-                'type' => 'transfer_root_provider',
-                'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
-                'priority' => intval($job->priority ?? 5),
-                'status' => 'pending',
-                'attempts' => 0,
-                'next_run_at' => null,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-        } catch (\Throwable $e) {
-            $stats['warnings'][] = 'enqueue_failed';
-            cfmod_report_exception('transfer_root_provider_enqueue', $e);
+        if (!$disableContinuationEnqueue) {
+            try {
+                $nextPayload = $payload;
+                $nextPayload['cursor_id'] = $lastId;
+                $nextPayload['target_zone_identifier'] = $targetZone;
+                Capsule::table('mod_cloudflare_jobs')->insert([
+                    'type' => 'transfer_root_provider',
+                    'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
+                    'priority' => intval($job->priority ?? 5),
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            } catch (\Throwable $e) {
+                $stats['warnings'][] = 'enqueue_failed';
+                cfmod_report_exception('transfer_root_provider_enqueue', $e);
+            }
         }
     } else {
         $stats['has_more'] = false;
@@ -1978,6 +2052,190 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     }
 
     return $stats;
+}
+
+function cfmod_worker_transfer_normalize_record(array $record, string $defaultName): ?array {
+    $name = strtolower(trim((string) ($record['name'] ?? $defaultName)));
+    if ($name === '') {
+        $name = strtolower(trim($defaultName));
+    }
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    $content = trim((string) ($record['content'] ?? ''));
+    if ($name === '' || $type === '' || $content === '') {
+        return null;
+    }
+
+    $ttl = intval($record['ttl'] ?? 600);
+    if ($ttl <= 0) {
+        $ttl = 600;
+    }
+
+    $priority = null;
+    if (array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== '') {
+        $priority = intval($record['priority']);
+    }
+
+    if ($type === 'MX') {
+        if ($priority === null && preg_match('/^\s*(\d+)\s+(.+?)\s*$/', $content, $mxMatch)) {
+            $priority = intval($mxMatch[1]);
+            $content = trim($mxMatch[2]);
+        }
+        $content = rtrim($content, '.');
+    } elseif (in_array($type, ['CNAME', 'NS', 'PTR'], true)) {
+        $content = rtrim($content, '.');
+    }
+
+    return [
+        'name' => $name,
+        'type' => $type,
+        'content' => $content,
+        'ttl' => $ttl,
+        'priority' => $priority,
+    ];
+}
+
+function cfmod_worker_transfer_create_on_target($providerClient, string $zoneId, string $name, string $type, array $record, int $ttl): array {
+    $type = strtoupper(trim($type));
+    $content = (string) ($record['content'] ?? '');
+
+    if ($type === 'MX' && method_exists($providerClient, 'createMXRecord')) {
+        $priority = isset($record['priority']) && $record['priority'] !== null ? intval($record['priority']) : 10;
+        return $providerClient->createMXRecord($zoneId, $name, $content, $priority, $ttl);
+    }
+
+    return $providerClient->createDnsRecord($zoneId, $name, $type, $content, $ttl, false);
+}
+
+function cfmod_worker_transfer_mx_parts(array $record): array {
+    $priority = null;
+    if (array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== '') {
+        $priority = intval($record['priority']);
+    }
+    $content = trim((string) ($record['content'] ?? ''));
+    if (preg_match('/^\s*(\d+)\s+(.+?)\s*$/', $content, $mxMatch)) {
+        if ($priority === null) {
+            $priority = intval($mxMatch[1]);
+        }
+        $content = trim($mxMatch[2]);
+    }
+    $content = strtolower(rtrim($content, '.'));
+
+    return [
+        'priority' => $priority,
+        'content' => $content,
+    ];
+}
+
+function cfmod_worker_transfer_remote_record_exists(array $existingRecords, array $candidate): bool {
+    $candidateNormalized = cfmod_worker_transfer_normalize_record($candidate, (string) ($candidate['name'] ?? ''));
+    if ($candidateNormalized === null) {
+        return false;
+    }
+
+    foreach ($existingRecords as $existing) {
+        if (!is_array($existing)) {
+            continue;
+        }
+        $existingNormalized = cfmod_worker_transfer_normalize_record($existing, $candidateNormalized['name']);
+        if ($existingNormalized === null) {
+            continue;
+        }
+        if ($existingNormalized['name'] !== $candidateNormalized['name']) {
+            continue;
+        }
+        if ($existingNormalized['type'] !== $candidateNormalized['type']) {
+            continue;
+        }
+
+        if ($candidateNormalized['type'] === 'MX') {
+            $candidateMx = cfmod_worker_transfer_mx_parts($candidateNormalized);
+            $existingMx = cfmod_worker_transfer_mx_parts($existingNormalized);
+            if ($candidateMx['content'] !== $existingMx['content']) {
+                continue;
+            }
+            if ($candidateMx['priority'] !== null && $existingMx['priority'] !== null && intval($candidateMx['priority']) !== intval($existingMx['priority'])) {
+                continue;
+            }
+            return true;
+        }
+
+        if (strtolower(trim((string) $existingNormalized['content'])) === strtolower(trim((string) $candidateNormalized['content']))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function cfmod_worker_transfer_upsert_local_record(int $subdomainId, string $targetZone, array $remoteRecord, string $now): ?string {
+    if ($subdomainId <= 0) {
+        return null;
+    }
+
+    $normalized = cfmod_worker_transfer_normalize_record($remoteRecord, (string) ($remoteRecord['name'] ?? ''));
+    if ($normalized === null) {
+        return null;
+    }
+
+    $recordId = isset($remoteRecord['id']) && $remoteRecord['id'] !== null ? (string) $remoteRecord['id'] : null;
+    $recordName = $normalized['name'];
+    $recordType = $normalized['type'];
+    $recordContent = (string) $normalized['content'];
+    $recordTtl = intval($normalized['ttl'] ?? 600);
+    $recordPriority = $normalized['priority'];
+
+    $existing = null;
+    if ($recordId !== null && $recordId !== '') {
+        $existing = Capsule::table('mod_cloudflare_dns_records')
+            ->where('subdomain_id', $subdomainId)
+            ->where('record_id', $recordId)
+            ->first();
+    }
+    if (!$existing) {
+        $existing = Capsule::table('mod_cloudflare_dns_records')
+            ->where('subdomain_id', $subdomainId)
+            ->where('name', $recordName)
+            ->where('type', $recordType)
+            ->where('content', $recordContent)
+            ->first();
+    }
+
+    $updatePayload = [
+        'zone_id' => $targetZone,
+        'name' => $recordName,
+        'type' => $recordType,
+        'content' => $recordContent,
+        'ttl' => $recordTtl,
+        'priority' => $recordPriority,
+        'proxied' => !empty($remoteRecord['proxied']) ? 1 : 0,
+        'updated_at' => $now,
+    ];
+    if ($recordId !== null && $recordId !== '') {
+        $updatePayload['record_id'] = $recordId;
+    }
+
+    if ($existing) {
+        Capsule::table('mod_cloudflare_dns_records')->where('id', $existing->id)->update($updatePayload);
+        return 'updated';
+    }
+
+    Capsule::table('mod_cloudflare_dns_records')->insert([
+        'subdomain_id' => $subdomainId,
+        'zone_id' => $targetZone,
+        'record_id' => $recordId,
+        'name' => $recordName,
+        'type' => $recordType,
+        'content' => $recordContent,
+        'ttl' => $recordTtl,
+        'proxied' => !empty($remoteRecord['proxied']) ? 1 : 0,
+        'priority' => $recordPriority,
+        'line' => null,
+        'created_at' => $now,
+        'updated_at' => $now,
+    ]);
+    CfSubdomainService::markHasDnsHistory($subdomainId);
+
+    return 'inserted';
 }
 
 function cfmod_job_purge_root_local($job, array $payload = []): array {
