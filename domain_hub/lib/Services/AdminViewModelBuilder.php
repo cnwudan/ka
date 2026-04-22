@@ -24,6 +24,8 @@ class CfAdminViewModelBuilder
         'risk',
         'logs',
         'maintenance',
+        'subdomains',
+        'system',
     ];
 
     private const STATS_CACHE_SESSION_KEY = 'cfmod_admin_stats_cache_v1';
@@ -35,11 +37,14 @@ class CfAdminViewModelBuilder
         $providers = self::buildProviders($moduleSettings);
 
         $viewModel = self::initializeBlocks();
+        $viewModel['moduleSettings'] = $moduleSettings;
+        $viewModel['system'] = self::buildSystemStatus();
         $viewModel['alerts'] = self::buildAlerts();
         $viewModel['stats'] = self::buildStats($moduleSettings);
         $viewModel['providers'] = $providers;
         $rootdomainsView = self::buildRootdomains($moduleSettings, $providers);
         $viewModel['rootdomains'] = $rootdomainsView;
+        $viewModel['subdomains'] = self::buildSubdomains();
         $viewModel['announcements'] = self::buildAnnouncements($moduleSettings);
         $viewModel['privileged'] = self::buildPrivileged();
         $viewModel['quotas'] = self::buildQuotas($moduleSettings);
@@ -48,8 +53,8 @@ class CfAdminViewModelBuilder
         $viewModel['invite'] = self::buildInviteInsights($moduleSettings);
         $viewModel['bans'] = self::buildBans();
         $viewModel['runtime'] = self::buildRuntimeTools();
-$viewModel['dnsUnlockLogs'] = self::buildDnsUnlockLogs();
-$viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
+        $viewModel['dnsUnlockLogs'] = self::buildDnsUnlockLogs();
+        $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
         $viewModel['rootdomainInviteLogs'] = self::buildRootdomainInviteLogs();
         $viewModel['logs'] = self::buildLogs();
 
@@ -65,6 +70,172 @@ $viewModel['inviteRegistrationLogs'] = self::buildInviteRegistrationLogs();
 
         return [
             'messages' => $alerts,
+        ];
+    }
+
+    private static function buildSystemStatus(): array
+    {
+        $tablesExist = false;
+        try {
+            $tablesExist = Capsule::schema()->hasTable('mod_cloudflare_subdomain')
+                && Capsule::schema()->hasTable('mod_cloudflare_subdomain_quotas');
+        } catch (\Throwable $e) {
+            $tablesExist = false;
+        }
+
+        return [
+            'tablesExist' => $tablesExist,
+        ];
+    }
+
+    private static function buildSubdomains(): array
+    {
+        $search = trim((string) ($_GET['search'] ?? ''));
+        $statusFilter = trim((string) ($_GET['status'] ?? ''));
+        $userFilterRaw = $_GET['user'] ?? '';
+        $userFilter = is_string($userFilterRaw) ? trim($userFilterRaw) : '';
+        $resolvedUserId = null;
+        if ($userFilter !== '' && ctype_digit($userFilter)) {
+            $resolvedUserId = (int) $userFilter;
+        }
+
+        $expiryDaysInputRaw = trim((string) ($_GET['expiry_days'] ?? ''));
+        $expiryDaysFilter = null;
+        $expiryDaysInput = '';
+        if ($expiryDaysInputRaw !== '' && ctype_digit($expiryDaysInputRaw)) {
+            $expiryDaysFilter = max(1, min(3650, (int) $expiryDaysInputRaw));
+            $expiryDaysInput = (string) $expiryDaysFilter;
+        }
+
+        $showAllSubdomains = (($_GET['view_all_subdomains'] ?? '') === '1');
+        $subPage = max(1, (int) ($_GET['sub_page'] ?? 1));
+        $subPerPage = 10;
+        $subdomains = [];
+        $subTotal = 0;
+        $subTotalPages = 1;
+
+        try {
+            $baseQuery = Capsule::table('mod_cloudflare_subdomain as s')
+                ->leftJoin('tblclients as c', 's.userid', '=', 'c.id')
+                ->select('s.*', 'c.firstname', 'c.lastname', 'c.email');
+
+            if ($search !== '') {
+                $searchLike = '%' . $search . '%';
+                $baseQuery->where(function ($q) use ($searchLike) {
+                    $q->where('s.subdomain', 'like', $searchLike)
+                        ->orWhere('s.rootdomain', 'like', $searchLike)
+                        ->orWhere('c.firstname', 'like', $searchLike)
+                        ->orWhere('c.lastname', 'like', $searchLike)
+                        ->orWhere('c.email', 'like', $searchLike);
+                });
+            }
+
+            if ($statusFilter !== '') {
+                $baseQuery->where('s.status', $statusFilter);
+            }
+
+            if ($resolvedUserId !== null) {
+                $baseQuery->where('s.userid', $resolvedUserId);
+            } elseif ($userFilter !== '') {
+                $userLike = '%' . $userFilter . '%';
+                $baseQuery->where(function ($q) use ($userLike) {
+                    $q->where('c.email', 'like', $userLike)
+                        ->orWhere('c.firstname', 'like', $userLike)
+                        ->orWhere('c.lastname', 'like', $userLike);
+                });
+            }
+
+            if ($expiryDaysFilter !== null) {
+                $deadline = date('Y-m-d H:i:s', time() + ($expiryDaysFilter * 86400));
+                $baseQuery->whereNotNull('s.expires_at')
+                    ->where('s.expires_at', '<=', $deadline)
+                    ->where(function ($q) {
+                        $q->whereNull('s.never_expires')
+                            ->orWhere('s.never_expires', 0);
+                    });
+            }
+
+            $subTotal = (clone $baseQuery)->count();
+
+            if ($showAllSubdomains) {
+                $subPage = 1;
+                $subdomains = (clone $baseQuery)
+                    ->orderBy('s.id', 'desc')
+                    ->get();
+                $subTotalPages = 1;
+            } else {
+                $subTotalPages = max(1, (int) ceil($subTotal / $subPerPage));
+                if ($subPage > $subTotalPages) {
+                    $subPage = $subTotalPages;
+                }
+                $offset = ($subPage - 1) * $subPerPage;
+                $subdomains = (clone $baseQuery)
+                    ->orderBy('s.id', 'desc')
+                    ->offset($offset)
+                    ->limit($subPerPage)
+                    ->get();
+            }
+        } catch (\Throwable $e) {
+            $subdomains = [];
+            $subTotal = 0;
+            $subTotalPages = 1;
+        }
+
+        $parsedPage = max(1, (int) ($_GET['parsed_page'] ?? 1));
+        $parsedPerPage = 10;
+        $parsedOffset = ($parsedPage - 1) * $parsedPerPage;
+        $parsedTotal = 0;
+        $parsedTotalPages = 1;
+        $parsedItems = [];
+
+        try {
+            $parsedBase = Capsule::table('mod_cloudflare_subdomain as s')
+                ->join('mod_cloudflare_dns_records as r', 'r.subdomain_id', '=', 's.id');
+            $parsedTotal = (clone $parsedBase)->distinct()->count('s.id');
+            $parsedTotalPages = max(1, (int) ceil($parsedTotal / $parsedPerPage));
+            if ($parsedPage > $parsedTotalPages) {
+                $parsedPage = $parsedTotalPages;
+                $parsedOffset = ($parsedPage - 1) * $parsedPerPage;
+            }
+            $parsedItems = Capsule::table('mod_cloudflare_subdomain as s')
+                ->join('mod_cloudflare_dns_records as r', 'r.subdomain_id', '=', 's.id')
+                ->leftJoin('tblclients as c', 's.userid', '=', 'c.id')
+                ->select('s.id', 's.userid', 's.subdomain', 's.rootdomain', 's.dns_record_id', 's.status', 's.created_at', 's.updated_at', 'c.email')
+                ->distinct()
+                ->orderBy('s.id', 'desc')
+                ->offset($parsedOffset)
+                ->limit($parsedPerPage)
+                ->get();
+        } catch (\Throwable $e) {
+            $parsedTotal = 0;
+            $parsedTotalPages = 1;
+            $parsedItems = [];
+        }
+
+        return [
+            'filters' => [
+                'search' => $search,
+                'status' => $statusFilter,
+                'user' => $userFilter,
+                'resolvedUserId' => $resolvedUserId,
+                'expiryDaysInput' => $expiryDaysInput,
+                'expiryDaysFilter' => $expiryDaysFilter,
+                'showAll' => $showAllSubdomains,
+            ],
+            'list' => [
+                'items' => self::normalizeRecords($subdomains),
+                'page' => $subPage,
+                'perPage' => $subPerPage,
+                'total' => $subTotal,
+                'totalPages' => $subTotalPages,
+            ],
+            'parsed' => [
+                'items' => self::normalizeRecords($parsedItems),
+                'page' => $parsedPage,
+                'perPage' => $parsedPerPage,
+                'total' => $parsedTotal,
+                'totalPages' => $parsedTotalPages,
+            ],
         ];
     }
 

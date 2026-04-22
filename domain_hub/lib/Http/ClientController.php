@@ -1381,30 +1381,65 @@ class CfClientController
                                         ->limit($limit)
                                         ->get();
                                     $rows = [];
-                                    foreach ($rt as $i => $row) {
-                                        $uid = intval($row->inviter_userid);
-                                        // 邮箱掩码
-                                        $emailMasked = '***';
-                                        $u = Capsule::table('tblclients')->select('email')->where('id',$uid)->first();
-                                        if ($u && !empty($u->email)) {
-                                            $parts = explode('@', $u->email);
-                                            if (count($parts) === 2) {
-                                                $local = $parts[0]; $domain = $parts[1];
-                                                $localMasked = strlen($local) > 2 ? substr($local,0,2) . str_repeat('*', max(0, strlen($local)-2)) : str_repeat('*', strlen($local));
-                                                $domainMasked = preg_replace('/(^.).*(\..{1,2})$/', '$1***$2', $domain);
-                                                $emailMasked = $localMasked . '@' . $domainMasked;
+                                    $rankRows = [];
+                                    $userIds = [];
+                                    foreach ($rt as $row) {
+                                        $uid = intval($row->inviter_userid ?? 0);
+                                        if ($uid <= 0) {
+                                            continue;
+                                        }
+                                        $rankRows[] = [
+                                            'uid' => $uid,
+                                            'count' => intval($row->cnt ?? 0),
+                                        ];
+                                        $userIds[$uid] = $uid;
+                                    }
+
+                                    $emailMap = [];
+                                    $codeMap = [];
+                                    $userIds = array_values($userIds);
+                                    if (!empty($userIds)) {
+                                        if (function_exists('cfmod_client_fetch_invite_user_meta')) {
+                                            [$emailMap, $codeMap] = cfmod_client_fetch_invite_user_meta($userIds);
+                                        } else {
+                                            try {
+                                                $users = Capsule::table('tblclients')
+                                                    ->select('id', 'email')
+                                                    ->whereIn('id', $userIds)
+                                                    ->get();
+                                                foreach ($users as $userRow) {
+                                                    $emailMap[(int) ($userRow->id ?? 0)] = $userRow->email ?? '';
+                                                }
+                                            } catch (\Throwable $e) {
+                                            }
+                                            try {
+                                                $codes = Capsule::table('mod_cloudflare_invitation_codes')
+                                                    ->select('userid', 'code')
+                                                    ->whereIn('userid', $userIds)
+                                                    ->get();
+                                                foreach ($codes as $codeRow) {
+                                                    $codeMap[(int) ($codeRow->userid ?? 0)] = $codeRow->code ?? '';
+                                                }
+                                            } catch (\Throwable $e) {
                                             }
                                         }
-                                        // 邀请码掩码
-                                        $codeRow = Capsule::table('mod_cloudflare_invitation_codes')->select('code')->where('userid',$uid)->first();
-                                        $codeVal = $codeRow->code ?? '';
-                                        $codeMasked = cfmod_mask_invite_code($codeVal);
+                                    }
+
+                                    foreach ($rankRows as $i => $rankRow) {
+                                        $uid = (int) ($rankRow['uid'] ?? 0);
+                                        $email = (string) ($emailMap[$uid] ?? '');
+                                        if (function_exists('cfmod_client_mask_leaderboard_email')) {
+                                            $emailMasked = cfmod_client_mask_leaderboard_email($email);
+                                        } else {
+                                            $emailMasked = '***';
+                                        }
+                                        $codeMasked = cfmod_mask_invite_code((string) ($codeMap[$uid] ?? ''));
                                         $rows[] = [
                                             'rank' => $i + 1,
                                             'uid' => $uid,
                                             'emailMasked' => $emailMasked,
                                             'codeMasked' => $codeMasked,
-                                            'count' => intval($row->cnt)
+                                            'count' => (int) ($rankRow['count'] ?? 0),
                                         ];
                                     }
 
