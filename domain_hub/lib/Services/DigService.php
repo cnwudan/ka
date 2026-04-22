@@ -20,11 +20,11 @@ class CfDigService
             'url' => 'https://dns.google/resolve?name={domain}&type={type}',
         ],
         [
-            'key' => 'quad9',
-            'name' => 'Quad9 DNS',
+            'key' => 'alidns',
+            'name' => 'AliDNS DoH',
             'mode' => 'wire',
             'accept' => 'application/dns-message',
-            'url' => 'https://dns.quad9.net/dns-query?dns={dns_query}',
+            'url' => 'https://dns.alidns.com/dns-query?dns={dns_query}',
         ],
     ];
 
@@ -316,7 +316,7 @@ class CfDigService
         }
 
         if (stripos($sampleText, 'requires HTTP/2') !== false) {
-            return 'Quad9 服务器要求 HTTP/2，请检查 PHP cURL 是否已启用 HTTP/2（nghttp2）支持。';
+            return '上游 DNS 服务器要求 HTTP/2，请检查 PHP cURL 是否已启用 HTTP/2（nghttp2）支持。';
         }
 
         return $sampleText;
@@ -410,8 +410,8 @@ class CfDigService
 
     private static function resolveResolverHttpVersion(array $resolver): int
     {
-        $mode = strtolower(trim((string) ($resolver['mode'] ?? 'json')));
-        if ($mode === 'wire') {
+        $forceHttp2 = !empty($resolver['force_http2']);
+        if ($forceHttp2) {
             if (defined('CURL_HTTP_VERSION_2TLS')) {
                 return (int) CURL_HTTP_VERSION_2TLS;
             }
