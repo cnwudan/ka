@@ -1700,6 +1700,36 @@ function domain_hub_config() {
             "Default" => "yes",
             "Description" => "开启后前台导航显示 WHOIS 查询与隐私开关",
         ],
+        "enable_dig_center" => [
+            "FriendlyName" => "启用 Dig 查询中心",
+            "Type" => "yesno",
+            "Default" => "yes",
+            "Description" => "开启后前台功能中心显示 DNS Dig 全网解析探测工具",
+        ],
+        "dig_timeout_seconds" => [
+            "FriendlyName" => "Dig 查询超时(秒)",
+            "Type" => "text",
+            "Size" => "4",
+            "Default" => "6",
+            "Description" => "单个解析器查询超时，建议 3-10 秒",
+        ],
+        "dig_log_mode" => [
+            "FriendlyName" => "Dig 日志记录模式",
+            "Type" => "dropdown",
+            "Options" => [
+                "meta" => "仅元数据（推荐，只记录谁查了哪个域名）",
+                "off" => "关闭 Dig 日志",
+            ],
+            "Default" => "meta",
+            "Description" => "为节省磁盘，默认不记录完整 DNS 响应 JSON",
+        ],
+        "dig_logs_retention_days" => [
+            "FriendlyName" => "Dig 日志保留天数",
+            "Type" => "text",
+            "Size" => "4",
+            "Default" => "30",
+            "Description" => "后台任务会定时清理超过该天数的 Dig 元数据日志（1-365，0=不清理）",
+        ],
         "risk_scan_enabled" => [
                 "FriendlyName" => "启用周期性风险扫描",
                 "Type" => "yesno",

@@ -585,6 +585,9 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 case 'cleanup_general_logs':
                     $stats = cfmod_job_cleanup_general_logs($job, $payload) ?: [];
                     break;
+                case 'cleanup_dig_logs':
+                    $stats = cfmod_job_cleanup_dig_logs($job, $payload) ?: [];
+                    break;
                 case 'cleanup_sync_logs':
                     $stats = cfmod_job_cleanup_sync_logs($job, $payload) ?: [];
                     break;
@@ -3528,6 +3531,100 @@ function cfmod_job_cleanup_general_logs($job, array $payload = []): array {
         $stats['message'] = 'general log cleanup failed';
         cfmod_report_exception('cleanup_general_logs', $e);
     }
+    return $stats;
+}
+
+function cfmod_job_cleanup_dig_logs($job, array $payload = []): array {
+    $stats = [
+        'deleted' => 0,
+        'warnings' => [],
+    ];
+    try {
+        $settings = cfmod_get_settings();
+        $retention = intval($payload['retention_days'] ?? ($settings['dig_logs_retention_days'] ?? 30));
+        if ($retention <= 0) {
+            $stats['message'] = 'dig log cleanup disabled';
+            return $stats;
+        }
+        $retention = max(1, min(365, $retention));
+
+        $batchLimit = intval($payload['batch_limit'] ?? 2000);
+        if ($batchLimit <= 0) {
+            $batchLimit = 2000;
+        }
+        $batchLimit = max(100, min(5000, $batchLimit));
+
+        $cutoff = date('Y-m-d H:i:s', time() - $retention * 86400);
+        $rowsRaw = Capsule::table('mod_cloudflare_logs')
+            ->where('action', 'client_dig_lookup')
+            ->where('created_at', '<', $cutoff)
+            ->orderBy('id', 'asc')
+            ->limit($batchLimit + 1)
+            ->get();
+
+        if ($rowsRaw instanceof \Illuminate\Support\Collection) {
+            $rowsRaw = $rowsRaw->all();
+        }
+        $rowCount = is_array($rowsRaw) ? count($rowsRaw) : 0;
+        if ($rowCount === 0) {
+            $stats['message'] = 'no dig logs to cleanup';
+            return $stats;
+        }
+
+        $hasMore = $rowCount > $batchLimit;
+        $batchRows = $hasMore ? array_slice($rowsRaw, 0, $batchLimit) : $rowsRaw;
+        $ids = [];
+        foreach ($batchRows as $row) {
+            $id = is_object($row) ? ($row->id ?? null) : ($row['id'] ?? null);
+            if ($id !== null) {
+                $ids[] = (int) $id;
+            }
+        }
+        if (empty($ids)) {
+            $stats['message'] = 'no dig logs to cleanup';
+            return $stats;
+        }
+
+        $deleted = Capsule::table('mod_cloudflare_logs')->whereIn('id', $ids)->delete();
+        $stats['deleted'] = $deleted;
+        $stats['message'] = 'deleted ' . $deleted . ' dig logs older than ' . $retention . ' days';
+
+        if ($hasMore) {
+            $stats['has_more'] = true;
+            try {
+                Capsule::table('mod_cloudflare_jobs')->insert([
+                    'type' => 'cleanup_dig_logs',
+                    'payload_json' => json_encode([
+                        'retention_days' => $retention,
+                        'batch_limit' => $batchLimit,
+                        'auto' => !empty($payload['auto']),
+                    ], JSON_UNESCAPED_UNICODE),
+                    'priority' => intval($job->priority ?? 5),
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => date('Y-m-d H:i:s'),
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
+            } catch (\Throwable $e) {
+                $stats['warnings'][] = 'enqueue_failed';
+                cfmod_report_exception('cleanup_dig_logs_enqueue', $e);
+            }
+        }
+
+        if ($deleted > 0 && function_exists('cloudflare_subdomain_log')) {
+            cloudflare_subdomain_log('cleanup_dig_logs', [
+                'deleted' => $deleted,
+                'cutoff' => $cutoff,
+                'has_more' => $hasMore ? 1 : 0,
+            ]);
+        }
+    } catch (\Throwable $e) {
+        $stats['warnings'][] = 'cleanup_failed';
+        $stats['message'] = 'dig log cleanup failed';
+        cfmod_report_exception('cleanup_dig_logs', $e);
+    }
+
     return $stats;
 }
 

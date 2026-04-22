@@ -246,6 +246,41 @@ add_hook('AfterCronJob', 1, function($vars) {
             }
         }
 
+        $digRetention = intval($settings['dig_logs_retention_days'] ?? 30);
+        $digLogMode = strtolower(trim((string) ($settings['dig_log_mode'] ?? 'meta')));
+        if ($digLogMode !== 'off' && $digRetention > 0) {
+            $lastDigCleanup = Capsule::table('mod_cloudflare_jobs')
+                ->where('type', 'cleanup_dig_logs')
+                ->whereIn('status', ['failed', 'done', 'cancelled'])
+                ->orderBy('id', 'desc')
+                ->first();
+            $shouldDigCleanup = false;
+            if (!$lastDigCleanup) {
+                $shouldDigCleanup = true;
+            } else {
+                $lastTime = $lastDigCleanup->updated_at ?? $lastDigCleanup->created_at;
+                if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) {
+                    $shouldDigCleanup = true;
+                }
+            }
+            if ($shouldDigCleanup) {
+                Capsule::table('mod_cloudflare_jobs')->insert([
+                    'type' => 'cleanup_dig_logs',
+                    'payload_json' => json_encode([
+                        'retention_days' => $digRetention,
+                        'batch_limit' => 2000,
+                        'auto' => true,
+                    ], JSON_UNESCAPED_UNICODE),
+                    'priority' => 5,
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now
+                ]);
+            }
+        }
+
         $syncRetention = intval($settings['sync_logs_retention_days'] ?? 0);
         if ($syncRetention > 0) {
             $lastSyncCleanup = Capsule::table('mod_cloudflare_jobs')

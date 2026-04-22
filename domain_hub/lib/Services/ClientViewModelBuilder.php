@@ -359,6 +359,27 @@ class CfClientViewModelBuilder
         $globals['whoisPrivacyEnabled'] = $whoisPrivacyEnabled;
         $globals['whoisManagedDomainCount'] = $whoisManagedDomainCount;
 
+        $digFeatureEnabled = false;
+        $digSupportedTypes = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
+        if (class_exists('CfDigService')) {
+            try {
+                $digFeatureEnabled = CfDigService::isEnabled($moduleSettings);
+                $types = CfDigService::getSupportedTypes();
+                if (is_array($types) && !empty($types)) {
+                    $digSupportedTypes = array_values(array_unique(array_map(static function ($value) {
+                        return strtoupper(trim((string) $value));
+                    }, $types)));
+                    $digSupportedTypes = array_values(array_filter($digSupportedTypes, static function ($value) {
+                        return $value !== '';
+                    }));
+                }
+            } catch (\Throwable $e) {
+                $digFeatureEnabled = false;
+            }
+        }
+        $globals['digFeatureEnabled'] = $digFeatureEnabled;
+        $globals['digSupportedTypes'] = $digSupportedTypes;
+
         $domainSearch = self::resolveDomainSearch($moduleSlug, $moduleSettings);
         $globals = array_merge($globals, $domainSearch);
 
