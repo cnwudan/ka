@@ -13,10 +13,83 @@ if (!function_exists('cf_get_privileged_limit')) {
     }
 }
 
+if (!function_exists('cf_privileged_setting_enabled')) {
+    function cf_privileged_setting_enabled($value, bool $default = false): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+        if ($value === null) {
+            return $default;
+        }
+        $normalized = strtolower(trim((string) $value));
+        if ($normalized === '') {
+            return $default;
+        }
+        return in_array($normalized, ['1', 'on', 'yes', 'true', 'enabled'], true);
+    }
+}
+
+if (!function_exists('cf_get_privileged_feature_defaults')) {
+    function cf_get_privileged_feature_defaults(): array
+    {
+        return [
+            'allow_register_suspended_root' => false,
+            'unlimited_invite_generation' => true,
+            'force_never_expire' => true,
+            'allow_delete_with_dns_history' => false,
+        ];
+    }
+}
+
+if (!function_exists('cf_is_privileged_feature_enabled')) {
+    function cf_is_privileged_feature_enabled(string $feature, ?array $moduleSettings = null): bool
+    {
+        $defaults = cf_get_privileged_feature_defaults();
+        $settingMap = [
+            'allow_register_suspended_root' => 'privileged_allow_register_suspended_root',
+            'unlimited_invite_generation' => 'privileged_unlimited_invite_generation',
+            'force_never_expire' => 'privileged_force_never_expire',
+            'allow_delete_with_dns_history' => 'privileged_allow_delete_with_dns_history',
+        ];
+        if (!array_key_exists($feature, $settingMap)) {
+            return false;
+        }
+
+        $default = $defaults[$feature] ?? false;
+        if ($moduleSettings !== null) {
+            return cf_privileged_setting_enabled($moduleSettings[$settingMap[$feature]] ?? null, $default);
+        }
+
+        if (!isset($GLOBALS['cf_privileged_feature_cache']) || !is_array($GLOBALS['cf_privileged_feature_cache'])) {
+            $GLOBALS['cf_privileged_feature_cache'] = [];
+        }
+        if (array_key_exists($feature, $GLOBALS['cf_privileged_feature_cache'])) {
+            return (bool) $GLOBALS['cf_privileged_feature_cache'][$feature];
+        }
+
+        $settings = [];
+        if (function_exists('cf_get_module_settings_cached')) {
+            try {
+                $loaded = cf_get_module_settings_cached();
+                if (is_array($loaded)) {
+                    $settings = $loaded;
+                }
+            } catch (\Throwable $e) {
+                $settings = [];
+            }
+        }
+
+        $enabled = cf_privileged_setting_enabled($settings[$settingMap[$feature]] ?? null, $default);
+        $GLOBALS['cf_privileged_feature_cache'][$feature] = $enabled;
+        return $enabled;
+    }
+}
+
 if (!function_exists('cf_clear_privileged_cache')) {
     function cf_clear_privileged_cache(): void
     {
-        unset($GLOBALS['cf_privileged_user_cache']);
+        unset($GLOBALS['cf_privileged_user_cache'], $GLOBALS['cf_privileged_feature_cache']);
     }
 }
 

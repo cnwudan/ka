@@ -181,7 +181,8 @@
                                             if (!$hasDnsHistory && $hasAnyDnsRecords) {
                                                 $hasDnsHistory = true;
                                             }
-                                            $canDisplayDelete = $clientDeleteEnabled && !$hasDnsHistory;
+                                            $privilegedDeleteHistoryEnabled = !empty($privilegedAllowDeleteWithDnsHistory);
+                                            $canDisplayDelete = $clientDeleteEnabled && (!$hasDnsHistory || $privilegedDeleteHistoryEnabled);
                                             if($hasAnyDnsRecords): ?>
                                                 <span class="badge bg-success">
                                                     <i class="fas fa-check"></i> <?php echo cfclient_lang('cfclient.subdomains.status.resolved', '已解析', [], true); ?>

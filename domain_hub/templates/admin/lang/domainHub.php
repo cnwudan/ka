@@ -34,7 +34,7 @@ return [
 
     // Privileged users
     'privileged_card_title' => '特权用户管理',
-    'privileged_card_intro' => '特权用户将获得不限数量的域名注册额度，且其注册的域名默认设置为永久不过期。',
+    'privileged_card_intro' => '可将用户标记为特权用户。其注册上限与扩展能力（如永久域名/邀请码无限等）由“运行控制”中的特权开关统一决定。',
     'privileged_search_placeholder' => '输入用户ID、邮箱或姓名关键字',
     'privileged_search_empty' => '未找到匹配的用户，请更换关键词重试。',
     'privileged_header_company' => '公司',
@@ -217,6 +217,10 @@ return [
     'runtime_disable_dns_write' => '禁止新增/修改 DNS 解析（仅允许删除）',
     'runtime_hide_invite' => '隐藏“邀请好友解锁注册额度”',
     'runtime_client_delete' => '启用前台自助删除域名',
+    'runtime_privileged_allow_suspended_root' => '特权用户可注册已停止根域',
+    'runtime_privileged_unlimited_invite' => '特权用户邀请码不受邀请次数限制',
+    'runtime_privileged_force_never_expire' => '特权用户域名默认永久有效',
+    'runtime_privileged_delete_with_dns_history' => '特权用户可删除有解析历史域名',
     'runtime_cleanup_interval' => '过期域名清理间隔（小时）',
     'runtime_cleanup_interval_hint' => '最小 1 小时，最大 168 小时，设置越小清理越频繁。',
     'runtime_sync_invite' => '当全局上限变大时同步提升未定制用户上限',

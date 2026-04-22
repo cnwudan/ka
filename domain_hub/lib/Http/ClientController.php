@@ -1633,12 +1633,27 @@ class CfClientController
             }
         }
 
+        $allowSuspended = false;
         try {
-            $rows = Capsule::table('mod_cloudflare_rootdomains')
+            $sessionUserId = intval($_SESSION['uid'] ?? 0);
+            if ($sessionUserId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($sessionUserId)) {
+                $allowSuspended = function_exists('cf_is_privileged_feature_enabled')
+                    && cf_is_privileged_feature_enabled('allow_register_suspended_root');
+            }
+        } catch (\Throwable $e) {
+            $allowSuspended = false;
+        }
+
+        try {
+            $query = Capsule::table('mod_cloudflare_rootdomains')
                 ->select('domain', 'status')
-                ->where('status', 'active')
-                ->orderBy('domain')
-                ->get();
+                ->orderBy('domain');
+            if ($allowSuspended) {
+                $query->whereIn('status', ['active', 'suspended']);
+            } else {
+                $query->where('status', 'active');
+            }
+            $rows = $query->get();
         } catch (\Throwable $e) {
             return [];
         }

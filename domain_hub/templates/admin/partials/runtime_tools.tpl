@@ -12,6 +12,10 @@ $maintenanceLabel = $lang['runtime_maintenance'] ?? '页面维护模式（禁止
 $dnsWriteLabel = $lang['runtime_disable_dns_write'] ?? '禁止新增/修改 DNS 解析（仅允许删除）';
 $inviteFeatureLabel = $lang['runtime_hide_invite'] ?? '隐藏“邀请好友解锁注册额度”';
 $clientDeleteLabel = $lang['runtime_client_delete'] ?? '启用前台自助删除域名';
+$privilegedAllowSuspendedRootLabel = $lang['runtime_privileged_allow_suspended_root'] ?? '特权用户可注册已停止根域';
+$privilegedUnlimitedInviteLabel = $lang['runtime_privileged_unlimited_invite'] ?? '特权用户邀请码不受邀请次数限制';
+$privilegedForceNeverExpireLabel = $lang['runtime_privileged_force_never_expire'] ?? '特权用户域名默认永久有效';
+$privilegedDeleteHistoryLabel = $lang['runtime_privileged_delete_with_dns_history'] ?? '特权用户可删除有解析历史域名';
 $syncInviteLabel = $lang['runtime_sync_invite'] ?? '当全局上限变大时同步提升未定制用户上限';
 $clientPageSizeLabel = $lang['runtime_client_page_size'] ?? '前端每页子域名数量';
 $cleanupIntervalLabel = $lang['runtime_cleanup_interval'] ?? '过期域名清理间隔（小时）';
@@ -187,6 +191,30 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
         <div class="form-check form-switch">
           <input class="form-check-input" type="checkbox" id="enable_client_domain_delete" name="enable_client_domain_delete" value="1" <?php echo (isset($module_settings['enable_client_domain_delete']) && in_array($module_settings['enable_client_domain_delete'], ['1','on'], true)) ? 'checked' : ''; ?>>
           <label class="form-check-label" for="enable_client_domain_delete"><?php echo htmlspecialchars($clientDeleteLabel); ?></label>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="privileged_allow_register_suspended_root" name="privileged_allow_register_suspended_root" value="1" <?php echo (isset($module_settings['privileged_allow_register_suspended_root']) && in_array($module_settings['privileged_allow_register_suspended_root'], ['1','on','yes','true'], true)) ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="privileged_allow_register_suspended_root"><?php echo htmlspecialchars($privilegedAllowSuspendedRootLabel); ?></label>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="privileged_unlimited_invite_generation" name="privileged_unlimited_invite_generation" value="1" <?php echo (!isset($module_settings['privileged_unlimited_invite_generation']) || in_array($module_settings['privileged_unlimited_invite_generation'], ['1','on','yes','true'], true)) ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="privileged_unlimited_invite_generation"><?php echo htmlspecialchars($privilegedUnlimitedInviteLabel); ?></label>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="privileged_force_never_expire" name="privileged_force_never_expire" value="1" <?php echo (!isset($module_settings['privileged_force_never_expire']) || in_array($module_settings['privileged_force_never_expire'], ['1','on','yes','true'], true)) ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="privileged_force_never_expire"><?php echo htmlspecialchars($privilegedForceNeverExpireLabel); ?></label>
+        </div>
+      </div>
+      <div class="col-12 col-md-4">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="privileged_allow_delete_with_dns_history" name="privileged_allow_delete_with_dns_history" value="1" <?php echo (isset($module_settings['privileged_allow_delete_with_dns_history']) && in_array($module_settings['privileged_allow_delete_with_dns_history'], ['1','on','yes','true'], true)) ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="privileged_allow_delete_with_dns_history"><?php echo htmlspecialchars($privilegedDeleteHistoryLabel); ?></label>
         </div>
       </div>
       <div class="col-12 col-md-4">

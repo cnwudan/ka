@@ -1534,6 +1534,10 @@ class CfAdminActionService
         $disableDnsWrite = (($_POST['disable_dns_write'] ?? '') === '1') ? '1' : '0';
         $hideInviteFeature = (($_POST['hide_invite_feature'] ?? '') === '1') ? '1' : '0';
         $enableClientDelete = (($_POST['enable_client_domain_delete'] ?? '') === '1') ? '1' : '0';
+        $privilegedAllowRegisterSuspendedRoot = (($_POST['privileged_allow_register_suspended_root'] ?? '') === '1');
+        $privilegedUnlimitedInviteGeneration = (($_POST['privileged_unlimited_invite_generation'] ?? '') === '1');
+        $privilegedForceNeverExpire = (($_POST['privileged_force_never_expire'] ?? '') === '1');
+        $privilegedAllowDeleteWithDnsHistory = (($_POST['privileged_allow_delete_with_dns_history'] ?? '') === '1');
         $syncInviteLimitUpOnly = (($_POST['sync_invite_limit_up_only'] ?? '') === '1');
         $clientPageSizeInput = intval($_POST['client_page_size'] ?? ($moduleSettings['client_page_size'] ?? 20));
         $clientPageSize = max(1, min(20, $clientPageSizeInput));
@@ -1583,6 +1587,10 @@ class CfAdminActionService
                 'disable_dns_write' => $disableDnsWrite,
                 'hide_invite_feature' => $hideInviteFeature,
                 'enable_client_domain_delete' => $enableClientDelete,
+                'privileged_allow_register_suspended_root' => $privilegedAllowRegisterSuspendedRoot ? '1' : '0',
+                'privileged_unlimited_invite_generation' => $privilegedUnlimitedInviteGeneration ? '1' : '0',
+                'privileged_force_never_expire' => $privilegedForceNeverExpire ? '1' : '0',
+                'privileged_allow_delete_with_dns_history' => $privilegedAllowDeleteWithDnsHistory ? '1' : '0',
                 'sync_invite_limit_up_only' => $syncInviteLimitUpOnly ? '1' : '0',
                 'client_page_size' => (string) $clientPageSize,
                 'enable_dns_unlock' => $enableDnsUnlockFeature ? '1' : '0',
@@ -1611,6 +1619,10 @@ class CfAdminActionService
                     'disable_dns_write' => $disableDnsWrite,
                     'hide_invite_feature' => $hideInviteFeature,
                     'enable_client_domain_delete' => $enableClientDelete,
+                    'privileged_allow_register_suspended_root' => $privilegedAllowRegisterSuspendedRoot ? 1 : 0,
+                    'privileged_unlimited_invite_generation' => $privilegedUnlimitedInviteGeneration ? 1 : 0,
+                    'privileged_force_never_expire' => $privilegedForceNeverExpire ? 1 : 0,
+                    'privileged_allow_delete_with_dns_history' => $privilegedAllowDeleteWithDnsHistory ? 1 : 0,
                     'maintenance_message_length' => strlen($maintenanceMsg),
                     'client_page_size' => $clientPageSize,
                     'dns_unlock_share_enabled' => $dnsUnlockShareEnabledSetting ? 1 : 0,
@@ -2581,7 +2593,9 @@ class CfAdminActionService
             if (function_exists('cf_clear_privileged_cache')) {
                 cf_clear_privileged_cache();
             }
-            if (function_exists('cf_mark_user_domains_never_expires')) {
+            $shouldForceNeverExpire = function_exists('cf_is_privileged_feature_enabled')
+                && cf_is_privileged_feature_enabled('force_never_expire', $settings);
+            if ($shouldForceNeverExpire && function_exists('cf_mark_user_domains_never_expires')) {
                 cf_mark_user_domains_never_expires($userId);
             }
             if (function_exists('cf_ensure_privileged_quota')) {

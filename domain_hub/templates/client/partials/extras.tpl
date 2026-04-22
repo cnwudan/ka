@@ -15,9 +15,12 @@ $extrasTexts = [
     'supportContact' => cfclient_lang('cfclient.extras.support.contact', $isClientLanguageChinese ? '联系我们' : 'Contact Us', [], true),
     'backToPortal' => cfclient_lang('cfclient.extras.back_to_portal', $isClientLanguageChinese ? '返回客户中心' : 'Back to Client Area', [], true),
 ];
+$privilegedDeleteHistoryEnabled = !empty($privilegedAllowDeleteWithDnsHistory);
 $deleteTipKey = !empty($clientDeleteEnabled) ? 'cfclient.extras.tips.domain.delete_enabled' : 'cfclient.extras.tips.domain.delete';
 $deleteTipDefault = !empty($clientDeleteEnabled)
-    ? ($isClientLanguageChinese ? '域名删除：可在“查看详情”中提交自助删除申请。' : 'Deletion: submit a self-service request under “View details”.')
+    ? ($privilegedDeleteHistoryEnabled
+        ? ($isClientLanguageChinese ? '域名删除：您当前可提交任意域名的自助删除申请（含曾配置过解析的域名）。' : 'Deletion: you can submit self-service deletion requests for any domain, including domains with DNS history.')
+        : ($isClientLanguageChinese ? '域名删除：可在“查看详情”中提交自助删除申请。' : 'Deletion: submit a self-service request under “View details”.'))
     : ($isClientLanguageChinese ? '域名删除：域名成功注册后不支持删除！' : 'Deletion: once registered, domains cannot be removed.');
 $extrasList = [
     'domain' => [
