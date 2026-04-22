@@ -157,6 +157,7 @@ class CfSettingsRepository
             'invite_registration_github_client_id' => '',
             'invite_registration_github_client_secret' => '',
             'invite_registration_github_min_months' => '0',
+            'invite_registration_github_min_repos' => '0',
             'invite_registration_inviter_min_months' => '0',
             'sponsor_title' => '赞助 DNSHE',
             'sponsor_description' => 'DNSHE 的成长离不开社区的支持。你的每一份赞助都将用于支付服务器与根域名的续费开支。',

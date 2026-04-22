@@ -142,6 +142,18 @@ class CfInviteRegistrationGithubService
         return $months;
     }
 
+    public static function getMinPublicRepoCount(array $moduleSettings): int
+    {
+        $repos = (int) ($moduleSettings['invite_registration_github_min_repos'] ?? 0);
+        if ($repos < 0) {
+            $repos = 0;
+        }
+        if ($repos > 1000000) {
+            $repos = 1000000;
+        }
+        return $repos;
+    }
+
     public static function isOauthConfigured(array $moduleSettings): bool
     {
         return self::getClientId($moduleSettings) !== '' && self::getClientSecret($moduleSettings) !== '';
@@ -221,6 +233,15 @@ class CfInviteRegistrationGithubService
             ]);
         }
 
+        $publicRepos = max(0, (int) ($profile['public_repos'] ?? 0));
+        $requiredRepos = self::getMinPublicRepoCount($moduleSettings);
+        if ($requiredRepos > 0 && $publicRepos < $requiredRepos) {
+            throw new CfInviteRegistrationGithubException('repo_count_insufficient', '', [
+                'required_repos' => $requiredRepos,
+                'actual_repos' => $publicRepos,
+            ]);
+        }
+
         $createdAtSql = self::normalizeGithubCreatedAt($createdAtRaw);
         self::ensureTable();
 
@@ -271,6 +292,7 @@ class CfInviteRegistrationGithubService
             'github_name' => $name,
             'github_created_at' => $createdAtSql,
             'account_age_months' => $accountAgeMonths,
+            'public_repos' => $publicRepos,
         ];
     }
 

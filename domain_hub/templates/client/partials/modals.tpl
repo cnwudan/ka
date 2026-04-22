@@ -751,6 +751,7 @@ $inviteGateGithubEnabled = !empty($inviteRegistrationGithubEnabled);
 $inviteGateGithubConfigured = !empty($inviteRegistrationGithubConfigured);
 $inviteGateGithubAuthUrl = trim((string) ($inviteRegistrationGithubAuthUrl ?? ''));
 $inviteGateGithubMinMonths = max(0, intval($inviteRegistrationGithubMinMonths ?? 0));
+$inviteGateGithubMinRepos = max(0, intval($inviteRegistrationGithubMinRepos ?? 0));
 $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegistrationGateFlash : null;
 ?>
 <div class="modal fade" id="inviteRegistrationRequiredModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
@@ -798,7 +799,10 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                             <?php echo $modalText('cfclient.invite_registration.github.button', '使用 GitHub 快捷认证'); ?>
                         </a>
                         <?php if ($inviteGateGithubMinMonths > 0): ?>
-                            <div class="form-text text-muted mb-3"><?php echo $modalText('cfclient.invite_registration.github.min_months', 'GitHub 账号需至少注册 %s 个月。', [$inviteGateGithubMinMonths]); ?></div>
+                            <div class="form-text text-muted mb-2"><?php echo $modalText('cfclient.invite_registration.github.min_months', 'GitHub 账号需至少注册 %s 个月。', [$inviteGateGithubMinMonths]); ?></div>
+                        <?php endif; ?>
+                        <?php if ($inviteGateGithubMinRepos > 0): ?>
+                            <div class="form-text text-muted mb-3"><?php echo $modalText('cfclient.invite_registration.github.min_repos', 'GitHub 账号公开仓库数需至少 %s 个。', [$inviteGateGithubMinRepos]); ?></div>
                         <?php endif; ?>
                     <?php else: ?>
                         <div class="alert alert-secondary mb-3">
