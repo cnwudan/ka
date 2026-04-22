@@ -8,17 +8,23 @@ class CfDigService
         [
             'key' => 'cloudflare',
             'name' => 'Cloudflare DNS',
+            'mode' => 'json',
+            'accept' => 'application/dns-json',
             'url' => 'https://cloudflare-dns.com/dns-query?name={domain}&type={type}',
         ],
         [
             'key' => 'google',
             'name' => 'Google DNS',
+            'mode' => 'json',
+            'accept' => 'application/dns-json',
             'url' => 'https://dns.google/resolve?name={domain}&type={type}',
         ],
         [
             'key' => 'quad9',
             'name' => 'Quad9 DNS',
-            'url' => 'https://dns.quad9.net/dns-query?name={domain}&type={type}',
+            'mode' => 'wire',
+            'accept' => 'application/dns-message',
+            'url' => 'https://dns.quad9.net/dns-query?dns={dns_query}',
         ],
     ];
 
@@ -100,24 +106,26 @@ class CfDigService
     private static function queryResolvers(string $domain, string $recordType, int $timeoutSeconds): array
     {
         $resolvers = self::DEFAULT_RESOLVERS;
+        $dnsQuery = self::buildDnsQueryBase64Url($domain, $recordType);
         if (function_exists('curl_multi_init') && function_exists('curl_multi_exec')) {
-            return self::queryResolversByMultiCurl($domain, $recordType, $resolvers, $timeoutSeconds);
+            return self::queryResolversByMultiCurl($domain, $recordType, $resolvers, $timeoutSeconds, $dnsQuery);
         }
 
         $results = [];
         foreach ($resolvers as $resolver) {
-            $results[] = self::querySingleResolver($resolver, $domain, $recordType, $timeoutSeconds);
+            $results[] = self::querySingleResolver($resolver, $domain, $recordType, $timeoutSeconds, $dnsQuery);
         }
         return $results;
     }
 
-    private static function queryResolversByMultiCurl(string $domain, string $recordType, array $resolvers, int $timeoutSeconds): array
+    private static function queryResolversByMultiCurl(string $domain, string $recordType, array $resolvers, int $timeoutSeconds, string $dnsQuery): array
     {
         $multi = curl_multi_init();
         $handles = [];
 
         foreach ($resolvers as $resolver) {
-            $url = self::buildResolverUrl((string) $resolver['url'], $domain, $recordType);
+            $url = self::buildResolverUrl((string) ($resolver['url'] ?? ''), $domain, $recordType, $dnsQuery);
+            $headers = self::buildResolverHeaders($resolver);
             $ch = curl_init();
             curl_setopt_array($ch, [
                 CURLOPT_URL => $url,
@@ -127,9 +135,7 @@ class CfDigService
                 CURLOPT_TIMEOUT => $timeoutSeconds,
                 CURLOPT_SSL_VERIFYPEER => true,
                 CURLOPT_SSL_VERIFYHOST => 2,
-                CURLOPT_HTTPHEADER => [
-                    'Accept: application/dns-json, application/json;q=0.9, */*;q=0.8',
-                ],
+                CURLOPT_HTTPHEADER => $headers,
                 CURLOPT_USERAGENT => 'DomainHub-Dig/1.0',
             ]);
             curl_multi_add_handle($multi, $ch);
@@ -166,9 +172,11 @@ class CfDigService
         return $results;
     }
 
-    private static function querySingleResolver(array $resolver, string $domain, string $recordType, int $timeoutSeconds): array
+    private static function querySingleResolver(array $resolver, string $domain, string $recordType, int $timeoutSeconds, string $dnsQuery): array
     {
-        $url = self::buildResolverUrl((string) ($resolver['url'] ?? ''), $domain, $recordType);
+        $url = self::buildResolverUrl((string) ($resolver['url'] ?? ''), $domain, $recordType, $dnsQuery);
+        $headers = self::buildResolverHeaders($resolver);
+
         $ch = curl_init();
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
@@ -178,9 +186,7 @@ class CfDigService
             CURLOPT_TIMEOUT => $timeoutSeconds,
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_HTTPHEADER => [
-                'Accept: application/dns-json, application/json;q=0.9, */*;q=0.8',
-            ],
+            CURLOPT_HTTPHEADER => $headers,
             CURLOPT_USERAGENT => 'DomainHub-Dig/1.0',
         ]);
 
@@ -197,41 +203,63 @@ class CfDigService
     {
         $resolverKey = (string) ($resolver['key'] ?? 'resolver');
         $resolverName = (string) ($resolver['name'] ?? $resolverKey);
+        $mode = strtolower(trim((string) ($resolver['mode'] ?? 'json')));
 
-        $payload = null;
-        if ($body !== '') {
-            $decoded = json_decode($body, true);
-            if (is_array($decoded)) {
-                $payload = $decoded;
-            }
-        }
-
-        $success = $httpCode >= 200 && $httpCode < 300 && is_array($payload);
-        $dnsStatus = $success ? (int) ($payload['Status'] ?? 0) : null;
+        $dnsStatus = null;
         $answers = [];
         $values = [];
+        $success = false;
+        $payload = null;
 
-        if ($success) {
-            $answerRows = $payload['Answer'] ?? [];
-            if (is_array($answerRows)) {
-                foreach ($answerRows as $answer) {
-                    if (!is_array($answer)) {
-                        continue;
+        if ($mode === 'wire') {
+            if ($httpCode >= 200 && $httpCode < 300 && $body !== '') {
+                $parsed = self::parseDnsWireResponse($body);
+                if ($parsed !== null) {
+                    $success = true;
+                    $dnsStatus = (int) ($parsed['status'] ?? 0);
+                    $answers = is_array($parsed['answers'] ?? null) ? $parsed['answers'] : [];
+                    foreach ($answers as $answer) {
+                        $answerType = strtoupper((string) ($answer['type'] ?? ''));
+                        $answerData = trim((string) ($answer['data'] ?? ''));
+                        if ($answerType === $recordType && $answerData !== '') {
+                            $values[] = $answerData;
+                        }
                     }
-                    $answerTypeCode = (int) ($answer['type'] ?? 0);
-                    $answerType = self::codeToType($answerTypeCode);
-                    $answerData = trim((string) ($answer['data'] ?? ''));
-                    if ($answerData === '') {
-                        continue;
-                    }
-                    $answers[] = [
-                        'name' => trim((string) ($answer['name'] ?? '')),
-                        'type' => $answerType,
-                        'ttl' => max(0, (int) ($answer['TTL'] ?? 0)),
-                        'data' => $answerData,
-                    ];
-                    if ($answerType === $recordType) {
-                        $values[] = $answerData;
+                }
+            }
+        } else {
+            if ($body !== '') {
+                $decoded = json_decode($body, true);
+                if (is_array($decoded)) {
+                    $payload = $decoded;
+                }
+            }
+
+            $success = $httpCode >= 200 && $httpCode < 300 && is_array($payload);
+            $dnsStatus = $success ? (int) ($payload['Status'] ?? 0) : null;
+
+            if ($success) {
+                $answerRows = $payload['Answer'] ?? [];
+                if (is_array($answerRows)) {
+                    foreach ($answerRows as $answer) {
+                        if (!is_array($answer)) {
+                            continue;
+                        }
+                        $answerTypeCode = (int) ($answer['type'] ?? 0);
+                        $answerType = self::codeToType($answerTypeCode);
+                        $answerData = trim((string) ($answer['data'] ?? ''));
+                        if ($answerData === '') {
+                            continue;
+                        }
+                        $answers[] = [
+                            'name' => trim((string) ($answer['name'] ?? '')),
+                            'type' => $answerType,
+                            'ttl' => max(0, (int) ($answer['TTL'] ?? 0)),
+                            'data' => $answerData,
+                        ];
+                        if ($answerType === $recordType) {
+                            $values[] = $answerData;
+                        }
                     }
                 }
             }
@@ -243,7 +271,8 @@ class CfDigService
         if ($curlError !== '') {
             $errorMessage = $curlError;
         } elseif (!$success) {
-            $errorMessage = 'HTTP ' . $httpCode;
+            $snippet = self::extractErrorSnippet($body);
+            $errorMessage = $snippet !== '' ? $snippet : ('HTTP ' . $httpCode);
         } elseif ($dnsStatus !== null && $dnsStatus !== 0 && empty($answers)) {
             $errorMessage = 'DNS Status ' . $dnsStatus;
         }
@@ -259,6 +288,18 @@ class CfDigService
             'values' => $values,
             'error' => $errorMessage,
         ];
+    }
+
+    private static function extractErrorSnippet(string $body): string
+    {
+        if ($body === '') {
+            return '';
+        }
+        $sample = substr($body, 0, 160);
+        if (preg_match('/[^\x09\x0A\x0D\x20-\x7E]/', $sample)) {
+            return '';
+        }
+        return trim($sample);
     }
 
     private static function buildSummary(array $resolverResults): array
@@ -326,12 +367,273 @@ class CfDigService
         cloudflare_subdomain_log('client_dig_lookup', $details, $requestUserId, null);
     }
 
-    private static function buildResolverUrl(string $template, string $domain, string $recordType): string
+    private static function buildResolverUrl(string $template, string $domain, string $recordType, string $dnsQuery): string
     {
         return strtr($template, [
             '{domain}' => rawurlencode($domain),
             '{type}' => rawurlencode($recordType),
+            '{dns_query}' => rawurlencode($dnsQuery),
         ]);
+    }
+
+    private static function buildResolverHeaders(array $resolver): array
+    {
+        $accept = trim((string) ($resolver['accept'] ?? 'application/dns-json'));
+        if ($accept === '') {
+            $accept = 'application/dns-json';
+        }
+
+        return [
+            'Accept: ' . $accept,
+        ];
+    }
+
+    private static function buildDnsQueryBase64Url(string $domain, string $recordType): string
+    {
+        $typeCode = self::TYPE_TO_CODE[$recordType] ?? 1;
+        $labels = explode('.', $domain);
+
+        $query = '';
+        $query .= pack('n', random_int(0, 65535));
+        $query .= pack('n', 0x0100);
+        $query .= pack('n', 1);
+        $query .= pack('n', 0);
+        $query .= pack('n', 0);
+        $query .= pack('n', 0);
+
+        foreach ($labels as $label) {
+            $label = trim($label);
+            if ($label === '') {
+                continue;
+            }
+            $length = strlen($label);
+            if ($length > 63) {
+                $label = substr($label, 0, 63);
+                $length = strlen($label);
+            }
+            $query .= chr($length) . $label;
+        }
+
+        $query .= "\x00";
+        $query .= pack('n', $typeCode);
+        $query .= pack('n', 1);
+
+        return rtrim(strtr(base64_encode($query), '+/', '-_'), '=');
+    }
+
+    private static function parseDnsWireResponse(string $packet): ?array
+    {
+        $packetLength = strlen($packet);
+        if ($packetLength < 12) {
+            return null;
+        }
+
+        $header = unpack('nid/nflags/nqdcount/nancount/nnscount/narcount', substr($packet, 0, 12));
+        if (!is_array($header)) {
+            return null;
+        }
+
+        $offset = 12;
+        $questionCount = (int) ($header['qdcount'] ?? 0);
+        for ($i = 0; $i < $questionCount; $i++) {
+            self::readDnsName($packet, $offset);
+            if ($offset + 4 > $packetLength) {
+                return null;
+            }
+            $offset += 4;
+        }
+
+        $answerCount = (int) ($header['ancount'] ?? 0);
+        $answers = [];
+
+        for ($i = 0; $i < $answerCount; $i++) {
+            $name = self::readDnsName($packet, $offset);
+            if ($offset + 10 > $packetLength) {
+                return null;
+            }
+
+            $rr = unpack('ntype/nclass/Nttl/nrdlength', substr($packet, $offset, 10));
+            if (!is_array($rr)) {
+                return null;
+            }
+            $offset += 10;
+
+            $typeCode = (int) ($rr['type'] ?? 0);
+            $ttl = (int) ($rr['ttl'] ?? 0);
+            $rdLength = (int) ($rr['rdlength'] ?? 0);
+            if ($rdLength < 0 || $offset + $rdLength > $packetLength) {
+                return null;
+            }
+
+            $rdataOffset = $offset;
+            $data = self::decodeDnsRdata($packet, $typeCode, $rdataOffset, $rdLength);
+            $offset += $rdLength;
+
+            $answers[] = [
+                'name' => $name,
+                'type' => self::codeToType($typeCode),
+                'ttl' => max(0, $ttl),
+                'data' => $data,
+            ];
+        }
+
+        $flags = (int) ($header['flags'] ?? 0);
+        $rcode = $flags & 0x000F;
+
+        return [
+            'status' => $rcode,
+            'answers' => $answers,
+        ];
+    }
+
+    private static function readDnsName(string $packet, int &$offset, int $depth = 0): string
+    {
+        $max = strlen($packet);
+        if ($depth > 15 || $offset >= $max) {
+            return '';
+        }
+
+        $labels = [];
+        $cursor = $offset;
+        $jumped = false;
+        $guard = 0;
+
+        while ($guard < 256) {
+            $guard++;
+            if ($cursor >= $max) {
+                if (!$jumped) {
+                    $offset = $max;
+                }
+                break;
+            }
+
+            $len = ord($packet[$cursor]);
+            if (($len & 0xC0) === 0xC0) {
+                if ($cursor + 1 >= $max) {
+                    if (!$jumped) {
+                        $offset = $max;
+                    }
+                    break;
+                }
+
+                $pointer = (($len & 0x3F) << 8) | ord($packet[$cursor + 1]);
+                if (!$jumped) {
+                    $offset = $cursor + 2;
+                }
+                $cursor = $pointer;
+                $jumped = true;
+                if (++$depth > 15) {
+                    break;
+                }
+                continue;
+            }
+
+            $cursor++;
+            if ($len === 0) {
+                if (!$jumped) {
+                    $offset = $cursor;
+                }
+                break;
+            }
+
+            if ($cursor + $len > $max) {
+                if (!$jumped) {
+                    $offset = $max;
+                }
+                break;
+            }
+
+            $labels[] = substr($packet, $cursor, $len);
+            $cursor += $len;
+            if (!$jumped) {
+                $offset = $cursor;
+            }
+        }
+
+        $name = implode('.', array_filter($labels, static function ($label) {
+            return $label !== '';
+        }));
+
+        return strtolower(trim($name, '.'));
+    }
+
+    private static function decodeDnsRdata(string $packet, int $typeCode, int $rdataOffset, int $rdLength): string
+    {
+        if ($rdLength <= 0) {
+            return '';
+        }
+
+        $rdata = substr($packet, $rdataOffset, $rdLength);
+
+        if ($typeCode === 1 && $rdLength === 4) {
+            $ip = @inet_ntop($rdata);
+            return is_string($ip) && $ip !== '' ? $ip : '';
+        }
+
+        if ($typeCode === 28 && $rdLength === 16) {
+            $ip = @inet_ntop($rdata);
+            return is_string($ip) && $ip !== '' ? $ip : '';
+        }
+
+        if (in_array($typeCode, [2, 5, 12], true)) {
+            $nameOffset = $rdataOffset;
+            return self::readDnsName($packet, $nameOffset);
+        }
+
+        if ($typeCode === 15) {
+            if ($rdLength < 3) {
+                return '';
+            }
+            $pref = unpack('npreference', substr($packet, $rdataOffset, 2));
+            $preference = is_array($pref) ? (int) ($pref['preference'] ?? 0) : 0;
+            $nameOffset = $rdataOffset + 2;
+            $exchange = self::readDnsName($packet, $nameOffset);
+            return trim($preference . ' ' . $exchange);
+        }
+
+        if ($typeCode === 16) {
+            $cursor = $rdataOffset;
+            $end = $rdataOffset + $rdLength;
+            $chunks = [];
+            while ($cursor < $end) {
+                $len = ord($packet[$cursor]);
+                $cursor++;
+                if ($cursor + $len > $end) {
+                    break;
+                }
+                $chunks[] = substr($packet, $cursor, $len);
+                $cursor += $len;
+            }
+            return implode(' ', $chunks);
+        }
+
+        if ($typeCode === 33) {
+            if ($rdLength < 7) {
+                return '';
+            }
+            $srv = unpack('npriority/nweight/nport', substr($packet, $rdataOffset, 6));
+            if (!is_array($srv)) {
+                return '';
+            }
+            $nameOffset = $rdataOffset + 6;
+            $target = self::readDnsName($packet, $nameOffset);
+            return trim((int) $srv['priority'] . ' ' . (int) $srv['weight'] . ' ' . (int) $srv['port'] . ' ' . $target);
+        }
+
+        if ($typeCode === 6) {
+            $nameOffset = $rdataOffset;
+            $mname = self::readDnsName($packet, $nameOffset);
+            $rname = self::readDnsName($packet, $nameOffset);
+            if ($nameOffset + 20 <= strlen($packet)) {
+                $soa = unpack('Nserial/Nrefresh/Nretry/Nexpire/Nminimum', substr($packet, $nameOffset, 20));
+                if (is_array($soa)) {
+                    return trim($mname . ' ' . $rname . ' ' . (int) $soa['serial']);
+                }
+            }
+            return trim($mname . ' ' . $rname);
+        }
+
+        return '';
     }
 
     private static function resolveTimeoutSeconds(array $moduleSettings): int
