@@ -295,16 +295,26 @@ $dnsLineOptions = [
                             <textarea name="ns_lines" id="ns_lines" class="form-control d-none" rows="6"></textarea>
                             <div id="ns_inputs_container" class="ns-inputs-container"></div>
                             <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2">
-                                <div class="form-text m-0"><?php echo $modalText('cfclient.modals.ns.hint.input_mode', '每个输入框填写一个 DNS 服务器。默认显示 4 项，最多可添加到 8 项。'); ?></div>
+                                <div class="form-text m-0"><?php echo $modalText('cfclient.modals.ns.hint.input_mode', '每个输入框填写一个 DNS 服务器。默认显示 2 项，最多可添加到 8 项。'); ?></div>
                                 <button type="button" class="btn btn-outline-primary btn-sm" id="ns_add_input_btn">
                                     <i class="fas fa-plus"></i> <?php echo $modalText('cfclient.modals.ns.button.add_server', '[ + 添加 DNS 服务器 ]'); ?>
                                 </button>
                             </div>
                             <div class="form-text"><?php echo $modalText('cfclient.modals.ns.hint.lines', '将一键替换该域名（@）的全部 NS 记录；会自动去重、去空行、统一小写。'); ?></div>
                         </div>
-                        <div class="form-check mb-3">
-                            <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
-                            <label class="form-check-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force', '强制替换（删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等）'); ?></label>
+                        <div class="d-flex align-items-center gap-2 mb-3">
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
+                                <label class="form-check-label ns-force-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force_short', '强制替换冲突记录'); ?></label>
+                            </div>
+                            <button type="button"
+                                    class="btn btn-link ns-force-help p-0"
+                                    data-bs-toggle="tooltip"
+                                    data-bs-placement="top"
+                                    data-bs-title="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等'), ENT_QUOTES); ?>"
+                                    aria-label="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等'), ENT_QUOTES); ?>">
+                                <i class="fas fa-info-circle"></i>
+                            </button>
                         </div>
                     </div>
                     <div class="modal-footer">

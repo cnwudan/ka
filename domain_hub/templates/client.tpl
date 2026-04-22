@@ -613,13 +613,39 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             border-radius: 0.6rem 0 0 0.6rem;
         }
 
-        .ns-input-row .btn {
+        .ns-input-row .ns-remove-input-btn {
             border-radius: 0 0.6rem 0.6rem 0;
             min-width: 44px;
+            border: 1px solid #e4e7eb;
+            background: #f8f9fa;
+            color: #adb5bd;
+        }
+
+        .ns-input-row .ns-remove-input-btn:hover,
+        .ns-input-row .ns-remove-input-btn:focus {
+            border-color: #cfd6de;
+            background: #eef1f4;
+            color: #6c757d;
         }
 
         #ns_add_input_btn {
             border-style: dashed;
+        }
+
+        .ns-force-label {
+            font-size: 0.875rem;
+            color: #495057;
+        }
+
+        .ns-force-help {
+            color: #adb5bd !important;
+            text-decoration: none !important;
+            line-height: 1;
+        }
+
+        .ns-force-help:hover,
+        .ns-force-help:focus {
+            color: #6c757d !important;
         }
 
         .cf-client-layout {

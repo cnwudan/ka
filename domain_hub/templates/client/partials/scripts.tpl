@@ -307,7 +307,7 @@ function checkVpnBeforeAction(callback) {
     });
 }
 
-const nsUiDefaultInputs = 4;
+const nsUiDefaultInputs = 2;
 const nsUiMaxInputs = Math.max(nsUiDefaultInputs, Math.min(8, <?php echo max(1, intval($nsMaxPerDomain ?? 8)); ?>));
 
 function normalizeNsServer(value) {
@@ -375,8 +375,8 @@ function appendNsServerInputRow(value) {
 
     const removeBtn = document.createElement('button');
     removeBtn.type = 'button';
-    removeBtn.className = 'btn btn-outline-danger';
-    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    removeBtn.className = 'btn ns-remove-input-btn';
+    removeBtn.innerHTML = '<i class="fas fa-trash-alt"></i>';
     removeBtn.setAttribute('aria-label', cfLang('nsRemoveServer', '删除 DNS 服务器'));
     removeBtn.title = cfLang('nsRemoveServer', '删除 DNS 服务器');
     removeBtn.addEventListener('click', function() {
