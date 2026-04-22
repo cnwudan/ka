@@ -1073,42 +1073,96 @@ function cfmod_sync_result(int $jobId, ?int $subId, string $kind, string $action
 }
 
 function cfmod_job_auto_unban_due($job, array $payload = []): array {
-    $jobId = intval($job->id);
     $now = date('Y-m-d H:i:s');
     $due = Capsule::table('mod_cloudflare_user_bans')
-        ->where('status','banned')
+        ->where('status', 'banned')
         ->whereNotNull('ban_expires_at')
-        ->where('ban_expires_at','<=',$now)
+        ->where('ban_expires_at', '<=', $now)
         ->get();
+
+    if ($due instanceof \Illuminate\Support\Collection) {
+        $dueRows = $due->all();
+    } elseif (is_array($due)) {
+        $dueRows = $due;
+    } elseif ($due instanceof \Traversable) {
+        $dueRows = iterator_to_array($due);
+    } elseif ($due === null) {
+        $dueRows = [];
+    } else {
+        $dueRows = [$due];
+    }
 
     $stats = [
         'unbanned' => 0,
         'warnings' => [],
-        'processed_subdomains' => 0,
+        'processed_subdomains' => count($dueRows),
     ];
 
-    foreach ($due as $b) {
-        try {
-            Capsule::table('mod_cloudflare_user_bans')->where('id', $b->id)->update([
-                'status' => 'unbanned',
-                'unbanned_at' => $now,
-                'updated_at' => $now
-            ]);
-            Capsule::table('tblclients')->where('id', $b->userid)->update(['status' => 'Active']);
-            $stats['unbanned']++;
-            if (function_exists('cloudflare_subdomain_log')) {
-                cloudflare_subdomain_log('auto_unban_user', ['userid' => $b->userid, 'ban_id' => $b->id]);
-            }
-        } catch (\Throwable $e) {
-            $stats['warnings'][] = 'user:' . $b->userid;
-            cfmod_report_exception('auto_unban_due', $e);
-        }
+    if (empty($dueRows)) {
+        $stats['message'] = 'no bans to lift';
+        return $stats;
     }
 
-    $stats['processed_subdomains'] = count($due);
-    if (empty($due)) {
-        $stats['message'] = 'no bans to lift';
+    $banIds = [];
+    $userIds = [];
+    foreach ($dueRows as $banRow) {
+        $banId = (int) ($banRow->id ?? 0);
+        $userId = (int) ($banRow->userid ?? 0);
+        if ($banId <= 0 || $userId <= 0) {
+            continue;
+        }
+        $banIds[$banId] = $banId;
+        $userIds[$userId] = $userId;
     }
+    $banIds = array_values($banIds);
+    $userIds = array_values($userIds);
+
+    if (empty($banIds)) {
+        $stats['message'] = 'no bans to lift';
+        return $stats;
+    }
+
+    try {
+        Capsule::transaction(function () use ($banIds, $userIds, $now) {
+            Capsule::table('mod_cloudflare_user_bans')
+                ->whereIn('id', $banIds)
+                ->update([
+                    'status' => 'unbanned',
+                    'unbanned_at' => $now,
+                    'updated_at' => $now,
+                ]);
+
+            if (!empty($userIds)) {
+                Capsule::table('tblclients')
+                    ->whereIn('id', $userIds)
+                    ->update([
+                        'status' => 'Active',
+                    ]);
+            }
+        });
+
+        $stats['unbanned'] = count($banIds);
+        $stats['message'] = 'lifted ' . $stats['unbanned'] . ' bans';
+
+        if (function_exists('cloudflare_subdomain_log')) {
+            foreach ($dueRows as $banRow) {
+                $banId = (int) ($banRow->id ?? 0);
+                $userId = (int) ($banRow->userid ?? 0);
+                if ($banId <= 0 || $userId <= 0) {
+                    continue;
+                }
+                cloudflare_subdomain_log('auto_unban_user', [
+                    'userid' => $userId,
+                    'ban_id' => $banId,
+                ]);
+            }
+        }
+    } catch (\Throwable $e) {
+        $stats['warnings'][] = 'bulk_unban_failed';
+        $stats['message'] = 'auto unban failed';
+        cfmod_report_exception('auto_unban_due', $e);
+    }
+
     return $stats;
 }
 
@@ -3602,43 +3656,80 @@ function cfmod_job_cleanup_user_subdomains($job, array $payload = []): array {
 
     $hasMore = $subsCollection->count() > $batchSize;
     $subs = $hasMore ? $subsCollection->slice(0, $batchSize)->values() : $subsCollection->values();
+    $subsArray = $subs->all();
 
-    foreach ($subs as $sub) {
+    $recordsToDelete = [];
+    $quotaDecrements = [];
+
+    foreach ($subsArray as $sub) {
         $stats['processed_subdomains']++;
+        $subId = intval($sub->id ?? 0);
+        if ($subId <= 0) {
+            $stats['warnings'][] = 'subdomain:invalid';
+            continue;
+        }
+
         try {
             if ($deleteRecords) {
                 $deleted = cfmod_admin_deep_delete_subdomain(null, $sub);
-                $stats['dns_records_deleted'] += $deleted;
+                $stats['dns_records_deleted'] += max(0, intval($deleted));
             }
+
             if ($deleteDomains) {
-                Capsule::transaction(function () use ($sub, $deleteRecords) {
-                    if (!$deleteRecords) {
-                        Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $sub->id)->delete();
-                    }
-                    Capsule::table('mod_cloudflare_subdomain')->where('id', $sub->id)->delete();
-                    if (!empty($sub->userid)) {
-                        Capsule::table('mod_cloudflare_subdomain_quotas')
-                            ->where('userid', $sub->userid)
-                            ->where('used_count', '>', 0)
-                            ->decrement('used_count');
-                    }
-                });
-                $stats['deleted_subdomains']++;
-                if (function_exists('cloudflare_subdomain_log')) {
-                    cloudflare_subdomain_log('cleanup_user_subdomain', [
-                        'subdomain' => $sub->subdomain,
-                        'userid' => $userid,
-                    ], $userid, $sub->id);
+                $recordsToDelete[$subId] = $sub;
+                $quotaUserId = intval($sub->userid ?? 0);
+                if ($quotaUserId > 0) {
+                    $quotaDecrements[$quotaUserId] = intval($quotaDecrements[$quotaUserId] ?? 0) + 1;
                 }
             }
         } catch (\Throwable $e) {
-            $stats['warnings'][] = 'subdomain:' . $sub->id;
+            $stats['warnings'][] = 'subdomain:' . $subId;
             cfmod_report_exception('cleanup_user_subdomains', $e);
         }
     }
 
+    if ($deleteDomains && !empty($recordsToDelete)) {
+        $deleteIds = array_values(array_map('intval', array_keys($recordsToDelete)));
+        try {
+            Capsule::transaction(function () use ($deleteIds, $deleteRecords, $quotaDecrements) {
+                if (!$deleteRecords) {
+                    Capsule::table('mod_cloudflare_dns_records')
+                        ->whereIn('subdomain_id', $deleteIds)
+                        ->delete();
+                }
+
+                Capsule::table('mod_cloudflare_subdomain')
+                    ->whereIn('id', $deleteIds)
+                    ->delete();
+
+                foreach ($quotaDecrements as $quotaUserId => $decrementBy) {
+                    $decrementBy = max(1, intval($decrementBy));
+                    Capsule::table('mod_cloudflare_subdomain_quotas')
+                        ->where('userid', intval($quotaUserId))
+                        ->where('used_count', '>', 0)
+                        ->update([
+                            'used_count' => Capsule::raw('GREATEST(used_count - ' . $decrementBy . ', 0)'),
+                        ]);
+                }
+            });
+
+            $stats['deleted_subdomains'] = count($deleteIds);
+            if (function_exists('cloudflare_subdomain_log')) {
+                foreach ($recordsToDelete as $subId => $sub) {
+                    cloudflare_subdomain_log('cleanup_user_subdomain', [
+                        'subdomain' => $sub->subdomain,
+                        'userid' => $userid,
+                    ], $userid, intval($subId));
+                }
+            }
+        } catch (\Throwable $e) {
+            $stats['warnings'][] = 'bulk_delete_failed';
+            cfmod_report_exception('cleanup_user_subdomains_bulk_delete', $e);
+        }
+    }
+
     if ($hasMore) {
-        $last = $subs->last();
+        $last = end($subsArray);
         $nextCursor = $last ? ($last->id ?? null) : null;
         if ($nextCursor) {
             $newPayload = $payload;

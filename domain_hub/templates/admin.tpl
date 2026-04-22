@@ -1,5 +1,4 @@
 <?php
-use WHMCS\Database\Capsule;
 
 // 确保CloudflareAPI类被加载
 if (!class_exists('CloudflareAPI')) {
@@ -76,17 +75,15 @@ $ustPage = $userActivityView['page'] ?? 1;
 $ustPerPage = $userActivityView['perPage'] ?? 20;
 $ustTotal = $userActivityView['total'] ?? (is_countable($user_stats) ? count($user_stats) : 0);
 $ustTotalPages = $userActivityView['totalPages'] ?? 1;
-$providersView = $cfAdminViewModel['providers'] ?? null;
-if ($providersView !== null) {
-    $providerAccounts = $providersView['accounts'] ?? [];
-    $providerAccountMap = $providersView['accountMap'] ?? [];
-    $activeProviderAccounts = $providersView['activeAccounts'] ?? [];
-    $providerUsageCounts = $providersView['usageCounts'] ?? [];
-    $providerAccountsError = $providersView['error'] ?? '';
-    $hasActiveProviderAccounts = $providersView['hasActive'] ?? false;
-    $defaultProviderAccountId = $providersView['defaultAccountId'] ?? 0;
-    $defaultProviderSelectId = $providersView['defaultSelectId'] ?? 0;
-}
+$providersView = $cfAdminViewModel['providers'] ?? [];
+$providerAccounts = $providersView['accounts'] ?? [];
+$providerAccountMap = $providersView['accountMap'] ?? [];
+$activeProviderAccounts = $providersView['activeAccounts'] ?? [];
+$providerUsageCounts = $providersView['usageCounts'] ?? [];
+$providerAccountsError = $providersView['error'] ?? '';
+$hasActiveProviderAccounts = !empty($providersView['hasActive']);
+$defaultProviderAccountId = (int) ($providersView['defaultAccountId'] ?? 0);
+$defaultProviderSelectId = (int) ($providersView['defaultSelectId'] ?? 0);
 
 $privilegedView = $cfAdminViewModel['privileged'] ?? [];
 $privilegedKeyword = $privilegedView['keyword'] ?? '';
@@ -167,13 +164,8 @@ $banned_users = $bansView['items'] ?? [];
 
 
 // 检查数据库表是否存在
-$tables_exist = false;
-try {
-    $tables_exist = Capsule::schema()->hasTable('mod_cloudflare_subdomain') && 
-                   Capsule::schema()->hasTable('mod_cloudflare_subdomain_quotas');
-} catch (Exception $e) {
-    $tables_exist = false;
-}
+$systemView = $cfAdminViewModel['system'] ?? [];
+$tables_exist = !empty($systemView['tablesExist']);
 
 // 如果表不存在，显示激活提示
 if (!$tables_exist) {
@@ -191,195 +183,49 @@ if (!$tables_exist) {
     exit;
 }
 
-// 🚀 性能优化：使用缓存配置，避免每次访问都查数据库
-$module_settings = [];
-try {
-    // 优先使用缓存函数
-    if (function_exists('cf_get_module_settings_cached')) {
-        $module_settings = cf_get_module_settings_cached();
-    } else {
-        // 回退到直接查询（兼容性）
-    $configs = Capsule::table('tbladdonmodules')
-        ->where('module', 'domain_hub')
-        ->get();
-    
-    foreach ($configs as $config) {
-        $module_settings[$config->setting] = $config->value;
-        }
-    }
-} catch (Exception $e) {
-    // 如果查询失败，使用默认配置
+$module_settings = $cfAdminViewModel['moduleSettings'] ?? [];
+if (!is_array($module_settings) || empty($module_settings)) {
     $module_settings = [
         'cloudflare_api_key' => '',
         'cloudflare_email' => '',
         'max_subdomain_per_user' => 3,
         'root_domains' => '',
         'forbidden_prefix' => 'www,mail,ftp,admin,root,gov,pay,bank',
-        'default_ip' => '192.0.2.1'
+        'default_ip' => '192.0.2.1',
     ];
 }
 
-$allKnownRootdomains = [];
-if (!isset($cfAdminViewModel['rootdomains']) && function_exists('cfmod_get_known_rootdomains')) {
-    try {
-        $allKnownRootdomains = cfmod_get_known_rootdomains($module_settings);
-    } catch (Exception $e) {
-        $allKnownRootdomains = [];
-    }
-}
-
-if ($providersView === null) {
-    $providerAccounts = [];
-    $providerAccountsError = '';
-    $defaultProviderAccountId = intval($module_settings['default_provider_account_id'] ?? 0);
-    try {
-        cfmod_ensure_provider_schema();
-        $providerAccounts = Capsule::table(cfmod_get_provider_table_name())
-            ->orderBy('is_default', 'desc')
-            ->orderBy('id', 'asc')
-            ->get();
-    } catch (Exception $e) {
-        $providerAccounts = [];
-        $providerAccountsError = $e->getMessage();
-    }
-    $providerAccountMap = [];
-    $activeProviderAccounts = [];
-    if ($providerAccounts) {
-        foreach ($providerAccounts as $acct) {
-            $pid = intval($acct->id);
-            $providerAccountMap[$pid] = $acct;
-            $status = strtolower($acct->status ?? '');
-            if ($status === 'active') {
-                $activeProviderAccounts[] = $acct;
-            }
-        }
-    }
-    $providerUsageCounts = [];
-    try {
-        $usageRows = Capsule::table('mod_cloudflare_rootdomains')
-            ->select('provider_account_id', Capsule::raw('COUNT(*) as total'))
-            ->groupBy('provider_account_id')
-            ->get();
-        foreach ($usageRows as $usageRow) {
-            $usageProviderId = intval($usageRow->provider_account_id ?? 0);
-            if ($usageProviderId > 0) {
-                $providerUsageCounts[$usageProviderId] = intval($usageRow->total ?? 0);
-            }
-        }
-    } catch (Exception $e) {}
-    $defaultProviderSelectId = $defaultProviderAccountId;
-    if ($defaultProviderSelectId <= 0 || !isset($providerAccountMap[$defaultProviderSelectId]) || strtolower($providerAccountMap[$defaultProviderSelectId]->status ?? '') !== 'active') {
-        if (count($activeProviderAccounts) > 0) {
-            $defaultProviderSelectId = intval($activeProviderAccounts[0]->id);
-        }
-    }
-    $hasActiveProviderAccounts = count($activeProviderAccounts) > 0;
-    $providersView = [
-        'accounts' => $providerAccounts,
-        'accountMap' => $providerAccountMap,
-        'activeAccounts' => $activeProviderAccounts,
-        'usageCounts' => $providerUsageCounts,
-        'error' => $providerAccountsError,
-        'hasActive' => $hasActiveProviderAccounts,
-        'defaultAccountId' => $defaultProviderAccountId,
-        'defaultSelectId' => $defaultProviderSelectId,
-    ];
-    $cfAdminViewModel['providers'] = $providersView;
-}
+$rootdomainsView = $cfAdminViewModel['rootdomains'] ?? [];
+$allKnownRootdomains = $rootdomainsView['allKnownRootdomains'] ?? [];
 $clientPageSizeSetting = max(1, min(20, intval($module_settings['client_page_size'] ?? 20)));
 
-// 搜索
-$search = trim($_GET['search'] ?? '');
-$status_filter = $_GET['status'] ?? '';
-$user_filter_raw = $_GET['user'] ?? '';
-$user_filter = is_string($user_filter_raw) ? trim($user_filter_raw) : '';
-$resolvedUserId = null;
-if ($user_filter !== '' && ctype_digit($user_filter)) {
-    $resolvedUserId = (int) $user_filter;
-}
-$expiryDaysInputRaw = trim((string)($_GET['expiry_days'] ?? ''));
-$expiryDaysFilter = null;
-if ($expiryDaysInputRaw !== '' && ctype_digit($expiryDaysInputRaw)) {
-    $expiryDaysFilter = max(1, min(3650, intval($expiryDaysInputRaw)));
-    $expiryDaysInput = (string) $expiryDaysFilter;
-} else {
-    $expiryDaysInput = '';
-}
-$showAllSubdomains = ($_GET['view_all_subdomains'] ?? '') === '1';
+$subdomainsView = $cfAdminViewModel['subdomains'] ?? [];
+$subFilters = $subdomainsView['filters'] ?? [];
+$search = (string) ($subFilters['search'] ?? '');
+$status_filter = (string) ($subFilters['status'] ?? '');
+$user_filter = (string) ($subFilters['user'] ?? '');
+$resolvedUserId = isset($subFilters['resolvedUserId']) && $subFilters['resolvedUserId'] !== null
+    ? (int) $subFilters['resolvedUserId']
+    : null;
+$expiryDaysInput = (string) ($subFilters['expiryDaysInput'] ?? '');
+$expiryDaysFilter = isset($subFilters['expiryDaysFilter']) && is_numeric($subFilters['expiryDaysFilter'])
+    ? (int) $subFilters['expiryDaysFilter']
+    : null;
+$showAllSubdomains = !empty($subFilters['showAll']);
 
-$query = Capsule::table('mod_cloudflare_subdomain as s')
-    ->leftJoin('tblclients as c', 's.userid', '=', 'c.id')
-    ->select('s.*', 'c.firstname', 'c.lastname', 'c.email');
+$subListView = $subdomainsView['list'] ?? [];
+$subdomains = $subListView['items'] ?? [];
+$subPage = max(1, (int) ($subListView['page'] ?? 1));
+$subPerPage = max(1, (int) ($subListView['perPage'] ?? 10));
+$subTotal = (int) ($subListView['total'] ?? (is_countable($subdomains) ? count($subdomains) : 0));
+$subTotalPages = max(1, (int) ($subListView['totalPages'] ?? 1));
 
-if($search){
-    $query->where(function($q) use ($search) {
-        $q->where('s.subdomain', 'like', "%$search%")
-          ->orWhere('s.rootdomain', 'like', "%$search%")
-          ->orWhere('c.firstname', 'like', "%$search%")
-          ->orWhere('c.lastname', 'like', "%$search%")
-          ->orWhere('c.email', 'like', "%$search%");
-    });
-}
-
-if($status_filter){
-    $query->where('s.status', $status_filter);
-}
-
-if ($resolvedUserId !== null) {
-    $query->where('s.userid', $resolvedUserId);
-} elseif ($user_filter !== '') {
-    $query->where(function($q) use ($user_filter) {
-        $q->where('c.email', 'like', '%' . $user_filter . '%')
-          ->orWhere('c.firstname', 'like', '%' . $user_filter . '%')
-          ->orWhere('c.lastname', 'like', '%' . $user_filter . '%');
-    });
-}
-
-if ($expiryDaysFilter !== null) {
-    $deadline = date('Y-m-d H:i:s', time() + ($expiryDaysFilter * 86400));
-    $query->whereNotNull('s.expires_at')
-        ->where('s.expires_at', '<=', $deadline)
-        ->where(function($q) {
-            $q->whereNull('s.never_expires')
-              ->orWhere('s.never_expires', '=', 0);
-        });
-}
-
-$subdomains = [];
-$subTotal = 0;
-$subTotalPages = 1;
-$subPerPage = 10;
-$subPage = isset($_GET['sub_page']) ? max(1, intval($_GET['sub_page'])) : 1;
-
-try {
-    $countQuery = clone $query;
-    $subTotal = $countQuery->count();
-
-    if ($showAllSubdomains) {
-        $subPage = 1;
-        $listQuery = clone $query;
-        $subdomains = $listQuery->orderBy('s.id', 'desc')->get();
-        $subTotalPages = 1;
-    } else {
-        $subTotalPages = max(1, (int)ceil($subTotal / $subPerPage));
-        if ($subPage > $subTotalPages) {
-            $subPage = $subTotalPages;
-        }
-        $offset = ($subPage - 1) * $subPerPage;
-        $listQuery = clone $query;
-        $subdomains = $listQuery->orderBy('s.id', 'desc')
-            ->offset($offset)
-            ->limit($subPerPage)
-            ->get();
-    }
-} catch (Exception $e) {
-    $subdomains = [];
-    $subTotal = 0;
-    $subTotalPages = 1;
-}
-
-
-
+$parsedView = $subdomainsView['parsed'] ?? [];
+$parsed_list = $parsedView['items'] ?? [];
+$parsedPage = max(1, (int) ($parsedView['page'] ?? 1));
+$parsedPerPage = max(1, (int) ($parsedView['perPage'] ?? 10));
+$parsedTotal = (int) ($parsedView['total'] ?? (is_countable($parsed_list) ? count($parsed_list) : 0));
+$parsedTotalPages = max(1, (int) ($parsedView['totalPages'] ?? 1));
 
 
 // 单独动作：对已封禁用户一键处置DNS（仅保留 A 改为指定IP，其它删除）
@@ -507,25 +353,14 @@ $riskLogEvents = $riskLogMeta['entries'] ?? [];
                 <div class="card-body">
                     <h5 class="card-title mb-3"><i class="fas fa-globe"></i> 子域名已解析列表</h5>
                     <?php
-                    // 子域名已解析分页
-                    $parsedPage = isset($_GET['parsed_page']) ? max(1, intval($_GET['parsed_page'])) : 1;
-                    $parsedPerPage = 10;
-                    $parsedOffset = ($parsedPage - 1) * $parsedPerPage;
-                    try {
-                        $parsedTotal = \WHMCS\Database\Capsule::table('mod_cloudflare_subdomain as s')
-                            ->join('mod_cloudflare_dns_records as r','r.subdomain_id','=','s.id')
-                            ->distinct()->count('s.id');
-                        $parsed_list = \WHMCS\Database\Capsule::table('mod_cloudflare_subdomain as s')
-                            ->join('mod_cloudflare_dns_records as r','r.subdomain_id','=','s.id')
-                            ->leftJoin('tblclients as c','s.userid','=','c.id')
-                            ->select('s.id','s.userid','s.subdomain','s.rootdomain','s.dns_record_id','s.status','s.created_at','s.updated_at','c.email')
-                            ->distinct()
-                            ->orderBy('s.id','desc')
-                            ->offset($parsedOffset)
-                            ->limit($parsedPerPage)
-                            ->get();
-                    } catch (Exception $e) { $parsedTotal=0; $parsed_list=[]; }
-                    $parsedTotalPages = max(1, (int)ceil($parsedTotal / $parsedPerPage));
+                    $parsedPaginationBaseParams = $_GET;
+                    $parsedPaginationBaseParams['module'] = 'domain_hub';
+                    unset($parsedPaginationBaseParams['parsed_page'], $parsedPaginationBaseParams['action']);
+                    $buildParsedPaginationUrl = function($page) use ($parsedPaginationBaseParams) {
+                        $params = $parsedPaginationBaseParams;
+                        $params['parsed_page'] = $page;
+                        return '?' . http_build_query($params) . '#parsed';
+                    };
                     ?>
                     <div class="table-responsive">
                         <table class="table table-sm table-striped align-middle">
@@ -552,19 +387,19 @@ $riskLogEvents = $riskLogMeta['entries'] ?? [];
                         <nav aria-label="已解析子域分页" class="mt-2">
                         <ul class="pagination pagination-sm justify-content-center">
                             <?php if ($parsedPage > 1): ?>
-                                <li class="page-item"><a class="page-link" href="?module=domain_hub&parsed_page=<?php echo $parsedPage-1; ?>#parsed">上一页</a></li>
+                                <li class="page-item"><a class="page-link" href="<?php echo htmlspecialchars($buildParsedPaginationUrl($parsedPage-1), ENT_QUOTES); ?>">上一页</a></li>
                             <?php endif; ?>
                             <?php for($i=1;$i<=$parsedTotalPages;$i++): ?>
                                 <?php if ($i == $parsedPage): ?>
                                     <li class="page-item active"><span class="page-link"><?php echo $i; ?></span></li>
                                 <?php elseif ($i==1 || $i==$parsedTotalPages || abs($i-$parsedPage)<=2): ?>
-                                    <li class="page-item"><a class="page-link" href="?module=domain_hub&parsed_page=<?php echo $i; ?>#parsed"><?php echo $i; ?></a></li>
+                                    <li class="page-item"><a class="page-link" href="<?php echo htmlspecialchars($buildParsedPaginationUrl($i), ENT_QUOTES); ?>"><?php echo $i; ?></a></li>
                                 <?php elseif (abs($i-$parsedPage)==3): ?>
                                     <li class="page-item disabled"><span class="page-link">...</span></li>
                                 <?php endif; ?>
                             <?php endfor; ?>
                             <?php if ($parsedPage < $parsedTotalPages): ?>
-                                <li class="page-item"><a class="page-link" href="?module=domain_hub&parsed_page=<?php echo $parsedPage+1; ?>#parsed">下一页</a></li>
+                                <li class="page-item"><a class="page-link" href="<?php echo htmlspecialchars($buildParsedPaginationUrl($parsedPage+1), ENT_QUOTES); ?>">下一页</a></li>
                             <?php endif; ?>
                         </ul>
                         <div class="text-center text-muted small">第 <?php echo $parsedPage; ?> / <?php echo $parsedTotalPages; ?> 页（共 <?php echo $parsedTotal; ?> 条）</div>
