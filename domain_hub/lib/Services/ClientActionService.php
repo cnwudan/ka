@@ -1561,10 +1561,11 @@ if($_POST['action'] == "create_dns" && isset($_POST['subdomain_id'])) {
                                     try {
                                         $fresh = $cf->getDnsRecords($record->cloudflare_zone_id, $record->subdomain);
                                         if (($fresh['success'] ?? false)) {
+                                            $localRecordIndex = self::buildLocalRecordIndex($subdomain_id);
                                             foreach (($fresh['result'] ?? []) as $fr) {
-                                                $exists = self::findLocalRecordByRemote($subdomain_id, $fr);
+                                                $exists = self::findLocalRecordByRemote($subdomain_id, $fr, $localRecordIndex);
                                                 if (!$exists) {
-                                                    Capsule::table('mod_cloudflare_dns_records')->insert([
+                                                    $insertData = [
                                                         'subdomain_id' => $subdomain_id,
                                                         'zone_id' => $record->cloudflare_zone_id,
                                                         'record_id' => isset($fr['id']) ? (string) $fr['id'] : null,
@@ -1576,7 +1577,9 @@ if($_POST['action'] == "create_dns" && isset($_POST['subdomain_id'])) {
                                                         'status' => 'active',
                                                         'created_at' => date('Y-m-d H:i:s'),
                                                         'updated_at' => date('Y-m-d H:i:s')
-                                                    ]);
+                                                    ];
+                                                    Capsule::table('mod_cloudflare_dns_records')->insert($insertData);
+                                                    self::appendLocalRecordToIndex($localRecordIndex, $insertData);
                                                 }
                                             }
                                         }
@@ -1895,10 +1898,11 @@ if($_POST['action'] == "update_dns" && isset($_POST['subdomain_id'])) {
                                     try {
                                         $fresh = $cf->getDnsRecords($record->cloudflare_zone_id, $record->subdomain);
                                         if (($fresh['success'] ?? false)) {
+                                            $localRecordIndex = self::buildLocalRecordIndex($subdomain_id);
                                             foreach (($fresh['result'] ?? []) as $fr) {
-                                                $exists = self::findLocalRecordByRemote($subdomain_id, $fr);
+                                                $exists = self::findLocalRecordByRemote($subdomain_id, $fr, $localRecordIndex);
                                                 if (!$exists) {
-                                                    Capsule::table('mod_cloudflare_dns_records')->insert([
+                                                    $insertData = [
                                                         'subdomain_id' => $subdomain_id,
                                                         'zone_id' => $record->cloudflare_zone_id,
                                                         'record_id' => isset($fr['id']) ? (string) $fr['id'] : null,
@@ -1910,7 +1914,9 @@ if($_POST['action'] == "update_dns" && isset($_POST['subdomain_id'])) {
                                                         'status' => 'active',
                                                         'created_at' => date('Y-m-d H:i:s'),
                                                         'updated_at' => date('Y-m-d H:i:s')
-                                                    ]);
+                                                    ];
+                                                    Capsule::table('mod_cloudflare_dns_records')->insert($insertData);
+                                                    self::appendLocalRecordToIndex($localRecordIndex, $insertData);
                                                 }
                                             }
                                         }
@@ -2866,12 +2872,99 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         }
     }
 
-    private static function findLocalRecordByRemote(int $subdomainId, array $remoteRecord)
+    private static function buildLocalRecordIndex(int $subdomainId): array
+    {
+        $index = [
+            'by_record_id' => [],
+            'by_composite' => [],
+        ];
+
+        if ($subdomainId <= 0) {
+            return $index;
+        }
+
+        try {
+            $rows = Capsule::table('mod_cloudflare_dns_records')
+                ->where('subdomain_id', $subdomainId)
+                ->get();
+            foreach ($rows as $row) {
+                self::appendLocalRecordToIndex($index, $row);
+            }
+        } catch (\Throwable $e) {
+        }
+
+        return $index;
+    }
+
+    private static function appendLocalRecordToIndex(array &$index, $record): void
+    {
+        if ($record instanceof \stdClass) {
+            $recordObj = $record;
+        } elseif (is_array($record)) {
+            $recordObj = (object) $record;
+        } else {
+            return;
+        }
+
+        $recordId = trim((string) ($recordObj->record_id ?? ''));
+        if ($recordId !== '' && !isset($index['by_record_id'][$recordId])) {
+            $index['by_record_id'][$recordId] = $recordObj;
+        }
+
+        $nameLower = strtolower(trim((string) ($recordObj->name ?? '')));
+        $typeUpper = strtoupper(trim((string) ($recordObj->type ?? '')));
+        if ($nameLower === '' || $typeUpper === '') {
+            return;
+        }
+
+        $content = (string) ($recordObj->content ?? '');
+        $exactKey = self::buildRecordLookupKey($nameLower, $typeUpper, $content);
+        if (!isset($index['by_composite'][$exactKey])) {
+            $index['by_composite'][$exactKey] = $recordObj;
+        }
+
+        $lowerKey = self::buildRecordLookupKey($nameLower, $typeUpper, strtolower($content));
+        if (!isset($index['by_composite'][$lowerKey])) {
+            $index['by_composite'][$lowerKey] = $recordObj;
+        }
+    }
+
+    private static function buildRecordLookupKey(string $nameLower, string $typeUpper, string $content): string
+    {
+        return $nameLower . '|' . $typeUpper . '|' . $content;
+    }
+
+    private static function findLocalRecordByRemote(int $subdomainId, array $remoteRecord, ?array $localRecordIndex = null)
     {
         if ($subdomainId <= 0) {
             return null;
         }
+
         $remoteRecordId = $remoteRecord['id'] ?? ($remoteRecord['record_id'] ?? null);
+        if ($localRecordIndex !== null) {
+            if ($remoteRecordId !== null && $remoteRecordId !== '') {
+                $recordIdKey = (string) $remoteRecordId;
+                if (isset($localRecordIndex['by_record_id'][$recordIdKey])) {
+                    return $localRecordIndex['by_record_id'][$recordIdKey];
+                }
+            }
+
+            $remoteNameLower = strtolower(trim((string) ($remoteRecord['name'] ?? '')));
+            $remoteTypeUpper = strtoupper(trim((string) ($remoteRecord['type'] ?? '')));
+            $remoteContent = (string) ($remoteRecord['content'] ?? '');
+            if ($remoteNameLower === '' || $remoteTypeUpper === '') {
+                return null;
+            }
+
+            $exactKey = self::buildRecordLookupKey($remoteNameLower, $remoteTypeUpper, $remoteContent);
+            if (isset($localRecordIndex['by_composite'][$exactKey])) {
+                return $localRecordIndex['by_composite'][$exactKey];
+            }
+
+            $lowerKey = self::buildRecordLookupKey($remoteNameLower, $remoteTypeUpper, strtolower($remoteContent));
+            return $localRecordIndex['by_composite'][$lowerKey] ?? null;
+        }
+
         if ($remoteRecordId !== null && $remoteRecordId !== '') {
             $match = Capsule::table('mod_cloudflare_dns_records')
                 ->where('subdomain_id', $subdomainId)

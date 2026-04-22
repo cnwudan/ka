@@ -117,6 +117,7 @@ $domainGiftEnabled = !empty($domainGiftEnabled);
 $quotaRedeemEnabled = !empty($quotaRedeemEnabled);
 $sslRequestEnabled = !empty($sslRequestEnabled);
 $whoisFeatureEnabled = !empty($whoisFeatureEnabled);
+$tempMailboxEnabled = !empty($tempMailboxEnabled);
 
 $cfClientJsLang = [
     'registerEnterPrefix' => cfmod_trans('cfclient.js.register_enter_prefix', '请输入域名前缀'),
@@ -293,6 +294,13 @@ if ($cfClientHasToolFeatures) {
         'icon' => 'fas fa-toolbox',
         'label' => $cfClientNavText('cfclient.nav.tools', '功能中心', 'Feature Center'),
         'description' => $cfClientNavText('cfclient.nav.tools_desc', '兑换与辅助功能入口', 'Redeem and utility features'),
+    ];
+}
+if ($tempMailboxEnabled) {
+    $cfClientViewItems['tempmail'] = [
+        'icon' => 'fas fa-envelope-open-text',
+        'label' => $cfClientNavText('cfclient.nav.tempmail', '临时邮箱', 'Temp Mailbox'),
+        'description' => $cfClientNavText('cfclient.nav.tempmail_desc', '查看 48 小时内接收的临时邮件', 'View temporary emails kept for up to 48 hours'),
     ];
 }
 if ($cfClientApiEnabled && $cfClientApiTemplateExists) {
@@ -818,6 +826,9 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
                         } else {
                             echo '<div class="alert alert-info">' . cfclient_lang('cfclient.api.disabled', 'API 功能暂未开启。', [], true) . '</div>';
                         }
+                        break;
+                    case 'tempmail':
+                        include __DIR__ . '/client/partials/temp_mailbox.tpl';
                         break;
                     case 'whois':
                         include __DIR__ . '/client/partials/whois_center.tpl';

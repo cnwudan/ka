@@ -29,6 +29,7 @@ spl_autoload_register(static function (string $class): void {
         'CfGithubStarRewardService' => __DIR__ . '/Services/GithubStarRewardService.php',
         'CfSslCertificateService' => __DIR__ . '/Services/SslCertificateService.php',
         'CfWhoisService' => __DIR__ . '/Services/WhoisService.php',
+        'CfTempMailboxService' => __DIR__ . '/Services/TempMailboxService.php',
 
         'CfRateLimiter' => __DIR__ . '/Services/RateLimiter.php',
         'CfModuleSettings' => __DIR__ . '/Support/ModuleSettings.php',

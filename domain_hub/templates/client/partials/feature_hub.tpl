@@ -25,6 +25,7 @@ $githubStarHistoryPage = max(1, (int) ($githubStarRewardHistory['page'] ?? 1));
 $githubStarHistoryTotalPages = max(1, (int) ($githubStarRewardHistory['totalPages'] ?? 1));
 
 $sslRequestEnabled = !empty($sslRequestEnabled);
+$tempMailboxEnabled = !empty($tempMailboxEnabled);
 $sslRequestDomains = is_array($sslRequestDomains ?? null) ? $sslRequestDomains : [];
 $sslCertificates = is_array($sslCertificates ?? null) ? $sslCertificates : ['items' => [], 'page' => 1, 'totalPages' => 1];
 $sslCertificateItems = is_array($sslCertificates['items'] ?? null) ? $sslCertificates['items'] : [];
@@ -37,6 +38,7 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
     || $inviteRegistrationInviteEnabled
     || $hasRootdomainInvite
     || $sslRequestEnabled
+    || $tempMailboxEnabled
     || $githubStarRewardEnabled;
 ?>
 
@@ -93,6 +95,20 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                         <button type="button" class="btn btn-outline-secondary" onclick="showRootdomainInviteCodesModal()">
                             <i class="fas fa-copy me-1"></i><?php echo $featureText('cfclient.feature.root_invite.button', '查看邀请码', 'View Invite Codes'); ?>
                         </button>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($tempMailboxEnabled): ?>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex flex-column">
+                        <h6 class="card-title"><i class="fas fa-envelope-open-text text-primary me-2"></i><?php echo $featureText('cfclient.feature.tempmail.title', '临时邮箱', 'Temporary Mailbox'); ?></h6>
+                        <p class="text-muted small flex-grow-1 mb-3"><?php echo $featureText('cfclient.feature.tempmail.desc', '查看由 Cloudflare Email Routing 转发的临时邮件，仅保留 48 小时。', 'Read temporary emails forwarded by Cloudflare Email Routing with 48-hour retention.'); ?></p>
+                        <a class="btn btn-outline-primary" href="<?php echo htmlspecialchars($cfClientViewUrls['tempmail'] ?? (($cfClientEntryScript ?? 'index.php') . '?m=' . urlencode((string) ($moduleSlug ?? 'domain_hub')) . '&view=tempmail'), ENT_QUOTES); ?>">
+                            <i class="fas fa-inbox me-1"></i><?php echo $featureText('cfclient.feature.tempmail.button', '打开临时邮箱', 'Open Mailbox'); ?>
+                        </a>
                     </div>
                 </div>
             </div>

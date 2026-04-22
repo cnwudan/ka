@@ -1292,6 +1292,77 @@ function cfmod_handle_public_whois(array $settings, string $method, array $data)
     api_json($payload, $status);
 }
 
+function cfmod_temp_mailbox_provided_secret(array $data): string {
+    $candidates = [
+        api_get_header('X-Temp-Mailbox-Secret'),
+        api_get_header('X-Webhook-Secret'),
+        api_get_header('X-Temp-Mail-Secret'),
+        $_GET['secret'] ?? null,
+        $data['secret'] ?? null,
+        $data['webhook_secret'] ?? null,
+    ];
+
+    foreach ($candidates as $candidate) {
+        $value = trim((string) ($candidate ?? ''));
+        if ($value !== '') {
+            return $value;
+        }
+    }
+
+    return '';
+}
+
+function cfmod_handle_temp_mailbox_inbound(array $settings, string $method, array $data, string $rawInput): void {
+    if (strtoupper($method) !== 'POST') {
+        api_json(['success' => false, 'error' => 'method not allowed'], 405);
+        return;
+    }
+
+    if (!class_exists('CfTempMailboxService')) {
+        api_json(['success' => false, 'error' => 'service unavailable'], 500);
+        return;
+    }
+
+    if (!CfTempMailboxService::isEnabled($settings)) {
+        api_json(['success' => false, 'error' => 'temp mailbox disabled'], 403);
+        return;
+    }
+
+    $expectedSecret = CfTempMailboxService::resolveWebhookSecret($settings);
+    if ($expectedSecret === '') {
+        api_json(['success' => false, 'error' => 'webhook secret not configured'], 503);
+        return;
+    }
+
+    $providedSecret = cfmod_temp_mailbox_provided_secret($data);
+    if ($providedSecret === '' || !hash_equals($expectedSecret, $providedSecret)) {
+        api_json(['success' => false, 'error' => 'unauthorized'], 401);
+        return;
+    }
+
+    if (empty($data) && trim($rawInput) !== '') {
+        parse_str($rawInput, $parsed);
+        if (is_array($parsed) && !empty($parsed)) {
+            $data = $parsed;
+        }
+    }
+
+    $result = CfTempMailboxService::storeInboundPayload($data, $settings);
+    $statusCode = !empty($result['success']) ? 200 : 400;
+
+    if (function_exists('cloudflare_subdomain_log')) {
+        cloudflare_subdomain_log('temp_mailbox_inbound', [
+            'success' => !empty($result['success']),
+            'matched_mailboxes' => intval($result['matched_mailboxes'] ?? 0),
+            'inserted' => intval($result['inserted'] ?? 0),
+            'error' => (string) ($result['error'] ?? ''),
+            'source_ip' => api_client_ip(),
+        ], 0, null);
+    }
+
+    api_json($result, $statusCode);
+}
+
 function handleApiRequest(){
     $t0 = microtime(true);
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -1301,6 +1372,11 @@ function handleApiRequest(){
     $endpoint = $_GET['endpoint'] ?? ($data['endpoint'] ?? '');
     $action = $_GET['action'] ?? ($data['action'] ?? '');
     $settings = api_load_settings();
+
+    if ($endpoint === 'temp_mail_inbound') {
+        cfmod_handle_temp_mailbox_inbound($settings, (string) $method, is_array($data) ? $data : [], (string) $rawIn);
+        return;
+    }
 
     if ($endpoint === 'whois' && !api_setting_enabled($settings['whois_require_api_key'] ?? '0')) {
         cfmod_handle_public_whois($settings, $method, $data);

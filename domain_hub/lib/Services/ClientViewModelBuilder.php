@@ -348,6 +348,37 @@ class CfClientViewModelBuilder
         $globals['whoisPrivacyEnabled'] = $whoisPrivacyEnabled;
         $globals['whoisManagedDomainCount'] = $whoisManagedDomainCount;
 
+        $tempMailboxState = [
+            'enabled' => false,
+            'configured' => false,
+            'domain' => '',
+            'retention_hours' => 48,
+            'mailbox' => null,
+            'emails' => [
+                'items' => [],
+                'page' => 1,
+                'perPage' => 15,
+                'total' => 0,
+                'totalPages' => 1,
+            ],
+            'selected' => null,
+            'notice' => '',
+        ];
+        if (class_exists('CfTempMailboxService')) {
+            $tempMailPage = isset($_GET['temp_mail_page']) ? max(1, (int) $_GET['temp_mail_page']) : 1;
+            $tempMailId = isset($_GET['temp_mail_id']) ? max(0, (int) $_GET['temp_mail_id']) : 0;
+            try {
+                $tempMailboxState = CfTempMailboxService::buildClientState($userId, $moduleSettings, $tempMailPage, $tempMailId);
+            } catch (\Throwable $e) {
+                $tempMailboxState['notice'] = 'unavailable';
+            }
+        }
+        $globals['tempMailbox'] = $tempMailboxState;
+        $globals['tempMailboxEnabled'] = !empty($tempMailboxState['enabled']);
+        $globals['tempMailboxConfigured'] = !empty($tempMailboxState['configured']);
+        $globals['tempMailboxDomain'] = (string) ($tempMailboxState['domain'] ?? '');
+        $globals['tempMailboxRetentionHours'] = (int) ($tempMailboxState['retention_hours'] ?? 48);
+
         $domainSearch = self::resolveDomainSearch($moduleSlug, $moduleSettings);
         $globals = array_merge($globals, $domainSearch);
 
@@ -468,6 +499,10 @@ class CfClientViewModelBuilder
             'enable_whois_center' => '1',
             'whois_default_nameservers' => '',
             'whois_anonymous_email' => '',
+            'enable_temp_mailbox' => '0',
+            'temp_mailbox_domain' => '',
+            'temp_mailbox_retention_hours' => '48',
+            'temp_mailbox_webhook_secret' => '',
             'partner_plan_admin_email' => '',
             'sponsor_title' => '赞助 DNSHE',
             'sponsor_description' => 'DNSHE 的成长离不开社区的支持。你的每一份赞助都将用于支付服务器与根域名的续费开支。',

@@ -1846,6 +1846,31 @@ function domain_hub_config() {
                 "Default" => "2",
                 "Description" => "针对同一IP的公共WHOIS调用限制（<=0 表示不限）",
             ],
+            "enable_temp_mailbox" => [
+                "FriendlyName" => "启用临时邮箱",
+                "Type" => "yesno",
+                "Default" => "no",
+                "Description" => "开启后为每位用户分配一个只读临时邮箱地址，用于接收 Cloudflare Email Routing 转发邮件。",
+            ],
+            "temp_mailbox_domain" => [
+                "FriendlyName" => "临时邮箱域名",
+                "Type" => "text",
+                "Size" => "80",
+                "Description" => "填写用于接收临时邮箱的域名（示例：mail.example.com），并在 Cloudflare Email Routing 中完成转发配置。",
+            ],
+            "temp_mailbox_retention_hours" => [
+                "FriendlyName" => "临时邮箱保留时长（小时）",
+                "Type" => "text",
+                "Size" => "4",
+                "Default" => "48",
+                "Description" => "邮件内容保留时长，最大 48 小时。超时后将由清理任务自动删除。",
+            ],
+            "temp_mailbox_webhook_secret" => [
+                "FriendlyName" => "临时邮箱 Webhook 密钥",
+                "Type" => "text",
+                "Size" => "80",
+                "Description" => "用于校验 inbound webhook，请在接收服务请求头中传递 X-Webhook-Secret（或 X-Temp-Mailbox-Secret）。",
+            ],
             // 前端分页 & 日志保留
             "client_page_size" => [
                 "FriendlyName" => "用户端每页子域名数量",

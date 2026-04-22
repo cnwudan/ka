@@ -315,6 +315,40 @@ add_hook('AfterCronJob', 1, function($vars) {
             }
         }
 
+        $tempMailboxEnabled = in_array(strtolower(trim((string)($settings['enable_temp_mailbox'] ?? '0'))), ['1','on','yes','true','enabled'], true);
+        if ($tempMailboxEnabled) {
+            $lastTempMailboxCleanup = Capsule::table('mod_cloudflare_jobs')
+                ->where('type', 'cleanup_temp_mailbox')
+                ->whereIn('status', ['failed','done','cancelled'])
+                ->orderBy('id', 'desc')
+                ->first();
+            $tempMailboxInterval = 60; // minutes
+            $shouldTempMailboxCleanup = false;
+            if (!$lastTempMailboxCleanup) {
+                $shouldTempMailboxCleanup = true;
+            } else {
+                $lastTime = $lastTempMailboxCleanup->updated_at ?? $lastTempMailboxCleanup->created_at;
+                if (!$lastTime || strtotime($lastTime) <= time() - $tempMailboxInterval * 60) {
+                    $shouldTempMailboxCleanup = true;
+                }
+            }
+            if ($shouldTempMailboxCleanup) {
+                Capsule::table('mod_cloudflare_jobs')->insert([
+                    'type' => 'cleanup_temp_mailbox',
+                    'payload_json' => json_encode([
+                        'batch_size' => 1200,
+                        'auto' => true,
+                    ], JSON_UNESCAPED_UNICODE),
+                    'priority' => 5,
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        }
+
         $gracePeriodRaw = $settings['domain_grace_period_days'] ?? ($settings['domain_auto_delete_grace_days'] ?? 45);
         $cleanupGraceDays = is_numeric($gracePeriodRaw) ? intval($gracePeriodRaw) : 45;
 

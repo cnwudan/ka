@@ -399,6 +399,43 @@ class CfModuleInstaller
                     });
                 }
 
+                if (!Capsule::schema()->hasTable('mod_cloudflare_temp_mailboxes')) {
+                    Capsule::schema()->create('mod_cloudflare_temp_mailboxes', function ($table) {
+                        $table->increments('id');
+                        $table->integer('userid')->unsigned()->unique();
+                        $table->string('alias_local', 80)->unique();
+                        $table->string('email_address', 191)->unique();
+                        $table->string('status', 20)->default('active');
+                        $table->dateTime('last_received_at')->nullable();
+                        $table->timestamps();
+                        $table->index('status');
+                        $table->index('email_address');
+                    });
+                }
+
+                if (!Capsule::schema()->hasTable('mod_cloudflare_temp_emails')) {
+                    Capsule::schema()->create('mod_cloudflare_temp_emails', function ($table) {
+                        $table->increments('id');
+                        $table->integer('mailbox_id')->unsigned();
+                        $table->integer('userid')->unsigned();
+                        $table->string('message_id', 191)->nullable();
+                        $table->string('sender', 191)->nullable();
+                        $table->string('recipient', 191)->nullable();
+                        $table->string('subject', 255)->nullable();
+                        $table->text('body_text')->nullable();
+                        $table->longText('body_html')->nullable();
+                        $table->text('raw_headers')->nullable();
+                        $table->string('source', 32)->default('webhook');
+                        $table->dateTime('received_at');
+                        $table->dateTime('expires_at');
+                        $table->timestamps();
+                        $table->index('mailbox_id');
+                        $table->index('userid');
+                        $table->index('received_at');
+                        $table->index('expires_at');
+                    });
+                }
+
                 // 邀请注册解锁表（如果不存在）
                 if (!Capsule::schema()->hasTable('mod_cloudflare_invite_registration_unlock')) {
                     Capsule::schema()->create('mod_cloudflare_invite_registration_unlock', function ($table) {
@@ -868,6 +905,8 @@ class CfModuleInstaller
                 Capsule::schema()->dropIfExists('mod_cloudflare_rate_limits');
                 Capsule::schema()->dropIfExists('mod_cloudflare_whois_rate_limit');
                 Capsule::schema()->dropIfExists('mod_cloudflare_vpn_cache');
+                Capsule::schema()->dropIfExists('mod_cloudflare_temp_emails');
+                Capsule::schema()->dropIfExists('mod_cloudflare_temp_mailboxes');
                 Capsule::schema()->dropIfExists('mod_cloudflare_provider_accounts');
                 return ['status'=>'success','description'=>'插件已完全卸载，数据已删除'];
             } catch (\Exception $e) {

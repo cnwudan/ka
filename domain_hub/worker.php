@@ -594,6 +594,9 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 case 'cleanup_domain_gifts':
                     $stats = cfmod_job_cleanup_domain_gifts($job, $payload) ?: [];
                     break;
+                case 'cleanup_temp_mailbox':
+                    $stats = cfmod_job_cleanup_temp_mailbox($job, $payload) ?: [];
+                    break;
                 case 'cleanup_orphan_dns':
                     $stats = cfmod_job_cleanup_orphan_dns($job, $payload) ?: [];
                     break;
@@ -3827,6 +3830,37 @@ function cfmod_job_cleanup_domain_gifts($job, array $payload = []): array {
         $stats['message'] = 'gift cleanup failed';
         cfmod_report_exception('cleanup_domain_gifts', $e);
     }
+    return $stats;
+}
+
+function cfmod_job_cleanup_temp_mailbox($job, array $payload = []): array {
+    $stats = [
+        'deleted' => 0,
+        'warnings' => [],
+    ];
+
+    $batchSize = intval($payload['batch_size'] ?? 1000);
+    $batchSize = max(100, min(5000, $batchSize));
+
+    try {
+        if (!class_exists('CfTempMailboxService')) {
+            $stats['warnings'][] = 'service_unavailable';
+            $stats['message'] = 'temp mailbox service unavailable';
+            return $stats;
+        }
+
+        $deleted = CfTempMailboxService::cleanupExpired($batchSize);
+        $stats['deleted'] = intval($deleted);
+        $stats['message'] = 'deleted ' . $stats['deleted'] . ' expired temp emails';
+        if ($deleted >= $batchSize) {
+            $stats['has_more'] = true;
+        }
+    } catch (\Throwable $e) {
+        $stats['warnings'][] = 'temp_mailbox_cleanup_failed';
+        $stats['message'] = 'temp mailbox cleanup failed';
+        cfmod_report_exception('cleanup_temp_mailbox', $e);
+    }
+
     return $stats;
 }
 
