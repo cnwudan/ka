@@ -1361,11 +1361,11 @@ function domain_hub_config() {
                 "Description" => "PowerDNS 根域注册时的重复检查策略。",
             ],
             "pdns_register_hybrid_local_threshold" => [
-                "FriendlyName" => "PowerDNS 混合策略阈值（本地记录数）",
+                "FriendlyName" => "PowerDNS 混合策略阈值（本地子域数量）",
                 "Type" => "text",
                 "Size" => "6",
-                "Default" => "2000",
-                "Description" => "仅在混合策略下生效：当本地该根域记录数超过阈值时，跳过远端重复检查。",
+                "Default" => "800",
+                "Description" => "仅在混合策略下生效：当本地该根域子域数量达到阈值时，跳过远端重复检查。建议 300-1200。",
             ],
             "calibration_batch_size" => [
                 "FriendlyName" => "校准批量大小",

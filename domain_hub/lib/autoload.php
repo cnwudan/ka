@@ -19,6 +19,7 @@ spl_autoload_register(static function (string $class): void {
         'CfAsyncDnsJobService' => __DIR__ . '/Services/AsyncDnsJobService.php',
         'CfAdminActionService' => __DIR__ . '/Services/AdminActionService.php',
         'CfAdminViewModelBuilder' => __DIR__ . '/Services/AdminViewModelBuilder.php',
+        'CfAdminStatsSnapshotService' => __DIR__ . '/Services/AdminStatsSnapshotService.php',
         'CfDnsUnlockService' => __DIR__ . '/Services/DnsUnlockService.php',
         'CfVpnDetectionService' => __DIR__ . '/Services/VpnDetectionService.php',
         'CfInviteRegistrationService' => __DIR__ . '/Services/InviteRegistrationService.php',

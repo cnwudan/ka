@@ -96,6 +96,10 @@ add_hook('AfterCronJob', 1, function($vars) {
             }
         }
 
+        if (class_exists('CfAdminStatsSnapshotService')) {
+            CfAdminStatsSnapshotService::enqueueRefreshIfNeeded($settings, false, 'cron');
+        }
+
         // Try to execute a couple of jobs each cron pass（可选）
         if (cfmod_should_run_inline_queue($settings)) {
             $worker = __DIR__ . '/worker.php';

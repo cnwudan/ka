@@ -1183,6 +1183,7 @@ $cfAdminFooterConfig = [
     ],
     'api' => [
         'quotaEndpoint' => '?module=domain_hub&action=get_user_quota&userid=',
+        'heavyStatsEndpoint' => '?module=domain_hub&action=get_admin_heavy_stats',
     ],
 ];
 ?>

@@ -536,6 +536,9 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 case 'client_dns_operation':
                     $stats = cfmod_job_client_dns_operation($job, $payload) ?: [];
                     break;
+                case 'precompute_admin_stats':
+                    $stats = cfmod_job_precompute_admin_stats($job, $payload) ?: [];
+                    break;
                 default:
                     throw new \RuntimeException('Unknown job type: ' . $type);
             }
@@ -2627,6 +2630,31 @@ function cfmod_job_client_dns_operation($job, array $payload = []): array
         'message' => $msg !== '' ? $msg : 'queued',
         'status' => $msgType !== '' ? $msgType : 'success',
         'action' => $postData['action'],
+    ];
+}
+
+function cfmod_job_precompute_admin_stats($job, array $payload = []): array
+{
+    if (!class_exists('CfAdminViewModelBuilder')) {
+        throw new \RuntimeException('AdminViewModelBuilder is unavailable');
+    }
+
+    $stats = CfAdminViewModelBuilder::computeHeavyStatsSnapshot();
+    if (!is_array($stats)) {
+        throw new \RuntimeException('Heavy stats compute returned invalid payload');
+    }
+
+    $stored = false;
+    if (class_exists('CfAdminStatsSnapshotService')) {
+        $stored = CfAdminStatsSnapshotService::storeSnapshot($stats);
+    }
+
+    return [
+        'message' => $stored ? 'admin heavy stats refreshed' : 'admin heavy stats computed (store failed)',
+        'stored' => $stored ? 1 : 0,
+        'totalSubdomains' => (int) ($stats['totalSubdomains'] ?? 0),
+        'activeSubdomains' => (int) ($stats['activeSubdomains'] ?? 0),
+        'registeredUsers' => (int) ($stats['registeredUsers'] ?? 0),
     ];
 }
 

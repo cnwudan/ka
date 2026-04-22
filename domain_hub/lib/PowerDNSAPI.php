@@ -635,10 +635,7 @@ class PowerDNSAPI
         }
         $errors = $detail['errors'] ?? [];
         if (isset($errors['full_zone_disabled']) || isset($errors['search_unavailable'])) {
-            $exportCheck = $this->checkDomainExistsViaZoneExport($zoneName, $recordName);
-            if ($exportCheck !== null) {
-                return $exportCheck;
-            }
+            return false;
         }
         return false;
     }

@@ -140,7 +140,7 @@ class CfSettingsRepository
             'domain_cleanup_deep_delete' => 'yes',
             'pdns_register_local_check_only' => '1',
             'pdns_register_strategy' => 'local_only',
-            'pdns_register_hybrid_local_threshold' => '2000',
+            'pdns_register_hybrid_local_threshold' => '800',
             'redeem_ticket_url' => '',
             'api_logs_retention_days' => '30',
             'general_logs_retention_days' => '90',
