@@ -126,8 +126,10 @@ class CfDigService
         foreach ($resolvers as $resolver) {
             $url = self::buildResolverUrl((string) ($resolver['url'] ?? ''), $domain, $recordType, $dnsQuery);
             $headers = self::buildResolverHeaders($resolver);
+            $httpVersion = self::resolveResolverHttpVersion($resolver);
+
             $ch = curl_init();
-            curl_setopt_array($ch, [
+            $curlOptions = [
                 CURLOPT_URL => $url,
                 CURLOPT_RETURNTRANSFER => true,
                 CURLOPT_FOLLOWLOCATION => true,
@@ -137,7 +139,11 @@ class CfDigService
                 CURLOPT_SSL_VERIFYHOST => 2,
                 CURLOPT_HTTPHEADER => $headers,
                 CURLOPT_USERAGENT => 'DomainHub-Dig/1.0',
-            ]);
+            ];
+            if ($httpVersion > 0) {
+                $curlOptions[CURLOPT_HTTP_VERSION] = $httpVersion;
+            }
+            curl_setopt_array($ch, $curlOptions);
             curl_multi_add_handle($multi, $ch);
             $handles[(int) $ch] = [
                 'resolver' => $resolver,
@@ -176,9 +182,10 @@ class CfDigService
     {
         $url = self::buildResolverUrl((string) ($resolver['url'] ?? ''), $domain, $recordType, $dnsQuery);
         $headers = self::buildResolverHeaders($resolver);
+        $httpVersion = self::resolveResolverHttpVersion($resolver);
 
         $ch = curl_init();
-        curl_setopt_array($ch, [
+        $curlOptions = [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
@@ -188,7 +195,11 @@ class CfDigService
             CURLOPT_SSL_VERIFYHOST => 2,
             CURLOPT_HTTPHEADER => $headers,
             CURLOPT_USERAGENT => 'DomainHub-Dig/1.0',
-        ]);
+        ];
+        if ($httpVersion > 0) {
+            $curlOptions[CURLOPT_HTTP_VERSION] = $httpVersion;
+        }
+        curl_setopt_array($ch, $curlOptions);
 
         $body = curl_exec($ch);
         $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -295,11 +306,20 @@ class CfDigService
         if ($body === '') {
             return '';
         }
-        $sample = substr($body, 0, 160);
+        $sample = substr($body, 0, 220);
         if (preg_match('/[^\x09\x0A\x0D\x20-\x7E]/', $sample)) {
             return '';
         }
-        return trim($sample);
+        $sampleText = trim($sample);
+        if ($sampleText === '') {
+            return '';
+        }
+
+        if (stripos($sampleText, 'requires HTTP/2') !== false) {
+            return 'Quad9 服务器要求 HTTP/2，请检查 PHP cURL 是否已启用 HTTP/2（nghttp2）支持。';
+        }
+
+        return $sampleText;
     }
 
     private static function buildSummary(array $resolverResults): array
@@ -386,6 +406,25 @@ class CfDigService
         return [
             'Accept: ' . $accept,
         ];
+    }
+
+    private static function resolveResolverHttpVersion(array $resolver): int
+    {
+        $mode = strtolower(trim((string) ($resolver['mode'] ?? 'json')));
+        if ($mode === 'wire') {
+            if (defined('CURL_HTTP_VERSION_2TLS')) {
+                return (int) CURL_HTTP_VERSION_2TLS;
+            }
+            if (defined('CURL_HTTP_VERSION_2_0')) {
+                return (int) CURL_HTTP_VERSION_2_0;
+            }
+        }
+
+        if (defined('CURL_HTTP_VERSION_1_1')) {
+            return (int) CURL_HTTP_VERSION_1_1;
+        }
+
+        return 0;
     }
 
     private static function buildDnsQueryBase64Url(string $domain, string $recordType): string
