@@ -600,7 +600,11 @@ class CfInviteRegistrationService
     public static function checkInviterLimit(int $inviterId): bool
     {
         $maxLimit = self::getMaxInviteCodesPerUser();
-        if (function_exists('cf_is_user_privileged') && cf_is_user_privileged($inviterId)) {
+        $isPrivileged = function_exists('cf_is_user_privileged') && cf_is_user_privileged($inviterId);
+        $privilegedUnlimitedInvite = $isPrivileged
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('unlimited_invite_generation');
+        if ($privilegedUnlimitedInvite) {
             $maxLimit = defined('CF_PRIVILEGED_MAX_SUBDOMAIN') ? CF_PRIVILEGED_MAX_SUBDOMAIN : 99999999999;
         }
         if ($maxLimit <= 0) {

@@ -267,7 +267,27 @@ function api_handle_subdomain_register(array $data, $keyRow, array $settings): a
         return [$code, $result];
     }
 
-    if (!api_is_rootdomain_allowed($root, $settings)) {
+    $rootAllowed = api_is_rootdomain_allowed($root, $settings);
+    if (!$rootAllowed) {
+        $allowSuspendedForPrivileged = false;
+        $userId = intval($keyRow->userid ?? 0);
+        if ($userId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($userId)) {
+            $allowSuspendedForPrivileged = function_exists('cf_is_privileged_feature_enabled')
+                && cf_is_privileged_feature_enabled('allow_register_suspended_root', $settings);
+        }
+
+        if ($allowSuspendedForPrivileged) {
+            try {
+                $rootAllowed = Capsule::table('mod_cloudflare_rootdomains')
+                    ->whereRaw('LOWER(domain)=?', [strtolower($root)])
+                    ->exists();
+            } catch (\Throwable $e) {
+                $rootAllowed = false;
+            }
+        }
+    }
+
+    if (!$rootAllowed) {
         $code = 400;
         $result = ['error' => 'root domain not allowed'];
         return [$code, $result];

@@ -60,7 +60,10 @@ class CfSubdomainService
             $termYears = 0;
         }
         $termYears = $this->applyRootdomainTermOverride($rootLower, $termYears);
-        if ($isPrivileged) {
+        $privilegedForceNeverExpire = $isPrivileged
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('force_never_expire', $settings);
+        if ($privilegedForceNeverExpire) {
             $termYears = 0;
         }
         $neverExpiresFlag = 0;

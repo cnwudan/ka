@@ -38,6 +38,16 @@ class CfClientActionService
         extract($globals, EXTR_SKIP);
 
         $module_settings = $module_settings ?? [];
+        $resolvedUserId = intval($userid ?? 0);
+        $isPrivilegedUser = $resolvedUserId > 0
+            && function_exists('cf_is_user_privileged')
+            && cf_is_user_privileged($resolvedUserId);
+        $privilegedAllowRegisterSuspendedRoot = $isPrivilegedUser
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('allow_register_suspended_root', $module_settings);
+        $privilegedAllowDeleteWithDnsHistory = $isPrivilegedUser
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('allow_delete_with_dns_history', $module_settings);
         $enableDnsUnlockFeature = cfmod_setting_enabled($module_settings['enable_dns_unlock'] ?? '0');
         $dnsUnlockPurchaseEnabled = cfmod_setting_enabled($module_settings['dns_unlock_purchase_enabled'] ?? '0');
         $dnsUnlockShareEnabled = cfmod_setting_enabled($module_settings['dns_unlock_share_enabled'] ?? '1');
@@ -898,7 +908,8 @@ if($_POST['action'] == "register") {
                                         ->select('status')
                                         ->whereRaw('LOWER(domain)=?', [strtolower($rootdomain)])
                                         ->first();
-                                    if ($st && ($st->status ?? '') !== 'active') {
+                                    $rootStatus = strtolower((string)($st->status ?? ''));
+                                    if ($st && $rootStatus !== 'active' && !$privilegedAllowRegisterSuspendedRoot) {
                                         $msg = self::actionText('register.root_suspended', '该根域名已停止新注册');
                                         $msg_type = 'danger';
                                         $registerError = $msg;
@@ -1659,7 +1670,7 @@ if($_POST['action'] == 'delete_subdomain' && isset($_POST['subdomain_id'])) {
                 } elseif (intval($subdomain->gift_lock_id ?? 0) > 0) {
                     $msg = self::actionText('delete.gift_locked', '域名当前处于转赠/锁定状态，请先取消后再尝试删除。');
                     $msg_type = 'warning';
-                } elseif ($everHadDns) {
+                } elseif ($everHadDns && !$privilegedAllowDeleteWithDnsHistory) {
                     $msg = self::actionText('delete.history_blocked', '仅允许从未设置解析记录的域名自助删除，如需协助请提交工单。');
                     $msg_type = 'warning';
                 } else {

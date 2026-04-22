@@ -1948,6 +1948,30 @@ function domain_hub_config() {
                 "Default" => "0",
                 "Description" => "每个用户针对单个根域名最多可邀请的好友数量，0表示不限制。此配置影响开启了邀请注册功能的根域名。",
             ],
+            "privileged_allow_register_suspended_root" => [
+                "FriendlyName" => "特权用户可注册已停止根域",
+                "Type" => "yesno",
+                "Default" => "no",
+                "Description" => "开启后，特权用户可注册状态为已停止注册的根域名。",
+            ],
+            "privileged_unlimited_invite_generation" => [
+                "FriendlyName" => "特权用户邀请码无限制",
+                "Type" => "yesno",
+                "Default" => "yes",
+                "Description" => "开启后，特权用户不受邀请注册与根域名邀请码使用次数限制。",
+            ],
+            "privileged_force_never_expire" => [
+                "FriendlyName" => "特权用户域名默认永久",
+                "Type" => "yesno",
+                "Default" => "yes",
+                "Description" => "开启后，特权用户新注册域名默认永久有效，启用特权时可将其历史域名批量设为永久。",
+            ],
+            "privileged_allow_delete_with_dns_history" => [
+                "FriendlyName" => "特权用户可删除有解析历史域名",
+                "Type" => "yesno",
+                "Default" => "no",
+                "Description" => "开启后，特权用户可自助删除曾经配置过解析记录的域名。",
+            ],
         ]
     ];
 }

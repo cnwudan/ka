@@ -198,9 +198,12 @@ class CfRootdomainInviteService
     public static function checkInviterLimit(int $inviterId, string $rootdomain): bool
     {
         $maxLimit = self::getMaxInvitesPerUser();
-        
-        // 特权用户不限制
-        if (function_exists('cf_is_user_privileged') && cf_is_user_privileged($inviterId)) {
+
+        $isPrivileged = function_exists('cf_is_user_privileged') && cf_is_user_privileged($inviterId);
+        $privilegedUnlimitedInvite = $isPrivileged
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('unlimited_invite_generation');
+        if ($privilegedUnlimitedInvite) {
             return true;
         }
 

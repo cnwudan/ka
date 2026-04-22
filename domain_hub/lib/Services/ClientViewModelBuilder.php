@@ -167,8 +167,19 @@ class CfClientViewModelBuilder
         $globals['inviteRegistrationInviteEnabled'] = $inviteOptionEnabled;
         $globals['inviteRegistrationGithubEnabled'] = $githubOptionEnabled;
 
+        $isUserPrivileged = $userId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($userId);
+        $globals['isUserPrivileged'] = $isUserPrivileged;
+
+        $privilegedAllowDeleteWithDnsHistory = $isUserPrivileged
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('allow_delete_with_dns_history', $moduleSettings);
+        $globals['privilegedAllowDeleteWithDnsHistory'] = $privilegedAllowDeleteWithDnsHistory;
+
         $inviteRegistrationMaxPerUser = max(0, intval($moduleSettings['invite_registration_max_per_user'] ?? 0));
-        if ($userId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($userId)) {
+        $privilegedUnlimitedInvite = $isUserPrivileged
+            && function_exists('cf_is_privileged_feature_enabled')
+            && cf_is_privileged_feature_enabled('unlimited_invite_generation', $moduleSettings);
+        if ($privilegedUnlimitedInvite) {
             $inviteRegistrationMaxPerUser = defined('CF_PRIVILEGED_MAX_SUBDOMAIN')
                 ? CF_PRIVILEGED_MAX_SUBDOMAIN
                 : 99999999999;
@@ -244,7 +255,7 @@ class CfClientViewModelBuilder
             }
         }
 
-        $globals['roots'] = self::loadRootDomains();
+        $globals['roots'] = self::loadRootDomains($userId, $moduleSettings);
         $globals['rootLimitMap'] = self::loadRootLimitMap();
         $globals['rootMaintenanceMap'] = self::loadRootMaintenanceMap();
         $globals['rootInviteRequiredMap'] = self::loadRootInviteRequiredMap();
@@ -566,15 +577,27 @@ class CfClientViewModelBuilder
         }
     }
 
-    private static function loadRootDomains(): array
+    private static function loadRootDomains(int $userId, array $moduleSettings): array
     {
         $roots = [];
+        $allowSuspended = false;
+        if ($userId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($userId)) {
+            $allowSuspended = function_exists('cf_is_privileged_feature_enabled')
+                && cf_is_privileged_feature_enabled('allow_register_suspended_root', $moduleSettings);
+        }
+
         try {
-            $rows = Capsule::table('mod_cloudflare_rootdomains')
-                ->where('status', 'active')
+            $query = Capsule::table('mod_cloudflare_rootdomains')
                 ->orderBy('display_order', 'asc')
-                ->orderBy('id', 'asc')
-                ->get();
+                ->orderBy('id', 'asc');
+
+            if ($allowSuspended) {
+                $query->whereIn('status', ['active', 'suspended']);
+            } else {
+                $query->where('status', 'active');
+            }
+
+            $rows = $query->get();
             foreach ($rows as $row) {
                 $domain = trim((string)($row->domain ?? ''));
                 if ($domain !== '') {
