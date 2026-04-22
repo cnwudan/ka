@@ -6,6 +6,45 @@ $apiKeys = \WHMCS\Database\Capsule::table('mod_cloudflare_api_keys')
     ->orderBy('created_at', 'desc')
     ->get();
 
+$apiKeyIds = [];
+foreach ($apiKeys as $apiKeyRow) {
+    $apiKeyIds[] = intval($apiKeyRow->id ?? 0);
+}
+$apiKeyIds = array_values(array_filter(array_unique($apiKeyIds)));
+if (!empty($apiKeyIds)) {
+    try {
+        $usageRows = \WHMCS\Database\Capsule::table('mod_cloudflare_api_logs')
+            ->select('api_key_id', \WHMCS\Database\Capsule::raw('COUNT(*) as request_count'), \WHMCS\Database\Capsule::raw('MAX(created_at) as last_used_at'))
+            ->whereIn('api_key_id', $apiKeyIds)
+            ->groupBy('api_key_id')
+            ->get();
+
+        $usageMap = [];
+        foreach ($usageRows as $usageRow) {
+            $usageKeyId = intval($usageRow->api_key_id ?? 0);
+            if ($usageKeyId <= 0) {
+                continue;
+            }
+            $usageMap[$usageKeyId] = [
+                'request_count' => intval($usageRow->request_count ?? 0),
+                'last_used_at' => $usageRow->last_used_at ?? null,
+            ];
+        }
+
+        foreach ($apiKeys as $apiKeyRow) {
+            $usage = $usageMap[intval($apiKeyRow->id ?? 0)] ?? null;
+            if ($usage === null) {
+                continue;
+            }
+            $apiKeyRow->request_count = intval($usage['request_count'] ?? $apiKeyRow->request_count ?? 0);
+            if (!empty($usage['last_used_at'])) {
+                $apiKeyRow->last_used_at = $usage['last_used_at'];
+            }
+        }
+    } catch (\Throwable $e) {
+    }
+}
+
 $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
 $moduleSlugAttr = htmlspecialchars($moduleSlug, ENT_QUOTES);
 $moduleSlugUrl = urlencode($moduleSlug);
