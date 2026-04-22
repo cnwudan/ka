@@ -6,6 +6,7 @@ $modalLanguage = strtolower((string) ($currentClientLanguage ?? 'english'));
 $modalIsChinese = $modalLanguage === 'chinese';
 $nsListLabelDefault = $modalIsChinese ? 'NS 服务器列表' : 'Name Server List';
 $nsAddButtonDefault = $modalIsChinese ? '[增加 DNS 服务器]' : '[Add DNS Server]';
+$nsSaveButtonDefault = $modalIsChinese ? '保存设置' : 'Save Settings';
 $nsForceShortDefault = $modalIsChinese ? '强制替换冲突记录' : 'Force replace conflicting records';
 $nsForceTooltipDefault = $modalIsChinese
     ? '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等。'
@@ -308,7 +309,7 @@ $dnsLineOptions = [
                                 </button>
                             </div>
                         </div>
-                        <div class="d-flex align-items-center gap-2 mb-3">
+                        <div class="d-flex align-items-center gap-1 mb-3">
                             <div class="form-check mb-0 ns-force-check">
                                 <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
                                 <label class="form-check-label ns-force-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force_short', $nsForceShortDefault); ?></label>
@@ -328,7 +329,7 @@ $dnsLineOptions = [
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?php echo $modalText('cfclient.modals.buttons.cancel', '取消'); ?></button>
                         <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-exchange-alt"></i> <?php echo $modalText('cfclient.modals.buttons.replace', '一键替换'); ?>
+                            <i class="fas fa-save"></i> <?php echo $modalText('cfclient.modals.buttons.save_settings', $nsSaveButtonDefault); ?>
                         </button>
                     </div>
                 </form>
