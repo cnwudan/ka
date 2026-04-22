@@ -5,7 +5,7 @@ $modalText = function (string $key, string $default, array $params = [], bool $e
 $modalLanguage = strtolower((string) ($currentClientLanguage ?? 'english'));
 $modalIsChinese = $modalLanguage === 'chinese';
 $nsListLabelDefault = $modalIsChinese ? 'NS 服务器列表' : 'Name Server List';
-$nsAddButtonDefault = $modalIsChinese ? '[ + 添加 DNS 服务器 ]' : '[ + Add DNS Server ]';
+$nsAddButtonDefault = $modalIsChinese ? '[增加 DNS 服务器]' : '[Add DNS Server]';
 $nsForceShortDefault = $modalIsChinese ? '强制替换冲突记录' : 'Force replace conflicting records';
 $nsForceTooltipDefault = $modalIsChinese
     ? '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等。'

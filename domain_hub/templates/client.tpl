@@ -129,7 +129,7 @@ $cfClientJsLang = [
     'nsInvalidFormat' => cfmod_trans('cfclient.js.ns_invalid_format', $cfClientIsChineseLocale ? 'NS 格式不正确：%s' : 'Invalid NS format: %s'),
     'nsInputPlaceholder' => cfmod_trans('cfclient.js.ns_input_placeholder', $cfClientIsChineseLocale ? '例如：ns1.example.com' : 'e.g. ns1.example.com'),
     'nsRemoveServer' => cfmod_trans('cfclient.js.ns_remove_server', $cfClientIsChineseLocale ? '删除 DNS 服务器' : 'Remove DNS server'),
-    'nsAddServer' => cfmod_trans('cfclient.js.ns_add_server', $cfClientIsChineseLocale ? '添加 DNS 服务器' : 'Add DNS server'),
+    'nsAddServer' => cfmod_trans('cfclient.js.ns_add_server', $cfClientIsChineseLocale ? '增加 DNS 服务器' : 'Add DNS server'),
     'nsMaxReached' => cfmod_trans('cfclient.js.ns_max_reached', $cfClientIsChineseLocale ? '最多可添加 %s 个 DNS 服务器' : 'You can add up to %s DNS servers'),
     'dnsUnlockRequired' => cfmod_trans('cfclient.js.dns_unlock_required', '请先完成 DNS 解锁后再操作。'),
     'dnsUnlockCopySuccess' => cfmod_trans('cfclient.js.dns_unlock_copy_success', '解锁码已复制'),
@@ -616,17 +616,24 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
 
         .ns-input-row .ns-remove-input-btn {
             border-radius: 0 0.6rem 0.6rem 0;
-            min-width: 44px;
+            min-width: 48px;
             border: 1px solid #e4e7eb;
             background: #f8f9fa;
-            color: #adb5bd;
+            color: #9aa4b0;
+            transition: all 0.18s ease;
+        }
+
+        .ns-input-row .ns-remove-input-btn i {
+            font-size: 1.1rem;
+            font-weight: 600;
         }
 
         .ns-input-row .ns-remove-input-btn:hover,
         .ns-input-row .ns-remove-input-btn:focus {
-            border-color: #cfd6de;
-            background: #eef1f4;
-            color: #6c757d;
+            border-color: #f1b5be;
+            background: #fdecef;
+            color: #dc3545;
+            transform: translateY(-1px);
         }
 
         #ns_add_input_btn {
