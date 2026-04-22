@@ -1807,6 +1807,52 @@ function domain_hub_config() {
                 "Default" => "no",
                 "Description" => "开启后用户可以为API密钥设置IP白名单",
             ],
+            "api_log_mode" => [
+                "FriendlyName" => "API日志记录模式",
+                "Type" => "dropdown",
+                "Options" => [
+                    "full" => "完整日志（含请求/响应内容）",
+                    "meta" => "仅元数据（不记录请求/响应内容）",
+                    "off" => "关闭API日志",
+                ],
+                "Default" => "full",
+                "Description" => "用于控制API日志写入量，建议高并发场景使用仅元数据",
+            ],
+            "api_log_success_sample_percent" => [
+                "FriendlyName" => "成功请求日志采样率(%)",
+                "Type" => "text",
+                "Size" => "4",
+                "Default" => "100",
+                "Description" => "仅对2xx/3xx成功请求生效，0-100；4xx/5xx始终记录",
+            ],
+            "api_log_payload_max_bytes" => [
+                "FriendlyName" => "API日志请求/响应最大字节数",
+                "Type" => "text",
+                "Size" => "6",
+                "Default" => "0",
+                "Description" => "0表示不截断，>0时会裁剪request_data/response_data以降低写入压力",
+            ],
+            "api_key_last_used_update_interval_seconds" => [
+                "FriendlyName" => "API最后使用时间更新间隔(秒)",
+                "Type" => "text",
+                "Size" => "5",
+                "Default" => "60",
+                "Description" => "控制last_used_at写入频率，建议30-300秒",
+            ],
+            "api_rate_limit_cleanup_probability_per_thousand" => [
+                "FriendlyName" => "API速率窗口清理触发概率(千分比)",
+                "Type" => "text",
+                "Size" => "4",
+                "Default" => "10",
+                "Description" => "每次请求触发过期窗口清理的概率，默认10表示1%",
+            ],
+            "api_rate_limit_cleanup_batch_size" => [
+                "FriendlyName" => "API速率窗口清理批次大小",
+                "Type" => "text",
+                "Size" => "5",
+                "Default" => "1000",
+                "Description" => "每次清理最多删除的过期窗口行数，建议100-5000",
+            ],
             // 公共 WHOIS 查询
             "whois_require_api_key" => [
                 "FriendlyName" => "WHOIS 查询需要 API Key",

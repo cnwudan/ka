@@ -717,6 +717,16 @@ class CfClientController
                                         exit;
                                     }
 
+                                    $usage = null;
+                                    try {
+                                        $usage = Capsule::table('mod_cloudflare_api_logs')
+                                            ->select(Capsule::raw('COUNT(*) as request_count'), Capsule::raw('MAX(created_at) as last_used_at'))
+                                            ->where('api_key_id', $key->id)
+                                            ->first();
+                                    } catch (\Throwable $e) {
+                                        $usage = null;
+                                    }
+
                                     echo json_encode([
                                         'success' => true,
                                         'key' => [
@@ -725,8 +735,8 @@ class CfClientController
                                             'api_key' => $key->api_key,
                                             'status' => $key->status,
                                             'ip_whitelist' => $key->ip_whitelist,
-                                            'request_count' => $key->request_count,
-                                            'last_used_at' => $key->last_used_at,
+                                            'request_count' => intval($usage->request_count ?? $key->request_count),
+                                            'last_used_at' => ($usage->last_used_at ?? null) ?: $key->last_used_at,
                                             'created_at' => $key->created_at
                                         ]
                                     ]);

@@ -265,6 +265,23 @@ class CfAdminController
 
             $keys = json_decode(json_encode($records), true) ?: [];
 
+            $keyIds = array_values(array_filter(array_map('intval', array_column($keys, 'id'))));
+            $usageMap = $this->fetchApiKeyUsageMap($keyIds);
+            if (!empty($usageMap)) {
+                foreach ($keys as &$row) {
+                    $keyId = intval($row['id'] ?? 0);
+                    if ($keyId <= 0 || !isset($usageMap[$keyId])) {
+                        continue;
+                    }
+                    $row['request_count'] = intval($usageMap[$keyId]['request_count'] ?? ($row['request_count'] ?? 0));
+                    $usageLastUsed = $usageMap[$keyId]['last_used_at'] ?? null;
+                    if (!empty($usageLastUsed)) {
+                        $row['last_used_at'] = $usageLastUsed;
+                    }
+                }
+                unset($row);
+            }
+
             $logsBase = Capsule::table('mod_cloudflare_api_logs as l')
                 ->leftJoin('tblclients as c', 'l.userid', '=', 'c.id')
                 ->select('l.*', 'c.email');
@@ -302,6 +319,40 @@ class CfAdminController
             ],
             'expanded' => isset($_SESSION['admin_api_success']) || isset($_SESSION['admin_api_error']) || $apiSearchKeyword !== '',
         ];
+    }
+
+    private function fetchApiKeyUsageMap(array $keyIds): array
+    {
+        $keyIds = array_values(array_unique(array_filter(array_map('intval', $keyIds), function ($id) {
+            return $id > 0;
+        })));
+        if (empty($keyIds)) {
+            return [];
+        }
+
+        try {
+            $rows = Capsule::table('mod_cloudflare_api_logs')
+                ->select('api_key_id', Capsule::raw('COUNT(*) as request_count'), Capsule::raw('MAX(created_at) as last_used_at'))
+                ->whereIn('api_key_id', $keyIds)
+                ->groupBy('api_key_id')
+                ->get();
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        $map = [];
+        foreach ($rows as $row) {
+            $keyId = intval($row->api_key_id ?? 0);
+            if ($keyId <= 0) {
+                continue;
+            }
+            $map[$keyId] = [
+                'request_count' => intval($row->request_count ?? 0),
+                'last_used_at' => $row->last_used_at ?? null,
+            ];
+        }
+
+        return $map;
     }
 
     private function schemaHasTable(string $table): bool

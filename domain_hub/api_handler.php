@@ -790,9 +790,26 @@ function api_get_user_quota(int $userid, array $settings) {
     return $quota;
 }
 
-function api_cleanup_rate_limit_table(int $hours = 48): void {
+function api_cleanup_rate_limit_table(int $hours = 48, int $probabilityPerThousand = 10, int $batchSize = 1000): void {
     static $lastCleanupTs = null;
     $hours = max(1, $hours);
+    $probabilityPerThousand = max(0, min(1000, $probabilityPerThousand));
+    $batchSize = max(100, min(5000, $batchSize));
+
+    if ($probabilityPerThousand <= 0) {
+        return;
+    }
+
+    try {
+        if (random_int(1, 1000) > $probabilityPerThousand) {
+            return;
+        }
+    } catch (\Throwable $e) {
+        if (mt_rand(1, 1000) > $probabilityPerThousand) {
+            return;
+        }
+    }
+
     $now = time();
     if ($lastCleanupTs !== null && ($now - $lastCleanupTs) < 60) {
         return;
@@ -809,12 +826,47 @@ function api_cleanup_rate_limit_table(int $hours = 48): void {
 
     try {
         $cutoff = date('Y-m-d H:i:s', $now - $hours * 3600);
-        Capsule::table('mod_cloudflare_api_rate_limit')
-            ->where('window_end', '<', $cutoff)
-            ->delete();
+        Capsule::statement(
+            'DELETE FROM `mod_cloudflare_api_rate_limit` WHERE `window_end` < ? ORDER BY `id` ASC LIMIT ' . intval($batchSize),
+            [$cutoff]
+        );
     } catch (\Throwable $e) {
         // ignore cleanup errors
     }
+}
+
+function api_fetch_api_key_usage_stats(array $keyIds): array {
+    $keyIds = array_values(array_unique(array_filter(array_map('intval', $keyIds), function ($id) {
+        return $id > 0;
+    })));
+
+    if (empty($keyIds)) {
+        return [];
+    }
+
+    try {
+        $rows = Capsule::table('mod_cloudflare_api_logs')
+            ->select('api_key_id', Capsule::raw('COUNT(*) as request_count'), Capsule::raw('MAX(created_at) as last_used_at'))
+            ->whereIn('api_key_id', $keyIds)
+            ->groupBy('api_key_id')
+            ->get();
+    } catch (\Throwable $e) {
+        return [];
+    }
+
+    $usage = [];
+    foreach ($rows as $row) {
+        $apiKeyId = intval($row->api_key_id ?? 0);
+        if ($apiKeyId <= 0) {
+            continue;
+        }
+        $usage[$apiKeyId] = [
+            'request_count' => intval($row->request_count ?? 0),
+            'last_used_at' => $row->last_used_at ?? null,
+        ];
+    }
+
+    return $usage;
 }
 
 function api_auth(){
@@ -873,18 +925,16 @@ function api_rate_limit($keyRow, ?array $settings = null){
     $currentCount = null;
 
     try {
-        Capsule::transaction(function () use ($keyRow, $windowKey, $windowStart, $windowEnd, $now, &$currentCount) {
-            Capsule::statement(
-                'INSERT INTO `mod_cloudflare_api_rate_limit` (`api_key_id`, `window_key`, `request_count`, `window_start`, `window_end`, `created_at`, `updated_at`)' .
-                ' VALUES (?, ?, 1, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `request_count` = `request_count` + 1, `updated_at` = VALUES(`updated_at`)',
-                [$keyRow->id, $windowKey, $windowStart, $windowEnd, $now, $now]
-            );
+        Capsule::statement(
+            'INSERT INTO `mod_cloudflare_api_rate_limit` (`api_key_id`, `window_key`, `request_count`, `window_start`, `window_end`, `created_at`, `updated_at`)' .
+            ' VALUES (?, ?, LAST_INSERT_ID(1), ?, ?, ?, ?) ON DUPLICATE KEY UPDATE `request_count` = LAST_INSERT_ID(`request_count` + 1), `updated_at` = VALUES(`updated_at`)',
+            [$keyRow->id, $windowKey, $windowStart, $windowEnd, $now, $now]
+        );
 
-            $currentCount = (int) Capsule::table('mod_cloudflare_api_rate_limit')
-                ->where('api_key_id', $keyRow->id)
-                ->where('window_key', $windowKey)
-                ->value('request_count');
-        });
+        $lastInsertRows = Capsule::select('SELECT LAST_INSERT_ID() AS current_count');
+        if (is_array($lastInsertRows) && !empty($lastInsertRows)) {
+            $currentCount = (int)($lastInsertRows[0]->current_count ?? 0);
+        }
     } catch (\Throwable $e) {
         error_log('[domain_hub][api_rate_limit] ' . $e->getMessage());
         return [false, [
@@ -897,11 +947,13 @@ function api_rate_limit($keyRow, ?array $settings = null){
         ]];
     }
 
-    if ($currentCount === null) {
+    if ($currentCount === null || $currentCount <= 0) {
         $currentCount = 1;
     }
 
-    api_cleanup_rate_limit_table();
+    $cleanupProbability = intval($settings['api_rate_limit_cleanup_probability_per_thousand'] ?? 10);
+    $cleanupBatchSize = intval($settings['api_rate_limit_cleanup_batch_size'] ?? 1000);
+    api_cleanup_rate_limit_table(48, $cleanupProbability, $cleanupBatchSize);
 
     if ($currentCount > $limit) {
         return [false, [
@@ -1228,17 +1280,36 @@ function cfmod_log_whois_query_payload(array $payload, string $mode, ?int $reque
     cloudflare_subdomain_log('whois_query', $details, $userid, null);
 }
 
-function cfmod_cleanup_whois_rate_limit_table(): void {
+function cfmod_cleanup_whois_rate_limit_table(int $probabilityPerThousand = 10, int $batchSize = 500): void {
     static $lastCleanup = null;
+    $probabilityPerThousand = max(0, min(1000, $probabilityPerThousand));
+    if ($probabilityPerThousand <= 0) {
+        return;
+    }
+
+    try {
+        if (random_int(1, 1000) > $probabilityPerThousand) {
+            return;
+        }
+    } catch (\Throwable $e) {
+        if (mt_rand(1, 1000) > $probabilityPerThousand) {
+            return;
+        }
+    }
+
     $now = time();
     if ($lastCleanup !== null && ($now - $lastCleanup) < 60) {
         return;
     }
     $lastCleanup = $now;
+
+    $batchSize = max(100, min(5000, $batchSize));
+
     try {
-        Capsule::table('mod_cloudflare_whois_rate_limit')
-            ->where('window_end', '<', date('Y-m-d H:i:s', $now - 3600))
-            ->delete();
+        Capsule::statement(
+            'DELETE FROM `mod_cloudflare_whois_rate_limit` WHERE `window_end` < ? ORDER BY `id` ASC LIMIT ' . intval($batchSize),
+            [date('Y-m-d H:i:s', $now - 3600)]
+        );
     } catch (\Throwable $e) {}
 }
 
@@ -1252,20 +1323,26 @@ function cfmod_whois_rate_limit(array $settings): array {
     $windowStart = date('Y-m-d H:i:00');
     $windowEnd = date('Y-m-d H:i:59');
     $now = date('Y-m-d H:i:s');
+
+    $count = 1;
     try {
         Capsule::statement(
-            'INSERT INTO `mod_cloudflare_whois_rate_limit` (`ip`,`window_key`,`request_count`,`window_start`,`window_end`,`created_at`,`updated_at`) VALUES (?,?,?,?,?,?,?) '
-            . 'ON DUPLICATE KEY UPDATE `request_count` = `request_count` + 1, `updated_at` = VALUES(`updated_at`)',
-            [$ip, $windowKey, 1, $windowStart, $windowEnd, $now, $now]
+            'INSERT INTO `mod_cloudflare_whois_rate_limit` (`ip`,`window_key`,`request_count`,`window_start`,`window_end`,`created_at`,`updated_at`) VALUES (?,?,LAST_INSERT_ID(1),?,?,?,?) '
+            . 'ON DUPLICATE KEY UPDATE `request_count` = LAST_INSERT_ID(`request_count` + 1), `updated_at` = VALUES(`updated_at`)',
+            [$ip, $windowKey, $windowStart, $windowEnd, $now, $now]
         );
-        $count = Capsule::table('mod_cloudflare_whois_rate_limit')
-            ->where('ip', $ip)
-            ->where('window_key', $windowKey)
-            ->value('request_count');
+        $lastInsertRows = Capsule::select('SELECT LAST_INSERT_ID() AS current_count');
+        if (is_array($lastInsertRows) && !empty($lastInsertRows)) {
+            $count = max(1, intval($lastInsertRows[0]->current_count ?? 1));
+        }
     } catch (\Throwable $e) {
         return [true, ['limit' => $limit, 'remaining' => $limit, 'reset_at' => $windowEnd]];
     }
-    cfmod_cleanup_whois_rate_limit_table();
+
+    $whoisCleanupProbability = intval($settings['api_rate_limit_cleanup_probability_per_thousand'] ?? 10);
+    $whoisCleanupBatch = intval($settings['api_rate_limit_cleanup_batch_size'] ?? 500);
+    cfmod_cleanup_whois_rate_limit_table($whoisCleanupProbability, $whoisCleanupBatch);
+
     $meta = [
         'limit' => $limit,
         'remaining' => max(0, $limit - intval($count)),
@@ -1892,15 +1969,23 @@ function handleApiRequest(){
                 ->where('userid', $keyRow->userid)
                 ->orderBy('id', 'desc')
                 ->get();
+            $keyIds = [];
+            foreach ($keys as $k) {
+                $keyIds[] = intval($k->id ?? 0);
+            }
+            $usageMap = api_fetch_api_key_usage_stats($keyIds);
+
             $rows = [];
             foreach ($keys as $k) {
+                $apiKeyId = intval($k->id ?? 0);
+                $usage = $usageMap[$apiKeyId] ?? null;
                 $rows[] = [
                     'id' => $k->id,
                     'key_name' => $k->key_name,
                     'api_key' => $k->api_key,
                     'status' => $k->status,
-                    'request_count' => intval($k->request_count),
-                    'last_used_at' => $k->last_used_at,
+                    'request_count' => intval($usage['request_count'] ?? $k->request_count),
+                    'last_used_at' => $usage['last_used_at'] ?? $k->last_used_at,
                     'created_at' => $k->created_at
                 ];
             }
