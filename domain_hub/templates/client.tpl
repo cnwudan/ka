@@ -127,7 +127,8 @@ $cfClientJsLang = [
     'nsManagementDisabled' => cfmod_trans('cfclient.js.ns_management_disabled', $cfClientIsChineseLocale ? '已禁止设置 DNS 服务器（NS）。' : 'DNS server (NS) management is disabled.'),
     'nsAtLeastOne' => cfmod_trans('cfclient.js.ns_at_least_one', $cfClientIsChineseLocale ? '请至少输入一个 NS 服务器' : 'Please enter at least one NS server'),
     'nsInvalidFormat' => cfmod_trans('cfclient.js.ns_invalid_format', $cfClientIsChineseLocale ? 'NS 格式不正确：%s' : 'Invalid NS format: %s'),
-    'nsInputPlaceholder' => cfmod_trans('cfclient.js.ns_input_placeholder', $cfClientIsChineseLocale ? '例如：ns1.example.com' : 'e.g. ns1.example.com'),
+    'nsInputPlaceholder' => cfmod_trans('cfclient.js.ns_input_placeholder', $cfClientIsChineseLocale ? '例如：ns1.dnshe.com' : 'e.g. ns1.dnshe.com'),
+    'nsInputPlaceholderIndexed' => cfmod_trans('cfclient.js.ns_input_placeholder_indexed', $cfClientIsChineseLocale ? '例如:ns%s.dnshe.com' : 'e.g. ns%s.dnshe.com'),
     'nsRemoveServer' => cfmod_trans('cfclient.js.ns_remove_server', $cfClientIsChineseLocale ? '删除 DNS 服务器' : 'Remove DNS server'),
     'nsAddServer' => cfmod_trans('cfclient.js.ns_add_server', $cfClientIsChineseLocale ? '增加 DNS 服务器' : 'Add DNS server'),
     'nsMaxReached' => cfmod_trans('cfclient.js.ns_max_reached', $cfClientIsChineseLocale ? '最多可添加 %s 个 DNS 服务器' : 'You can add up to %s DNS servers'),
@@ -640,8 +641,15 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             border-style: dashed;
         }
 
+        .ns-force-check .form-check-input {
+            width: 1.12rem;
+            height: 1.12rem;
+            margin-top: 0.18rem;
+        }
+
         .ns-force-label {
-            font-size: 0.875rem;
+            font-size: 1rem;
+            font-weight: 600;
             color: #495057;
         }
 
@@ -649,6 +657,11 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             color: #adb5bd !important;
             text-decoration: none !important;
             line-height: 1;
+            font-size: 1rem;
+        }
+
+        .ns-force-help i {
+            font-size: 1rem;
         }
 
         .ns-force-help:hover,

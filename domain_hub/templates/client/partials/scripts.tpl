@@ -318,6 +318,12 @@ function getNsServerInputs() {
     return Array.from(document.querySelectorAll('#ns_inputs_container .ns-server-input'));
 }
 
+function updateNsInputPlaceholders() {
+    getNsServerInputs().forEach(function(input, index) {
+        input.placeholder = cfLangFormat('nsInputPlaceholderIndexed', '例如:ns%s.dnshe.com', index + 1);
+    });
+}
+
 function collectNsServerValues() {
     const unique = [];
     getNsServerInputs().forEach(function(input) {
@@ -347,7 +353,7 @@ function updateNsAddButtonState() {
     const reachedMax = getNsServerInputs().length >= nsUiMaxInputs;
     addBtn.disabled = reachedMax;
     addBtn.classList.toggle('disabled', reachedMax);
-    addBtn.title = reachedMax ? cfLangFormat('nsMaxReached', '最多可添加 %s 个 DNS 服务器', nsUiMaxInputs) : cfLang('nsAddServer', '添加 DNS 服务器');
+    addBtn.title = reachedMax ? cfLangFormat('nsMaxReached', '最多可添加 %s 个 DNS 服务器', nsUiMaxInputs) : cfLang('nsAddServer', '增加 DNS 服务器');
 }
 
 function appendNsServerInputRow(value) {
@@ -362,7 +368,7 @@ function appendNsServerInputRow(value) {
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'form-control ns-server-input';
-    input.placeholder = cfLang('nsInputPlaceholder', '例如：ns1.example.com');
+    input.placeholder = cfLang('nsInputPlaceholder', '例如:ns1.dnshe.com');
     input.autocomplete = 'off';
     input.value = normalizeNsServer(value);
     input.addEventListener('input', function() {
@@ -387,6 +393,7 @@ function appendNsServerInputRow(value) {
         } else {
             row.remove();
         }
+        updateNsInputPlaceholders();
         syncNsHiddenTextarea();
         updateNsAddButtonState();
     });
@@ -394,6 +401,7 @@ function appendNsServerInputRow(value) {
     row.appendChild(input);
     row.appendChild(removeBtn);
     container.appendChild(row);
+    updateNsInputPlaceholders();
     updateNsAddButtonState();
     return input;
 }
