@@ -74,7 +74,7 @@ if (empty($sponsorMethodRows)) {
 ?>
 
 <div class="row g-3">
-    <div class="col-12">
+    <div class="col-lg-7">
         <div class="card border-0 shadow-sm h-100">
             <div class="card-body">
                 <h5 class="card-title mb-3">
@@ -124,7 +124,7 @@ if (empty($sponsorMethodRows)) {
         </div>
     </div>
 
-    <div class="col-12">
+    <div class="col-lg-5">
         <div class="card border-0 shadow-sm h-100">
             <div class="card-body">
                 <h5 class="card-title mb-3">
