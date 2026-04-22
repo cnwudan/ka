@@ -1574,6 +1574,60 @@ class CfAdminActionService
         $githubStarRewardAmountInput = intval($_POST['github_star_reward_amount'] ?? ($moduleSettings['github_star_reward_amount'] ?? 1));
         $githubStarRewardAmount = max(1, min(1000, $githubStarRewardAmountInput));
 
+        $partnerPlanAdminEmailInput = trim((string) ($_POST['partner_plan_admin_email'] ?? ($moduleSettings['partner_plan_admin_email'] ?? '')));
+        $partnerPlanAdminEmails = preg_split('/[\r\n,;]+/', $partnerPlanAdminEmailInput) ?: [];
+        $partnerPlanAdminEmailValid = [];
+        foreach ($partnerPlanAdminEmails as $candidateEmail) {
+            $candidateEmail = trim((string) $candidateEmail);
+            if ($candidateEmail === '') {
+                continue;
+            }
+            if (filter_var($candidateEmail, FILTER_VALIDATE_EMAIL)) {
+                $partnerPlanAdminEmailValid[strtolower($candidateEmail)] = $candidateEmail;
+            }
+        }
+        $partnerPlanAdminEmail = implode(',', array_values($partnerPlanAdminEmailValid));
+
+        $sponsorTitle = trim((string) ($_POST['sponsor_title'] ?? ($moduleSettings['sponsor_title'] ?? '')));
+        if (function_exists('mb_substr')) {
+            $sponsorTitle = mb_substr($sponsorTitle, 0, 255, 'UTF-8');
+        } else {
+            $sponsorTitle = substr($sponsorTitle, 0, 255);
+        }
+
+        $sponsorDescription = trim((string) ($_POST['sponsor_description'] ?? ($moduleSettings['sponsor_description'] ?? '')));
+        if (function_exists('mb_substr')) {
+            $sponsorDescription = mb_substr($sponsorDescription, 0, 3000, 'UTF-8');
+        } else {
+            $sponsorDescription = substr($sponsorDescription, 0, 3000);
+        }
+
+        $sponsorMethodsInput = trim((string) ($_POST['sponsor_methods'] ?? ($moduleSettings['sponsor_methods'] ?? '')));
+        $sponsorMethodsLines = preg_split('/\r?\n/', $sponsorMethodsInput) ?: [];
+        $sponsorMethodsNormalized = [];
+        foreach ($sponsorMethodsLines as $line) {
+            $line = trim((string) $line);
+            if ($line === '') {
+                continue;
+            }
+            if (function_exists('mb_substr')) {
+                $line = mb_substr($line, 0, 500, 'UTF-8');
+            } else {
+                $line = substr($line, 0, 500);
+            }
+            $parts = explode('|', $line, 2);
+            $label = trim((string) ($parts[0] ?? ''));
+            $url = trim((string) ($parts[1] ?? ''));
+            if ($label === '') {
+                continue;
+            }
+            if ($url !== '' && !preg_match('#^https?://#i', $url)) {
+                $url = '';
+            }
+            $sponsorMethodsNormalized[] = $url !== '' ? ($label . '|' . $url) : $label;
+        }
+        $sponsorMethods = implode("\n", $sponsorMethodsNormalized);
+
         try {
             self::persistModuleSettings([
                 'pause_free_registration' => $pause,
@@ -1594,6 +1648,10 @@ class CfAdminActionService
                 'enable_github_star_reward' => $enableGithubStarReward ? '1' : '0',
                 'github_star_repo_url' => $githubStarRepoUrl,
                 'github_star_reward_amount' => (string) $githubStarRewardAmount,
+                'partner_plan_admin_email' => $partnerPlanAdminEmail,
+                'sponsor_title' => $sponsorTitle,
+                'sponsor_description' => $sponsorDescription,
+                'sponsor_methods' => $sponsorMethods,
                 'risk_scan_batch_size' => (string) $riskScanBatchSize,
                 'rate_limit_register_per_hour' => (string) $rateLimitRegister,
                 'rate_limit_dns_per_hour' => (string) $rateLimitDns,
@@ -1621,6 +1679,10 @@ class CfAdminActionService
                     'enable_github_star_reward' => $enableGithubStarReward ? 1 : 0,
                     'github_star_repo_url' => $githubStarRepoUrl,
                     'github_star_reward_amount' => $githubStarRewardAmount,
+                    'partner_plan_admin_email_count' => count($partnerPlanAdminEmailValid),
+                    'sponsor_title_length' => strlen($sponsorTitle),
+                    'sponsor_description_length' => strlen($sponsorDescription),
+                    'sponsor_methods_count' => count($sponsorMethodsNormalized),
                     'rate_limit_register_per_hour' => $rateLimitRegister,
                     'rate_limit_dns_per_hour' => $rateLimitDns,
                     'rate_limit_api_key_per_hour' => $rateLimitApiKey,
