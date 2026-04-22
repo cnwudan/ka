@@ -1212,6 +1212,159 @@ proxiedCheckbox.disabled = false;
         })();
         <?php endif; ?>
 
+        <?php if (!empty($digFeatureEnabled)): ?>
+        (function(){
+            var form = document.getElementById('digLookupForm');
+            if (!form) { return; }
+
+            var digIsChinese = <?php echo strtolower((string) ($currentClientLanguage ?? 'english')) === 'chinese' ? 'true' : 'false'; ?>;
+            var t = function(key, zh, en) {
+                return cfLang(key, digIsChinese ? zh : en);
+            };
+
+            var moduleSlug = (window.CF_CLIENT_CONFIG && window.CF_CLIENT_CONFIG.moduleSlug) || 'domain_hub';
+            var domainInput = document.getElementById('digLookupDomainInput');
+            var typeSelect = document.getElementById('digLookupTypeSelect');
+            var lookupBtn = document.getElementById('digLookupButton');
+            var resultCard = document.getElementById('digResultCard');
+            var resultContainer = document.getElementById('digResultContainer');
+            var alertContainer = document.getElementById('digAlertContainer');
+
+            function buildUrl(action) {
+                return 'index.php?m=' + encodeURIComponent(moduleSlug) + '&action=' + encodeURIComponent(action);
+            }
+
+            function send(action, payload) {
+                return fetch(buildUrl(action), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': window.CF_MOD_CSRF || ''
+                    },
+                    body: JSON.stringify(payload || {})
+                }).then(function(res){ return res.json(); });
+            }
+
+            function escapeHtml(value) {
+                return String(value || '').replace(/[&<>"']/g, function(ch){
+                    return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
+                });
+            }
+
+            function showAlert(type, message) {
+                if (!alertContainer) { return; }
+                alertContainer.innerHTML = '<div class="alert alert-' + type + ' alert-dismissible fade show" role="alert">' +
+                    message +
+                    '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
+                    '</div>';
+            }
+
+            function renderResult(data) {
+                if (!resultCard || !resultContainer) { return; }
+                resultCard.style.display = '';
+
+                var summary = data.summary || {};
+                var resolverTotal = parseInt(summary.resolver_total || 0, 10) || 0;
+                var resolverSuccess = parseInt(summary.resolver_success || 0, 10) || 0;
+                var resolverWithAnswer = parseInt(summary.resolver_with_answer || 0, 10) || 0;
+                var consensus = !!summary.consensus;
+                var duration = parseInt(data.duration_ms || 0, 10) || 0;
+                var flattenValues = Array.isArray(summary.flatten_values) ? summary.flatten_values : [];
+                var resolvers = Array.isArray(data.resolvers) ? data.resolvers : [];
+
+                var summaryHtml = '';
+                summaryHtml += '<div class="d-flex flex-wrap gap-2 mb-3">';
+                summaryHtml += '<span class="badge bg-light text-dark">' + t('digSummaryDomain', '域名', 'Domain') + ': ' + escapeHtml(data.domain || '-') + '</span>';
+                summaryHtml += '<span class="badge bg-light text-dark">' + t('digSummaryType', '类型', 'Type') + ': ' + escapeHtml(data.record_type || '-') + '</span>';
+                summaryHtml += '<span class="badge bg-light text-dark">' + t('digSummaryDuration', '耗时', 'Duration') + ': ' + duration + 'ms</span>';
+                summaryHtml += '<span class="badge bg-info text-dark">' + t('digSummaryResolver', '解析器成功', 'Resolver Success') + ': ' + resolverSuccess + '/' + resolverTotal + '</span>';
+                summaryHtml += '<span class="badge bg-secondary">' + t('digSummaryAnswer', '返回结果', 'With Answer') + ': ' + resolverWithAnswer + '</span>';
+                summaryHtml += '<span class="badge ' + (consensus ? 'bg-success' : 'bg-warning text-dark') + '">' +
+                    (consensus ? t('digConsensusYes', '结果一致', 'Consensus') : t('digConsensusNo', '结果存在差异', 'Diverged')) +
+                    '</span>';
+                summaryHtml += '</div>';
+
+                if (flattenValues.length > 0) {
+                    summaryHtml += '<div class="small text-muted mb-2">' + t('digFlattenValues', '合并结果', 'Merged Values') + ':</div>';
+                    summaryHtml += '<div class="mb-3">' + flattenValues.map(function(item){
+                        return '<code class="me-2">' + escapeHtml(item) + '</code>';
+                    }).join('') + '</div>';
+                }
+
+                var tableHtml = '<div class="table-responsive"><table class="table table-sm align-middle mb-0">';
+                tableHtml += '<thead><tr>' +
+                    '<th style="min-width:160px;">' + t('digTableResolver', '解析器', 'Resolver') + '</th>' +
+                    '<th style="width:120px;">' + t('digTableStatus', '状态', 'Status') + '</th>' +
+                    '<th style="width:120px;">RTT</th>' +
+                    '<th>' + t('digTableValues', '记录值', 'Record Values') + '</th>' +
+                    '<th>' + t('digTableError', '错误', 'Error') + '</th>' +
+                    '</tr></thead><tbody>';
+
+                if (resolvers.length === 0) {
+                    tableHtml += '<tr><td colspan="5" class="text-center text-muted py-3">' + t('digNoResolver', '暂无解析器返回', 'No resolver response') + '</td></tr>';
+                } else {
+                    resolvers.forEach(function(item){
+                        var values = Array.isArray(item.values) ? item.values : [];
+                        var statusBadge = item.success
+                            ? '<span class="badge bg-success">' + t('digStatusOk', '成功', 'OK') + '</span>'
+                            : '<span class="badge bg-danger">' + t('digStatusFail', '失败', 'Failed') + '</span>';
+                        var valuesHtml = values.length > 0
+                            ? values.map(function(v){ return '<code class="me-1">' + escapeHtml(v) + '</code>'; }).join('')
+                            : '<span class="text-muted">-</span>';
+                        tableHtml += '<tr>' +
+                            '<td>' + escapeHtml(item.resolver_name || item.resolver_key || '-') + '</td>' +
+                            '<td>' + statusBadge + '</td>' +
+                            '<td>' + escapeHtml(item.response_ms || 0) + 'ms</td>' +
+                            '<td>' + valuesHtml + '</td>' +
+                            '<td class="small text-muted">' + escapeHtml(item.error || '-') + '</td>' +
+                            '</tr>';
+                    });
+                }
+
+                tableHtml += '</tbody></table></div>';
+                resultContainer.innerHTML = summaryHtml + tableHtml;
+            }
+
+            form.addEventListener('submit', function(e){
+                e.preventDefault();
+                if (!domainInput) { return; }
+
+                var domain = (domainInput.value || '').trim();
+                var recordType = typeSelect ? (typeSelect.value || 'A') : 'A';
+
+                if (!domain) {
+                    showAlert('warning', t('digDomainRequired', '请输入域名', 'Please enter a domain'));
+                    domainInput.focus();
+                    return;
+                }
+
+                if (lookupBtn) {
+                    lookupBtn.disabled = true;
+                    lookupBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>' + t('buttonLoading', '查询中...', 'Loading...');
+                }
+
+                send('ajax_dig_lookup', {
+                    domain: domain,
+                    record_type: recordType
+                }).then(function(res){
+                    if (res && res.success && res.data) {
+                        renderResult(res.data);
+                        showAlert('success', t('digLookupSuccess', 'Dig 查询成功', 'Dig lookup succeeded'));
+                    } else {
+                        showAlert('danger', (res && res.error) ? res.error : t('digLookupFailed', 'Dig 查询失败', 'Dig lookup failed'));
+                    }
+                }).catch(function(){
+                    showAlert('danger', t('networkError', '网络异常，请稍后再试', 'Network error, please try again'));
+                }).finally(function(){
+                    if (lookupBtn) {
+                        lookupBtn.disabled = false;
+                        lookupBtn.innerHTML = '<i class="fas fa-search-location me-1"></i>' + t('digLookupSubmit', '开始 Dig 探测', 'Run Dig Probe');
+                    }
+                });
+            });
+        })();
+        <?php endif; ?>
+
         // 复制
 
         // 展开/收起域名详情

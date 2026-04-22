@@ -970,6 +970,43 @@ class CfClientController
                             }
 
 
+                            // Dig DNS 查询 AJAX
+                            if ($action === 'ajax_dig_lookup') {
+                                header('Content-Type: application/json; charset=utf-8');
+                                $settingsForDig = cf_get_module_settings_cached();
+                                if (!class_exists('CfDigService') || !CfDigService::isEnabled($settingsForDig)) {
+                                    echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.dig.disabled', 'Dig 功能暂未开启')], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                }
+                                try {
+                                    $rawInput = file_get_contents('php://input');
+                                    $payload = json_decode($rawInput, true);
+                                    if (!is_array($payload)) {
+                                        $payload = [];
+                                    }
+
+                                    $domain = trim((string) ($payload['domain'] ?? ''));
+                                    $recordType = trim((string) ($payload['record_type'] ?? 'A'));
+                                    $lookupResult = CfDigService::lookup($userId, $domain, $recordType, $settingsForDig, [
+                                        'ip' => (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+                                        'user_agent' => (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+                                    ]);
+
+                                    echo json_encode([
+                                        'success' => !empty($lookupResult['success']),
+                                        'data' => $lookupResult['result'] ?? [],
+                                    ], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                } catch (\Throwable $e) {
+                                    $errorText = trim((string) $e->getMessage());
+                                    if ($errorText === '') {
+                                        $errorText = self::actionText('cfclient.ajax.dig.error', 'Dig 查询失败，请稍后重试。');
+                                    }
+                                    echo json_encode(['success' => false, 'error' => $errorText], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                }
+                            }
+
                             // 域名转赠 AJAX
                             if (in_array($action, ['ajax_initiate_domain_gift','ajax_accept_domain_gift','ajax_cancel_domain_gift','ajax_list_domain_gifts'], true)) {
                                 header('Content-Type: application/json; charset=utf-8');

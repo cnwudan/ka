@@ -32,12 +32,15 @@ $sslCertificatesPage = max(1, (int) ($sslCertificates['page'] ?? 1));
 $sslCertificatesTotalPages = max(1, (int) ($sslCertificates['totalPages'] ?? 1));
 
 $inviteRegistrationInviteEnabled = !empty($inviteRegistrationInviteEnabled);
+$digFeatureEnabled = !empty($digFeatureEnabled);
+$digSupportedTypes = is_array($digSupportedTypes ?? null) ? $digSupportedTypes : ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
 $hasAnyFeature = !empty($quotaRedeemEnabled)
     || !empty($dnsUnlockFeatureEnabled)
     || $inviteRegistrationInviteEnabled
     || $hasRootdomainInvite
     || $sslRequestEnabled
-    || $githubStarRewardEnabled;
+    || $githubStarRewardEnabled
+    || $digFeatureEnabled;
 ?>
 
 <?php if ($hasAnyFeature): ?>
@@ -93,6 +96,40 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                         <button type="button" class="btn btn-outline-secondary" onclick="showRootdomainInviteCodesModal()">
                             <i class="fas fa-copy me-1"></i><?php echo $featureText('cfclient.feature.root_invite.button', '查看邀请码', 'View Invite Codes'); ?>
                         </button>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($digFeatureEnabled): ?>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex flex-column">
+                        <h6 class="card-title"><i class="fas fa-network-wired text-primary me-2"></i><?php echo $featureText('cfclient.feature.dig.title', 'Dig DNS 探测', 'Dig DNS Probe'); ?></h6>
+                        <p class="text-muted small mb-3"><?php echo $featureText('cfclient.feature.dig.desc', '查询多个公共解析器返回结果，快速判断 DNS 全球生效情况。', 'Query multiple public resolvers and quickly check global DNS propagation.'); ?></p>
+                        <form id="digLookupForm" class="d-flex flex-column gap-2 mt-auto">
+                            <label class="small text-muted mb-0" for="digLookupDomainInput"><?php echo $featureText('cfclient.feature.dig.domain', '域名', 'Domain'); ?></label>
+                            <input
+                                type="text"
+                                class="form-control form-control-sm"
+                                id="digLookupDomainInput"
+                                placeholder="<?php echo htmlspecialchars($featureText('cfclient.feature.dig.domain_placeholder', '例如：www.example.com', 'e.g. www.example.com')); ?>"
+                                autocomplete="off"
+                                required
+                            >
+                            <label class="small text-muted mb-0" for="digLookupTypeSelect"><?php echo $featureText('cfclient.feature.dig.type', '记录类型', 'Record Type'); ?></label>
+                            <select class="form-select form-select-sm" id="digLookupTypeSelect">
+                                <?php foreach ($digSupportedTypes as $digType): ?>
+                                    <?php $digTypeValue = strtoupper(trim((string) $digType)); ?>
+                                    <?php if ($digTypeValue !== ''): ?>
+                                        <option value="<?php echo htmlspecialchars($digTypeValue, ENT_QUOTES); ?>"><?php echo htmlspecialchars($digTypeValue, ENT_QUOTES); ?></option>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            </select>
+                            <button type="submit" class="btn btn-outline-primary" id="digLookupButton">
+                                <i class="fas fa-search-location me-1"></i><?php echo $featureText('cfclient.feature.dig.submit', '开始 Dig 探测', 'Run Dig Probe'); ?>
+                            </button>
+                        </form>
                     </div>
                 </div>
             </div>
@@ -182,6 +219,16 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
             </div>
         <?php endif; ?>
     </div>
+
+    <?php if ($digFeatureEnabled): ?>
+        <div class="card border-0 shadow-sm mt-3" id="digResultCard" style="display:none;">
+            <div class="card-body">
+                <h6 class="card-title mb-3"><i class="fas fa-server me-2 text-secondary"></i><?php echo $featureText('cfclient.feature.dig.result_title', 'Dig 查询结果', 'Dig Result'); ?></h6>
+                <div id="digResultContainer"></div>
+            </div>
+        </div>
+        <div id="digAlertContainer" class="mt-3"></div>
+    <?php endif; ?>
 
     <?php if ($sslRequestEnabled): ?>
         <div class="card border-0 shadow-sm mt-3">
