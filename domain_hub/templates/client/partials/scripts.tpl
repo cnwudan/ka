@@ -307,7 +307,132 @@ function checkVpnBeforeAction(callback) {
     });
 }
 
-// NS 批量替换：弹窗打开/归一化
+const nsUiDefaultInputs = 4;
+const nsUiMaxInputs = Math.max(nsUiDefaultInputs, Math.min(8, <?php echo max(1, intval($nsMaxPerDomain ?? 8)); ?>));
+
+function normalizeNsServer(value) {
+    return String(value || '').trim().toLowerCase().replace(/\.+$/g, '');
+}
+
+function getNsServerInputs() {
+    return Array.from(document.querySelectorAll('#ns_inputs_container .ns-server-input'));
+}
+
+function collectNsServerValues() {
+    const unique = [];
+    getNsServerInputs().forEach(function(input) {
+        const value = normalizeNsServer(input.value);
+        if (value && unique.indexOf(value) === -1) {
+            unique.push(value);
+        }
+    });
+    return unique;
+}
+
+function syncNsHiddenTextarea() {
+    const ta = document.getElementById('ns_lines');
+    if (!ta) {
+        return [];
+    }
+    const cleaned = collectNsServerValues();
+    ta.value = cleaned.join('\n');
+    return cleaned;
+}
+
+function updateNsAddButtonState() {
+    const addBtn = document.getElementById('ns_add_input_btn');
+    if (!addBtn) {
+        return;
+    }
+    const reachedMax = getNsServerInputs().length >= nsUiMaxInputs;
+    addBtn.disabled = reachedMax;
+    addBtn.classList.toggle('disabled', reachedMax);
+    addBtn.title = reachedMax ? cfLangFormat('nsMaxReached', '最多可添加 %s 个 DNS 服务器', nsUiMaxInputs) : cfLang('nsAddServer', '添加 DNS 服务器');
+}
+
+function appendNsServerInputRow(value) {
+    const container = document.getElementById('ns_inputs_container');
+    if (!container || getNsServerInputs().length >= nsUiMaxInputs) {
+        return null;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'input-group ns-input-row';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'form-control ns-server-input';
+    input.placeholder = cfLang('nsInputPlaceholder', '例如：ns1.example.com');
+    input.autocomplete = 'off';
+    input.value = normalizeNsServer(value);
+    input.addEventListener('input', function() {
+        syncNsHiddenTextarea();
+    });
+    input.addEventListener('blur', function() {
+        input.value = normalizeNsServer(input.value);
+        syncNsHiddenTextarea();
+    });
+
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn btn-outline-danger';
+    removeBtn.innerHTML = '<i class="fas fa-times"></i>';
+    removeBtn.setAttribute('aria-label', cfLang('nsRemoveServer', '删除 DNS 服务器'));
+    removeBtn.title = cfLang('nsRemoveServer', '删除 DNS 服务器');
+    removeBtn.addEventListener('click', function() {
+        const inputs = getNsServerInputs();
+        if (inputs.length <= nsUiDefaultInputs) {
+            input.value = '';
+            input.focus();
+        } else {
+            row.remove();
+        }
+        syncNsHiddenTextarea();
+        updateNsAddButtonState();
+    });
+
+    row.appendChild(input);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+    updateNsAddButtonState();
+    return input;
+}
+
+function renderNsServerInputs(values) {
+    const container = document.getElementById('ns_inputs_container');
+    if (!container) {
+        return;
+    }
+    const normalized = [];
+    (Array.isArray(values) ? values : []).forEach(function(item) {
+        const value = normalizeNsServer(item);
+        if (value && normalized.indexOf(value) === -1) {
+            normalized.push(value);
+        }
+    });
+
+    container.innerHTML = '';
+    const inputCount = Math.min(nsUiMaxInputs, Math.max(nsUiDefaultInputs, normalized.length));
+    for (let i = 0; i < inputCount; i++) {
+        appendNsServerInputRow(normalized[i] || '');
+    }
+    syncNsHiddenTextarea();
+    updateNsAddButtonState();
+}
+
+document.getElementById('ns_add_input_btn')?.addEventListener('click', function() {
+    const inputs = getNsServerInputs();
+    if (inputs.length >= nsUiMaxInputs) {
+        alert(cfLangFormat('nsMaxReached', '最多可添加 %s 个 DNS 服务器', nsUiMaxInputs));
+        return;
+    }
+    const newInput = appendNsServerInputRow('');
+    if (newInput) {
+        newInput.focus();
+    }
+    syncNsHiddenTextarea();
+});
+
 function showNsModal(subId, name) {
     if (dnsUnlockFeatureEnabled && dnsUnlockRequired) {
         alert(cfLang('dnsUnlockRequired', '请先完成 DNS 解锁后再操作。'));
@@ -319,17 +444,15 @@ function showNsModal(subId, name) {
         return;
     }
 
-    // VPN检测
     checkVpnBeforeAction(function(blocked) {
         if (blocked) {
             return;
         }
         document.getElementById('ns_subdomain_id').value = subId;
         document.getElementById('ns_subdomain_name').value = name;
-        // 预填当前NS
         const current = (window.__nsBySubId && window.__nsBySubId[subId]) ? window.__nsBySubId[subId] : [];
         document.getElementById('ns_current').textContent = current.length ? current.join(', ') : cfLang('nsNotConfigured', '（未设置）');
-        document.getElementById('ns_lines').value = current.join('\n');
+        renderNsServerInputs(current);
         const modal = new bootstrap.Modal(document.getElementById('nsModal'));
         modal.show();
     });
@@ -344,16 +467,12 @@ document.getElementById('nsForm')?.addEventListener('submit', function(e){
             }
             const ta = document.getElementById('ns_lines');
             if (!ta) return;
-            const cleaned = ta.value.split('\n')
-                .map(x => x.trim().toLowerCase())
-                .filter(x => x)
-                .filter((x, i, arr) => arr.indexOf(x) === i);
+            const cleaned = syncNsHiddenTextarea();
             if (cleaned.length === 0) {
                 e.preventDefault();
                 alert(cfLang('nsAtLeastOne', '请至少输入一个 NS 服务器'));
                 return;
             }
-            // 简单校验域名格式
             const domainRegex = /^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?)+\.?$/;
             for (const ns of cleaned) {
                 if (!domainRegex.test(ns)) {
@@ -362,7 +481,6 @@ document.getElementById('nsForm')?.addEventListener('submit', function(e){
                     return;
                 }
             }
-            // 防连点：提交后禁用按钮
             try { const btn = this.querySelector('button[type="submit"]'); if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> ' + cfLang('buttonSubmitting', '提交中...'); } } catch(err) {}
             ta.value = cleaned.join('\n');
         });

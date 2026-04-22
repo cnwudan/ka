@@ -126,6 +126,10 @@ $cfClientJsLang = [
     'nsManagementDisabled' => cfmod_trans('cfclient.js.ns_management_disabled', '已禁止设置 DNS 服务器（NS）。'),
     'nsAtLeastOne' => cfmod_trans('cfclient.js.ns_at_least_one', '请至少输入一个 NS 服务器'),
     'nsInvalidFormat' => cfmod_trans('cfclient.js.ns_invalid_format', 'NS 格式不正确：%s'),
+    'nsInputPlaceholder' => cfmod_trans('cfclient.js.ns_input_placeholder', '例如：ns1.example.com'),
+    'nsRemoveServer' => cfmod_trans('cfclient.js.ns_remove_server', '删除 DNS 服务器'),
+    'nsAddServer' => cfmod_trans('cfclient.js.ns_add_server', '添加 DNS 服务器'),
+    'nsMaxReached' => cfmod_trans('cfclient.js.ns_max_reached', '最多可添加 %s 个 DNS 服务器'),
     'dnsUnlockRequired' => cfmod_trans('cfclient.js.dns_unlock_required', '请先完成 DNS 解锁后再操作。'),
     'dnsUnlockCopySuccess' => cfmod_trans('cfclient.js.dns_unlock_copy_success', '解锁码已复制'),
     'dnsUnlockCopyFailed' => cfmod_trans('cfclient.js.dns_unlock_copy_failed', '复制失败，请手动复制'),
@@ -597,6 +601,25 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             display: block !important;
             visibility: visible !important;
             transition: none !important;
+        }
+
+        .ns-inputs-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .ns-input-row .form-control {
+            border-radius: 0.6rem 0 0 0.6rem;
+        }
+
+        .ns-input-row .btn {
+            border-radius: 0 0.6rem 0.6rem 0;
+            min-width: 44px;
+        }
+
+        #ns_add_input_btn {
+            border-style: dashed;
         }
 
         .cf-client-layout {

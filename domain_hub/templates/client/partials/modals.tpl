@@ -269,7 +269,7 @@ $dnsLineOptions = [
 
     <!-- NS 委派管理模态框 -->
     <div class="modal fade" id="nsModal" tabindex="-1">
-        <div class="modal-dialog">
+        <div class="modal-dialog modal-dialog-centered">
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title">
@@ -291,8 +291,16 @@ $dnsLineOptions = [
                             <div id="ns_current" class="small text-muted">(<?php echo $modalText('cfclient.modals.ns.label.current', '当前 NS', [], true); ?>)</div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label"><?php echo $modalText('cfclient.modals.ns.label.lines', 'NS 服务器列表（每行一个）'); ?></label>
-<textarea name="ns_lines" id="ns_lines" class="form-control" rows="6" required></textarea>                            <div class="form-text"><?php echo $modalText('cfclient.modals.ns.hint.lines', '将一键替换该域名（@）的全部 NS 记录；会自动去重、去空行、统一小写。'); ?></div>
+                            <label class="form-label"><?php echo $modalText('cfclient.modals.ns.label.lines', 'NS 服务器列表'); ?></label>
+                            <textarea name="ns_lines" id="ns_lines" class="form-control d-none" rows="6"></textarea>
+                            <div id="ns_inputs_container" class="ns-inputs-container"></div>
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2">
+                                <div class="form-text m-0"><?php echo $modalText('cfclient.modals.ns.hint.input_mode', '每个输入框填写一个 DNS 服务器。默认显示 4 项，最多可添加到 8 项。'); ?></div>
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="ns_add_input_btn">
+                                    <i class="fas fa-plus"></i> <?php echo $modalText('cfclient.modals.ns.button.add_server', '[ + 添加 DNS 服务器 ]'); ?>
+                                </button>
+                            </div>
+                            <div class="form-text"><?php echo $modalText('cfclient.modals.ns.hint.lines', '将一键替换该域名（@）的全部 NS 记录；会自动去重、去空行、统一小写。'); ?></div>
                         </div>
                         <div class="form-check mb-3">
                             <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
