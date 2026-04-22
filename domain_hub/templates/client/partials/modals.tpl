@@ -2,6 +2,14 @@
 $modalText = function (string $key, string $default, array $params = [], bool $escape = true) {
     return cfclient_lang($key, $default, $params, $escape);
 };
+$modalLanguage = strtolower((string) ($currentClientLanguage ?? 'english'));
+$modalIsChinese = $modalLanguage === 'chinese';
+$nsListLabelDefault = $modalIsChinese ? 'NS 服务器列表' : 'Name Server List';
+$nsAddButtonDefault = $modalIsChinese ? '[ + 添加 DNS 服务器 ]' : '[ + Add DNS Server ]';
+$nsForceShortDefault = $modalIsChinese ? '强制替换冲突记录' : 'Force replace conflicting records';
+$nsForceTooltipDefault = $modalIsChinese
+    ? '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等。'
+    : 'Delete records with the same name that conflict with NS, such as A/AAAA/CNAME/TXT/MX/SRV/CAA.';
 
 $dnsUnlockRequired = !empty($dnsUnlockRequired);
 $dnsUnlockModalData = $dnsUnlock ?? [];
@@ -291,29 +299,29 @@ $dnsLineOptions = [
                             <div id="ns_current" class="small text-muted">(<?php echo $modalText('cfclient.modals.ns.label.current', '当前 NS', [], true); ?>)</div>
                         </div>
                         <div class="mb-3">
-                            <label class="form-label"><?php echo $modalText('cfclient.modals.ns.label.lines', 'NS 服务器列表'); ?></label>
+                            <label class="form-label"><?php echo $modalText('cfclient.modals.ns.label.lines', $nsListLabelDefault); ?></label>
                             <textarea name="ns_lines" id="ns_lines" class="form-control d-none" rows="6"></textarea>
                             <div id="ns_inputs_container" class="ns-inputs-container"></div>
-                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mt-2">
-                                <div class="form-text m-0"><?php echo $modalText('cfclient.modals.ns.hint.input_mode', '每个输入框填写一个 DNS 服务器。默认显示 2 项，最多可添加到 8 项。'); ?></div>
+                            <div class="d-flex justify-content-end mt-2">
                                 <button type="button" class="btn btn-outline-primary btn-sm" id="ns_add_input_btn">
-                                    <i class="fas fa-plus"></i> <?php echo $modalText('cfclient.modals.ns.button.add_server', '[ + 添加 DNS 服务器 ]'); ?>
+                                    <i class="fas fa-plus"></i> <?php echo $modalText('cfclient.modals.ns.button.add_server', $nsAddButtonDefault); ?>
                                 </button>
                             </div>
-                            <div class="form-text"><?php echo $modalText('cfclient.modals.ns.hint.lines', '将一键替换该域名（@）的全部 NS 记录；会自动去重、去空行、统一小写。'); ?></div>
                         </div>
                         <div class="d-flex align-items-center gap-2 mb-3">
                             <div class="form-check mb-0">
                                 <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
-                                <label class="form-check-label ns-force-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force_short', '强制替换冲突记录'); ?></label>
+                                <label class="form-check-label ns-force-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force_short', $nsForceShortDefault); ?></label>
                             </div>
                             <button type="button"
                                     class="btn btn-link ns-force-help p-0"
                                     data-bs-toggle="tooltip"
-                                    data-bs-placement="top"
-                                    data-bs-title="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等'), ENT_QUOTES); ?>"
-                                    aria-label="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', '删除与 NS 冲突的同名记录，如 A/AAAA/CNAME/TXT/MX/SRV/CAA 等'), ENT_QUOTES); ?>">
-                                <i class="fas fa-info-circle"></i>
+                                    data-bs-placement="bottom"
+                                    data-bs-container="body"
+                                    data-bs-custom-class="ns-force-tooltip"
+                                    data-bs-title="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', $nsForceTooltipDefault), ENT_QUOTES); ?>"
+                                    aria-label="<?php echo htmlspecialchars($modalText('cfclient.modals.ns.label.force', $nsForceTooltipDefault), ENT_QUOTES); ?>">
+                                <i class="fas fa-exclamation-circle"></i>
                             </button>
                         </div>
                     </div>
