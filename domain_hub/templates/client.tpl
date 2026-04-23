@@ -34,6 +34,7 @@ if (!function_exists('cfclient_lang')) {
 $cfClientLanguageMeta = function_exists('cfmod_resolve_language_preference') ? cfmod_resolve_language_preference() : ['normalized' => 'english', 'html' => 'en'];
 $currentClientLanguage = $cfClientLanguageMeta['normalized'] ?? 'english';
 $currentClientHtmlLang = $cfClientLanguageMeta['html'] ?? 'en';
+$cfClientIsChineseLocale = strtolower((string) $currentClientLanguage) === 'chinese';
 
 $userid = isset($_SESSION['uid']) ? (int) $_SESSION['uid'] : 0;
 if ($userid <= 0) {
@@ -123,9 +124,14 @@ $cfClientJsLang = [
     'registerSelectRoot' => cfmod_trans('cfclient.js.register_select_root', '请选择根域名'),
     'registerEdgeError' => cfmod_trans('cfclient.js.register_edge_error', '子域名前缀不能以 “.” 或 “-” 开头或结尾'),
     'registerForbiddenPrefix' => cfmod_trans('cfclient.js.register_forbidden_prefix', '该前缀被禁止使用，请选择其他前缀'),
-    'nsManagementDisabled' => cfmod_trans('cfclient.js.ns_management_disabled', '已禁止设置 DNS 服务器（NS）。'),
-    'nsAtLeastOne' => cfmod_trans('cfclient.js.ns_at_least_one', '请至少输入一个 NS 服务器'),
-    'nsInvalidFormat' => cfmod_trans('cfclient.js.ns_invalid_format', 'NS 格式不正确：%s'),
+    'nsManagementDisabled' => cfmod_trans('cfclient.js.ns_management_disabled', $cfClientIsChineseLocale ? '已禁止设置 DNS 服务器（NS）。' : 'DNS server (NS) management is disabled.'),
+    'nsAtLeastOne' => cfmod_trans('cfclient.js.ns_at_least_one', $cfClientIsChineseLocale ? '请至少输入一个 NS 服务器' : 'Please enter at least one NS server'),
+    'nsInvalidFormat' => cfmod_trans('cfclient.js.ns_invalid_format', $cfClientIsChineseLocale ? 'NS 格式不正确：%s' : 'Invalid NS format: %s'),
+    'nsInputPlaceholder' => cfmod_trans('cfclient.js.ns_input_placeholder', $cfClientIsChineseLocale ? '例如：ns1.dnshe.com' : 'e.g. ns1.dnshe.com'),
+    'nsInputPlaceholderIndexed' => cfmod_trans('cfclient.js.ns_input_placeholder_indexed', $cfClientIsChineseLocale ? '例如:ns%s.dnshe.com' : 'e.g. ns%s.dnshe.com'),
+    'nsRemoveServer' => cfmod_trans('cfclient.js.ns_remove_server', $cfClientIsChineseLocale ? '删除 DNS 服务器' : 'Remove DNS server'),
+    'nsAddServer' => cfmod_trans('cfclient.js.ns_add_server', $cfClientIsChineseLocale ? '增加 DNS 服务器' : 'Add DNS server'),
+    'nsMaxReached' => cfmod_trans('cfclient.js.ns_max_reached', $cfClientIsChineseLocale ? '最多可添加 %s 个 DNS 服务器' : 'You can add up to %s DNS servers'),
     'dnsUnlockRequired' => cfmod_trans('cfclient.js.dns_unlock_required', '请先完成 DNS 解锁后再操作。'),
     'dnsUnlockCopySuccess' => cfmod_trans('cfclient.js.dns_unlock_copy_success', '解锁码已复制'),
     'dnsUnlockCopyFailed' => cfmod_trans('cfclient.js.dns_unlock_copy_failed', '复制失败，请手动复制'),
@@ -597,6 +603,80 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             display: block !important;
             visibility: visible !important;
             transition: none !important;
+        }
+
+        .ns-inputs-container {
+            display: flex;
+            flex-direction: column;
+            gap: 0.6rem;
+        }
+
+        .ns-input-row .form-control {
+            border-radius: 0.6rem 0 0 0.6rem;
+        }
+
+        .ns-input-row .ns-remove-input-btn {
+            border-radius: 0 0.6rem 0.6rem 0;
+            min-width: 48px;
+            border: 1px solid #e4e7eb;
+            background: #f8f9fa;
+            color: #9aa4b0;
+            transition: all 0.18s ease;
+        }
+
+        .ns-input-row .ns-remove-input-btn i {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .ns-input-row .ns-remove-input-btn:hover,
+        .ns-input-row .ns-remove-input-btn:focus {
+            border-color: #f1b5be;
+            background: #fdecef;
+            color: #dc3545;
+            transform: translateY(-1px);
+        }
+
+        #ns_add_input_btn {
+            border-style: dashed;
+        }
+
+        .ns-force-check .form-check-input {
+            width: 1.12rem;
+            height: 1.12rem;
+            margin-top: 0.18rem;
+        }
+
+        .ns-force-label {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .ns-force-help {
+            color: #adb5bd !important;
+            text-decoration: none !important;
+            line-height: 1;
+            font-size: 1rem;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 0;
+        }
+
+        .ns-force-help i {
+            font-size: 1rem;
+            transform: translateY(1px);
+        }
+
+        .ns-force-help:hover,
+        .ns-force-help:focus {
+            color: #6c757d !important;
+        }
+
+        .tooltip.ns-force-tooltip .tooltip-inner {
+            max-width: 320px;
+            text-align: left;
         }
 
         .cf-client-layout {
