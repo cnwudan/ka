@@ -76,67 +76,71 @@ const dnsUnlockRequired = dnsUnlockFeatureEnabled && <?php echo !empty($dnsUnloc
         }
 
         // 表单验证
-        document.getElementById('registerForm').addEventListener('submit', function(e) {
-            if (<?php echo ($pauseFreeRegistration ? 'true' : 'false'); ?> || <?php echo ($maintenanceMode ? 'true' : 'false'); ?>) {
-                e.preventDefault();
-                var msg = <?php echo json_encode($registerBlockMessage, CFMOD_SAFE_JSON_FLAGS); ?>;
-                alert(msg);
-                return;
-            }
-            const subdomain = document.querySelector('input[name="subdomain"]');
-            const rootdomain = document.querySelector('select[name="rootdomain"]');
-            
-            if (!subdomain.value.trim()) {
-                e.preventDefault();
-                alert(cfLang('registerEnterPrefix', '请输入域名前缀'));
-                subdomain.focus();
-                return;
-            }
-            
-            if (!rootdomain.value) {
-                e.preventDefault();
-                alert(cfLang('registerSelectRoot', '请选择根域名'));
-                rootdomain.focus();
-                return;
-            }
-            
-            const rawPrefix = subdomain.value.trim();
-            if (rawPrefix.startsWith('.') || rawPrefix.startsWith('-') || rawPrefix.endsWith('.') || rawPrefix.endsWith('-')) {
-                e.preventDefault();
-                alert(cfLang('registerEdgeError', '域名前缀不能以 "." 或 "-" 开头或结尾'));
-                subdomain.focus();
-                return;
-            }
-            
-            // 检查前缀是否包含禁止字符
-            const forbidden = <?php echo json_encode($forbidden, CFMOD_SAFE_JSON_FLAGS); ?>;
-            const prefix = rawPrefix.toLowerCase();
-            if (forbidden.includes(prefix)) {
-                e.preventDefault();
-                alert(cfLang('registerForbiddenPrefix', '该前缀被禁止使用，请选择其他前缀'));
-                subdomain.focus();
-                return;
-            }
-            
-            // 检查邀请码（如果需要）
-            const selectedRoot = (rootdomain.value || '').toLowerCase();
-            const inviteRequired = ROOT_INVITE_REQUIRED_MAP[selectedRoot] || false;
-            if (inviteRequired) {
-                const inviteCodeValue = (inviteCodeInput ? inviteCodeInput.value.trim() : '');
-                if (!inviteCodeValue) {
+        const registerForm = document.getElementById('registerForm');
+        if (registerForm) {
+            registerForm.addEventListener('submit', function(e) {
+                if (<?php echo ($pauseFreeRegistration ? 'true' : 'false'); ?> || <?php echo ($maintenanceMode ? 'true' : 'false'); ?>) {
                     e.preventDefault();
-                    alert(cfLang('registerInviteCodeRequired', '该根域名需要邀请码，请输入邀请码'));
-                    if (inviteCodeInput) inviteCodeInput.focus();
+                    var msg = <?php echo json_encode($registerBlockMessage, CFMOD_SAFE_JSON_FLAGS); ?>;
+                    alert(msg);
                     return;
                 }
-                if (inviteCodeValue.length !== 10) {
-                    e.preventDefault();
-                    alert(cfLang('registerInviteCodeLength', '邀请码必须是10位字符'));
-                    if (inviteCodeInput) inviteCodeInput.focus();
+                const subdomain = document.querySelector('input[name="subdomain"]');
+                const rootdomain = document.querySelector('select[name="rootdomain"]');
+                if (!subdomain || !rootdomain) {
                     return;
                 }
-            }
-        });
+
+                if (!subdomain.value.trim()) {
+                    e.preventDefault();
+                    alert(cfLang('registerEnterPrefix', '请输入域名前缀'));
+                    subdomain.focus();
+                    return;
+                }
+
+                if (!rootdomain.value) {
+                    e.preventDefault();
+                    alert(cfLang('registerSelectRoot', '请选择根域名'));
+                    rootdomain.focus();
+                    return;
+                }
+
+                const rawPrefix = subdomain.value.trim();
+                if (rawPrefix.startsWith('.') || rawPrefix.startsWith('-') || rawPrefix.endsWith('.') || rawPrefix.endsWith('-')) {
+                    e.preventDefault();
+                    alert(cfLang('registerEdgeError', '域名前缀不能以 "." 或 "-" 开头或结尾'));
+                    subdomain.focus();
+                    return;
+                }
+
+                const forbidden = <?php echo json_encode($forbidden, CFMOD_SAFE_JSON_FLAGS); ?>;
+                const prefix = rawPrefix.toLowerCase();
+                if (forbidden.includes(prefix)) {
+                    e.preventDefault();
+                    alert(cfLang('registerForbiddenPrefix', '该前缀被禁止使用，请选择其他前缀'));
+                    subdomain.focus();
+                    return;
+                }
+
+                const selectedRoot = (rootdomain.value || '').toLowerCase();
+                const inviteRequired = ROOT_INVITE_REQUIRED_MAP[selectedRoot] || false;
+                if (inviteRequired) {
+                    const inviteCodeValue = (inviteCodeInput ? inviteCodeInput.value.trim() : '');
+                    if (!inviteCodeValue) {
+                        e.preventDefault();
+                        alert(cfLang('registerInviteCodeRequired', '该根域名需要邀请码，请输入邀请码'));
+                        if (inviteCodeInput) inviteCodeInput.focus();
+                        return;
+                    }
+                    if (inviteCodeValue.length !== 10) {
+                        e.preventDefault();
+                        alert(cfLang('registerInviteCodeLength', '邀请码必须是10位字符'));
+                        if (inviteCodeInput) inviteCodeInput.focus();
+                        return;
+                    }
+                }
+            });
+        }
         
         // DNS设置模态框 - VPN检测由后端处理（仅NS记录需要检测）
         function showDnsForm(subdomainId, subdomainName, isUpdate, recordId = '', recordName = '', recordType = '', recordContent = '') {
@@ -914,42 +918,49 @@ proxiedCheckbox.disabled = false;
 
         <?php if ($domainGiftEnabled): ?>
         (function(){
-            if (!window.bootstrap) { return; }
-            const modalEl = document.getElementById('domainGiftModal');
-            if (!modalEl) { return; }
+            const workbenchEl = document.getElementById('giftWorkbench');
+            if (!workbenchEl) { return; }
+
             const ajaxBase = <?php echo json_encode('index.php?m=' . $moduleSlug, CFMOD_SAFE_JSON_FLAGS); ?>;
             const state = {
                 subdomains: <?php echo json_encode($domainGiftSubdomains, CFMOD_SAFE_JSON_FLAGS); ?>,
-                historyLoaded: false
+                selectedSubdomainId: 0,
+                historyLoaded: false,
+                latestVoucher: null,
+                countdownTimer: null,
+                recentRows: []
             };
-            const bsModal = new bootstrap.Modal(modalEl);
+
+            const domainSearchInput = document.getElementById('giftDomainSearchInput');
+            const domainListEl = document.getElementById('giftDomainList');
             const domainSelect = document.getElementById('giftDomainSelect');
-            function renderDomainOptions() {
-                if (!domainSelect) { return; }
-                domainSelect.innerHTML = '<option value="">' + cfLang('giftSelectDomain', '请选择域名') + '</option>';
-                if (!state.subdomains.length) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.disabled = true;
-                    opt.textContent = cfLang('giftNoDomains', '暂无可用域名');
-                    domainSelect.appendChild(opt);
-                    return;
-                }
-                state.subdomains.forEach(function(item){
-                    const opt = document.createElement('option');
-                    opt.value = item.id || '';
-                    opt.textContent = item.fullDomain || '';
-                    if (item.locked) {
-                        opt.disabled = true;
-                        opt.textContent += cfLang('giftInTransfer', '（转赠中）');
-                    }
-                    domainSelect.appendChild(opt);
-                });
+            const generateBtn = document.getElementById('generateGiftButton');
+            const acceptBtn = document.getElementById('acceptGiftButton');
+            const copyBtn = document.getElementById('giftCopyButton');
+            const historyBody = document.getElementById('giftHistoryTableBody');
+            const paginationEl = document.getElementById('giftHistoryPagination');
+            const historyTab = document.getElementById('gift-history-tab');
+            const pendingCard = document.getElementById('giftPendingVoucherCard');
+            const pendingEmpty = document.getElementById('giftVoucherEmpty');
+            const recentListEl = document.getElementById('giftRecentList');
+            const codeValueEl = document.getElementById('giftCodeValue');
+            const codeExpireEl = document.getElementById('giftCodeExpire');
+            const codeDomainEl = document.getElementById('giftCodeDomain');
+            const codeCountdownEl = document.getElementById('giftCodeCountdown');
+
+            function htmlEscape(value) {
+                return String(value == null ? '' : value)
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
             }
-            renderDomainOptions();
+
             function buildUrl(action) {
                 return ajaxBase + (ajaxBase.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(action);
             }
+
             function giftFetch(action, payload){
                 return fetch(buildUrl(action), {
                     method: 'POST',
@@ -960,6 +971,7 @@ proxiedCheckbox.disabled = false;
                     body: JSON.stringify(payload || {})
                 }).then(function(res){ return res.json(); });
             }
+
             function giftAlert(type, message) {
                 const placeholder = document.getElementById('giftAlertPlaceholder');
                 if (!placeholder) { return; }
@@ -968,105 +980,202 @@ proxiedCheckbox.disabled = false;
                     '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>' +
                     '</div>';
             }
-            window.openDomainGiftModal = function(tab){
-                renderDomainOptions();
-                if (tab) {
-                    var trigger = document.querySelector('[data-bs-target="#gift-' + tab + '-pane"]');
-                    if (trigger) {
-                        new bootstrap.Tab(trigger).show();
-                    }
+
+            function setSelectedDomain(subdomainId) {
+                state.selectedSubdomainId = subdomainId > 0 ? subdomainId : 0;
+                if (domainSelect) {
+                    domainSelect.value = state.selectedSubdomainId ? String(state.selectedSubdomainId) : '';
                 }
-                bsModal.show();
-            };
-            const generateBtn = document.getElementById('generateGiftButton');
-            if (generateBtn) {
-                generateBtn.addEventListener('click', function(){
-                    if (!domainSelect) { return; }
-                    const subId = parseInt(domainSelect.value, 10);
-                    if (!subId) {
-                        giftAlert('warning', cfLang('giftSelectRequired', '请选择要转赠的域名'));
-                        return;
-                    }
-                    generateBtn.disabled = true;
-                    giftFetch('ajax_initiate_domain_gift', { subdomain_id: subId }).then(function(res){
-                        if (res && res.success) {
-                            giftAlert('success', cfLang('giftGenerateSuccess', '接收码已生成，请尽快分享给受赠人。'));
-                            const box = document.getElementById('giftCodeResult');
-                            if (box) {
-                                box.classList.remove('d-none');
-                                document.getElementById('giftCodeValue').textContent = res.data?.code || '';
-                                document.getElementById('giftCodeExpire').textContent = res.data?.expires_at || '';
-                                document.getElementById('giftCodeDomain').textContent = res.data?.full_domain || '';
-                            }
-                            state.subdomains = state.subdomains.map(function(item){
-                                if (parseInt(item.id, 10) === subId) {
-                                    item.locked = true;
-                                }
-                                return item;
-                            });
-                            renderDomainOptions();
-                        } else {
-                            giftAlert('danger', (res && res.error) ? res.error : cfLang('giftGenerateFailed', '生成接收码失败，请稍后再试'));
-                        }
-                    }).catch(function(){
-                        giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
-                    }).finally(function(){
-                        generateBtn.disabled = false;
+            }
+
+            function renderDomainOptions() {
+                if (!domainListEl) { return; }
+                const keyword = (domainSearchInput ? domainSearchInput.value : '').trim().toLowerCase();
+                const allRows = Array.isArray(state.subdomains) ? state.subdomains : [];
+                const filteredRows = allRows.filter(function(item){
+                    const domain = String(item.fullDomain || '').toLowerCase();
+                    return !keyword || domain.indexOf(keyword) !== -1;
+                });
+
+                const selectedExists = allRows.some(function(item){
+                    return parseInt(item.id, 10) === state.selectedSubdomainId && !item.locked;
+                });
+                if (!selectedExists) {
+                    const firstAvailable = allRows.find(function(item){ return !item.locked; });
+                    setSelectedDomain(firstAvailable ? parseInt(firstAvailable.id, 10) : 0);
+                }
+
+                if (!filteredRows.length) {
+                    domainListEl.innerHTML = '<div class="text-muted small py-3 text-center">' + cfLang('giftNoDomainMatch', '没有匹配的域名，请尝试其他关键词') + '</div>';
+                    return;
+                }
+
+                domainListEl.innerHTML = filteredRows.map(function(item){
+                    const id = parseInt(item.id, 10) || 0;
+                    const checked = id === state.selectedSubdomainId;
+                    const isLocked = !!item.locked;
+                    const rowClass = 'gift-domain-item' + (checked ? ' is-selected' : '') + (isLocked ? ' is-locked' : '');
+                    const lockBadge = isLocked
+                        ? '<span class="badge text-bg-warning ms-2">' + htmlEscape(cfLang('giftInTransfer', '转赠中')) + '</span>'
+                        : '<span class="badge text-bg-success ms-2">' + htmlEscape(cfLang('giftAvailable', '可转赠')) + '</span>';
+                    return '<label class="' + rowClass + '">' +
+                        '<input class="form-check-input" type="radio" name="giftDomainPick" value="' + id + '" ' + (checked ? 'checked ' : '') + (isLocked ? 'disabled ' : '') + '/>' +
+                        '<span class="gift-domain-main">' +
+                            '<span class="gift-domain-name">' + htmlEscape(item.fullDomain || '-') + '</span>' + lockBadge +
+                        '</span>' +
+                    '</label>';
+                }).join('');
+
+                domainListEl.querySelectorAll('input[name="giftDomainPick"]').forEach(function(input){
+                    input.addEventListener('change', function(){
+                        const nextId = parseInt(input.value, 10) || 0;
+                        setSelectedDomain(nextId);
+                        renderDomainOptions();
                     });
                 });
             }
-            const copyBtn = document.getElementById('giftCopyButton');
-            if (copyBtn) {
-                copyBtn.addEventListener('click', function(){
-                    const code = document.getElementById('giftCodeValue')?.textContent || '';
-                    if (!code) {
-                        giftAlert('warning', cfLang('giftCopyEmpty', '暂无可复制的接收码'));
+
+            function parseDateTime(raw) {
+                if (!raw) { return null; }
+                const normalized = String(raw).trim().replace(' ', 'T');
+                const date = new Date(normalized);
+                return Number.isFinite(date.getTime()) ? date : null;
+            }
+
+            function formatCountdown(totalSeconds) {
+                const safeSeconds = Math.max(0, totalSeconds | 0);
+                const days = Math.floor(safeSeconds / 86400);
+                const hours = Math.floor((safeSeconds % 86400) / 3600);
+                const minutes = Math.floor((safeSeconds % 3600) / 60);
+                const seconds = safeSeconds % 60;
+
+                const hh = String(hours).padStart(2, '0');
+                const mm = String(minutes).padStart(2, '0');
+                const ss = String(seconds).padStart(2, '0');
+                if (days > 0) {
+                    return days + 'd ' + hh + ':' + mm + ':' + ss;
+                }
+                return hh + ':' + mm + ':' + ss;
+            }
+
+            function stopCountdown() {
+                if (state.countdownTimer) {
+                    clearInterval(state.countdownTimer);
+                    state.countdownTimer = null;
+                }
+            }
+
+            function startCountdown(expiresAt) {
+                stopCountdown();
+                if (!codeCountdownEl) { return; }
+                const expiresAtDate = parseDateTime(expiresAt);
+                if (!expiresAtDate) {
+                    codeCountdownEl.textContent = '--:--:--';
+                    codeCountdownEl.classList.remove('is-expired');
+                    return;
+                }
+
+                const tick = function(){
+                    const secondsLeft = Math.floor((expiresAtDate.getTime() - Date.now()) / 1000);
+                    if (secondsLeft <= 0) {
+                        codeCountdownEl.textContent = cfLang('giftExpired', '已过期');
+                        codeCountdownEl.classList.add('is-expired');
+                        stopCountdown();
                         return;
                     }
-                    if (navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(code).then(function(){
-                            giftAlert('success', cfLang('giftCopySuccess', '接收码已复制'));
-                        }).catch(function(){
-                            giftAlert('warning', cfLang('giftCopyFailed', '复制失败，请手动复制'));
-                        });
-                    } else {
-                        copyText(code);
-                        giftAlert('success', cfLang('giftCopySuccess', '接收码已复制'));
-                    }
-                });
+                    codeCountdownEl.textContent = formatCountdown(secondsLeft);
+                    codeCountdownEl.classList.remove('is-expired');
+                };
+
+                tick();
+                state.countdownTimer = setInterval(tick, 1000);
             }
-            const acceptBtn = document.getElementById('acceptGiftButton');
-            if (acceptBtn) {
-                acceptBtn.addEventListener('click', function(){
-                    const input = document.getElementById('giftAcceptCode');
-                    const code = (input ? input.value : '').trim();
-                    if (!code) {
-                        giftAlert('warning', cfLang('giftEnterCode', '请输入接收码'));
-                        return;
-                    }
-                    acceptBtn.disabled = true;
-                    giftFetch('ajax_accept_domain_gift', { code: code }).then(function(res){
-                        if (res && res.success) {
-                            giftAlert('success', cfLang('giftAcceptSuccess', '领取成功，即将刷新页面'));
-                            setTimeout(function(){ window.location.reload(); }, 1500);
-                        } else {
-                            giftAlert('danger', (res && res.error) ? res.error : cfLang('giftAcceptFailed', '领取失败，请稍后再试'));
-                        }
-                    }).catch(function(){
-                        giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
-                    }).finally(function(){ acceptBtn.disabled = false; });
-                });
+
+            function showPendingVoucher(voucher, source) {
+                if (!pendingCard || !pendingEmpty) { return; }
+                state.latestVoucher = {
+                    code: voucher.code || '',
+                    full_domain: voucher.full_domain || '',
+                    expires_at: voucher.expires_at || '',
+                    source: source || 'history'
+                };
+
+                if (codeValueEl) {
+                    codeValueEl.textContent = state.latestVoucher.code || '-';
+                }
+                if (codeExpireEl) {
+                    codeExpireEl.textContent = state.latestVoucher.expires_at || '-';
+                }
+                if (codeDomainEl) {
+                    codeDomainEl.textContent = state.latestVoucher.full_domain || '-';
+                }
+
+                pendingCard.classList.remove('d-none');
+                pendingEmpty.classList.add('d-none');
+                startCountdown(state.latestVoucher.expires_at || '');
             }
-            const historyBody = document.getElementById('giftHistoryTableBody');
-            const paginationEl = document.getElementById('giftHistoryPagination');
-            const historyTab = document.getElementById('gift-history-tab');
-            if (historyTab) {
-                historyTab.addEventListener('shown.bs.tab', function(){
-                    if (!state.historyLoaded) {
-                        loadHistory(1);
-                    }
-                });
+
+            function hidePendingVoucher() {
+                if (!pendingCard || !pendingEmpty) { return; }
+                state.latestVoucher = null;
+                stopCountdown();
+                pendingCard.classList.add('d-none');
+                pendingEmpty.classList.remove('d-none');
             }
+
+            function renderRecentRows(rows) {
+                if (!recentListEl) { return; }
+                if (!rows || !rows.length) {
+                    recentListEl.innerHTML = '<div class="text-muted small">' + cfLang('giftHistoryEmpty', '暂无转赠记录') + '</div>';
+                    return;
+                }
+
+                const statusMap = {
+                    pending: { label: cfLang('giftStatusPending', '进行中'), className: 'warning' },
+                    accepted: { label: cfLang('giftStatusAccepted', '已完成'), className: 'success' },
+                    cancelled: { label: cfLang('giftStatusCancelled', '已取消'), className: 'secondary' },
+                    expired: { label: cfLang('giftStatusExpired', '已过期'), className: 'danger' }
+                };
+
+                recentListEl.innerHTML = rows.slice(0, 3).map(function(item){
+                    const info = statusMap[item.status] || { label: item.status || '-', className: 'secondary' };
+                    const roleLabel = item.role === 'received'
+                        ? cfLang('giftRoleReceived', '（接收）')
+                        : cfLang('giftRoleSent', '（转赠）');
+                    const timeline = item.completed_at || item.cancelled_at || item.created_at || '-';
+                    return '<div class="gift-recent-item">' +
+                        '<div class="d-flex justify-content-between align-items-start gap-2 mb-1">' +
+                            '<div class="gift-recent-domain">' + htmlEscape((item.full_domain || '-') + roleLabel) + '</div>' +
+                            '<span class="badge bg-' + info.className + '">' + htmlEscape(info.label) + '</span>' +
+                        '</div>' +
+                        '<div class="small text-muted">' + htmlEscape(timeline) + '</div>' +
+                    '</div>';
+                }).join('');
+            }
+
+            function syncWorkbenchSide(rows, forceHistoryVoucher) {
+                state.recentRows = Array.isArray(rows) ? rows : [];
+                renderRecentRows(state.recentRows);
+
+                if (!forceHistoryVoucher && state.latestVoucher && state.latestVoucher.source === 'generated') {
+                    return;
+                }
+
+                const pendingSent = state.recentRows.find(function(item){
+                    return item.role === 'sent' && item.status === 'pending';
+                });
+
+                if (pendingSent) {
+                    showPendingVoucher({
+                        code: pendingSent.code,
+                        full_domain: pendingSent.full_domain,
+                        expires_at: pendingSent.expires_at
+                    }, 'history');
+                } else {
+                    hidePendingVoucher();
+                }
+            }
+
             function renderHistory(rows) {
                 if (!historyBody) { return; }
                 if (!rows || !rows.length) {
@@ -1079,28 +1188,36 @@ proxiedCheckbox.disabled = false;
                     cancelled: {label: cfLang('giftStatusCancelled', '已取消'), className: 'secondary'},
                     expired: {label: cfLang('giftStatusExpired', '已过期'), className: 'danger'}
                 };
+
                 historyBody.innerHTML = rows.map(function(item){
-                    const info = statusMap[item.status] || {label: item.status, className: 'secondary'};
+                    const info = statusMap[item.status] || {label: item.status || '-', className: 'secondary'};
                     const timeline = [];
                     if (item.created_at) timeline.push(cfLang('giftTimelineStart', '发起：') + item.created_at);
                     if (item.completed_at) timeline.push(cfLang('giftTimelineCompleted', '完成：') + item.completed_at);
                     else if (item.cancelled_at) timeline.push(cfLang('giftTimelineEnded', '结束：') + item.cancelled_at);
+
                     const codeCell = item.status === 'pending'
-                        ? '<span class="badge bg-light text-dark">' + (item.code || '') + '</span>'
-                        : '<span class="text-muted">' + (item.code || '') + '</span>';
-                    const roleLabel = item.role === 'received' ? cfLang('giftRoleReceived', '（接收）') : cfLang('giftRoleSent', '（转赠）');
+                        ? '<span class="badge bg-light text-dark">' + htmlEscape(item.code || '') + '</span>'
+                        : '<span class="text-muted">' + htmlEscape(item.code || '') + '</span>';
+
+                    const roleLabel = item.role === 'received'
+                        ? cfLang('giftRoleReceived', '（接收）')
+                        : cfLang('giftRoleSent', '（转赠）');
+
                     const canCancel = item.role === 'sent' && item.status === 'pending';
                     const actionCell = canCancel
-                        ? '<button class="btn btn-sm btn-outline-danger" data-gift-cancel="' + item.id + '"><i class="fas fa-ban"></i> ' + cfLang('giftActionCancel', '取消') + '</button>'
+                        ? '<button class="btn btn-sm btn-outline-danger" data-gift-cancel="' + parseInt(item.id, 10) + '"><i class="fas fa-ban"></i> ' + cfLang('giftActionCancel', '取消') + '</button>'
                         : '-';
+
                     return '<tr>' +
-                        '<td>' + roleLabel + (item.full_domain || '-') + '</td>' +
+                        '<td>' + htmlEscape(roleLabel + (item.full_domain || '-')) + '</td>' +
                         '<td>' + codeCell + '</td>' +
-                        '<td><span class="badge bg-' + info.className + '">' + info.label + '</span></td>' +
-                        '<td class="small text-muted">' + (timeline.join('<br>') || '-') + '</td>' +
+                        '<td><span class="badge bg-' + info.className + '">' + htmlEscape(info.label) + '</span></td>' +
+                        '<td class="small text-muted">' + (timeline.length ? timeline.map(htmlEscape).join('<br>') : '-') + '</td>' +
                         '<td class="text-end">' + actionCell + '</td>' +
-                        '</tr>';
+                    '</tr>';
                 }).join('');
+
                 historyBody.querySelectorAll('[data-gift-cancel]').forEach(function(btn){
                     btn.addEventListener('click', function(){
                         const giftId = parseInt(btn.getAttribute('data-gift-cancel'), 10);
@@ -1115,10 +1232,13 @@ proxiedCheckbox.disabled = false;
                             }
                         }).catch(function(){
                             giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
-                        }).finally(function(){ btn.disabled = false; });
+                        }).finally(function(){
+                            btn.disabled = false;
+                        });
                     });
                 });
             }
+
             function renderPagination(meta) {
                 if (!paginationEl) { return; }
                 const page = meta.page || 1;
@@ -1139,24 +1259,149 @@ proxiedCheckbox.disabled = false;
                         e.preventDefault();
                         const target = parseInt(link.getAttribute('data-gift-page'), 10);
                         if (!isNaN(target)) {
-                            loadHistory(target);
+                            loadHistory(target, { forceHistoryVoucher: false });
                         }
                     });
                 });
             }
-            function loadHistory(page){
-                giftFetch('ajax_list_domain_gifts', { page: page }).then(function(res){
+
+            function loadHistory(page, options){
+                const opts = options || {};
+                return giftFetch('ajax_list_domain_gifts', { page: page }).then(function(res){
                     if (res && res.success) {
-                        renderHistory(res.data || []);
+                        const rows = Array.isArray(res.data) ? res.data : [];
+                        renderHistory(rows);
                         renderPagination(res.pagination || {});
                         state.historyLoaded = true;
-                    } else {
+                        if (page === 1 || opts.forceSide) {
+                            syncWorkbenchSide(rows, !!opts.forceHistoryVoucher);
+                        }
+                    } else if (!opts.silent) {
                         giftAlert('danger', (res && res.error) ? res.error : cfLang('giftHistoryLoadFailed', '加载历史记录失败'));
                     }
                 }).catch(function(){
-                    giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
+                    if (!opts.silent) {
+                        giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
+                    }
                 });
             }
+
+            function setActiveGiftTab(tabName) {
+                const tab = tabName || 'initiate';
+                const trigger = document.querySelector('[data-bs-target="#gift-' + tab + '-pane"]');
+                if (!trigger) { return; }
+                if (window.bootstrap && bootstrap.Tab) {
+                    bootstrap.Tab.getOrCreateInstance(trigger).show();
+                } else {
+                    trigger.click();
+                }
+            }
+
+            window.openDomainGiftModal = function(tab){
+                setActiveGiftTab(tab);
+                workbenchEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            };
+
+            if (domainSearchInput) {
+                domainSearchInput.addEventListener('input', function(){
+                    renderDomainOptions();
+                });
+            }
+
+            if (generateBtn) {
+                generateBtn.addEventListener('click', function(){
+                    const subId = parseInt(domainSelect ? domainSelect.value : '0', 10);
+                    if (!subId) {
+                        giftAlert('warning', cfLang('giftSelectRequired', '请选择要转赠的域名'));
+                        return;
+                    }
+                    generateBtn.disabled = true;
+                    giftFetch('ajax_initiate_domain_gift', { subdomain_id: subId }).then(function(res){
+                        if (res && res.success) {
+                            giftAlert('success', cfLang('giftGenerateSuccess', '接收码已生成，请尽快分享给受赠人。'));
+                            showPendingVoucher({
+                                code: (res.data && res.data.code) || '',
+                                expires_at: (res.data && res.data.expires_at) || '',
+                                full_domain: (res.data && res.data.full_domain) || ''
+                            }, 'generated');
+
+                            state.subdomains = state.subdomains.map(function(item){
+                                if ((parseInt(item.id, 10) || 0) === subId) {
+                                    item.locked = true;
+                                }
+                                return item;
+                            });
+
+                            const nextAvailable = state.subdomains.find(function(item){ return !item.locked; });
+                            setSelectedDomain(nextAvailable ? parseInt(nextAvailable.id, 10) : 0);
+                            renderDomainOptions();
+                            loadHistory(1, { forceSide: true, forceHistoryVoucher: false, silent: true });
+                        } else {
+                            giftAlert('danger', (res && res.error) ? res.error : cfLang('giftGenerateFailed', '生成接收码失败，请稍后再试'));
+                        }
+                    }).catch(function(){
+                        giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
+                    }).finally(function(){
+                        generateBtn.disabled = false;
+                    });
+                });
+            }
+
+            if (copyBtn) {
+                copyBtn.addEventListener('click', function(){
+                    const code = codeValueEl ? (codeValueEl.textContent || '').trim() : '';
+                    if (!code || code === '-') {
+                        giftAlert('warning', cfLang('giftCopyEmpty', '暂无可复制的接收码'));
+                        return;
+                    }
+
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                        navigator.clipboard.writeText(code).then(function(){
+                            giftAlert('success', cfLang('giftCopySuccess', '接收码已复制'));
+                        }).catch(function(){
+                            giftAlert('warning', cfLang('giftCopyFailed', '复制失败，请手动复制'));
+                        });
+                    } else if (typeof copyText === 'function') {
+                        copyText(code);
+                        giftAlert('success', cfLang('giftCopySuccess', '接收码已复制'));
+                    }
+                });
+            }
+
+            if (acceptBtn) {
+                acceptBtn.addEventListener('click', function(){
+                    const input = document.getElementById('giftAcceptCode');
+                    const code = (input ? input.value : '').trim();
+                    if (!code) {
+                        giftAlert('warning', cfLang('giftEnterCode', '请输入接收码'));
+                        return;
+                    }
+                    acceptBtn.disabled = true;
+                    giftFetch('ajax_accept_domain_gift', { code: code }).then(function(res){
+                        if (res && res.success) {
+                            giftAlert('success', cfLang('giftAcceptSuccess', '领取成功，即将刷新页面'));
+                            setTimeout(function(){ window.location.reload(); }, 1500);
+                        } else {
+                            giftAlert('danger', (res && res.error) ? res.error : cfLang('giftAcceptFailed', '领取失败，请稍后再试'));
+                        }
+                    }).catch(function(){
+                        giftAlert('danger', cfLang('networkError', '网络异常，请稍后再试'));
+                    }).finally(function(){
+                        acceptBtn.disabled = false;
+                    });
+                });
+            }
+
+            if (historyTab) {
+                historyTab.addEventListener('shown.bs.tab', function(){
+                    if (!state.historyLoaded) {
+                        loadHistory(1, { forceSide: true, forceHistoryVoucher: false });
+                    }
+                });
+            }
+
+            renderDomainOptions();
+            loadHistory(1, { forceSide: true, forceHistoryVoucher: true, silent: true });
         })();
         <?php endif; ?>
 
