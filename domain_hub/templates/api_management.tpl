@@ -45,6 +45,55 @@ if (!empty($apiKeyIds)) {
     }
 }
 
+$apiDailySeriesDays = 15;
+$apiDailyCallStats = [];
+$apiToday = new \DateTimeImmutable('today');
+for ($offset = $apiDailySeriesDays - 1; $offset >= 0; $offset--) {
+    $day = $apiToday->sub(new \DateInterval('P' . $offset . 'D'));
+    $dayKey = $day->format('Y-m-d');
+    $apiDailyCallStats[$dayKey] = [
+        'date' => $dayKey,
+        'label' => $day->format('m-d'),
+        'count' => 0,
+    ];
+}
+if (!empty($apiKeyIds)) {
+    try {
+        $startAt = $apiToday->sub(new \DateInterval('P' . ($apiDailySeriesDays - 1) . 'D'))->format('Y-m-d 00:00:00');
+        $dailyCallRows = \WHMCS\Database\Capsule::table('mod_cloudflare_api_logs')
+            ->select(
+                \WHMCS\Database\Capsule::raw('DATE(created_at) as day'),
+                \WHMCS\Database\Capsule::raw('COUNT(*) as total_calls')
+            )
+            ->whereIn('api_key_id', $apiKeyIds)
+            ->where('created_at', '>=', $startAt)
+            ->groupBy(\WHMCS\Database\Capsule::raw('DATE(created_at)'))
+            ->orderBy('day', 'asc')
+            ->get();
+
+        foreach ($dailyCallRows as $dailyCallRow) {
+            $dayKey = (string) ($dailyCallRow->day ?? '');
+            if ($dayKey === '' || !isset($apiDailyCallStats[$dayKey])) {
+                continue;
+            }
+            $apiDailyCallStats[$dayKey]['count'] = intval($dailyCallRow->total_calls ?? 0);
+        }
+    } catch (\Throwable $e) {
+    }
+}
+$apiDailyCallStats = array_values($apiDailyCallStats);
+$apiDailyTrendPayload = [
+    'labels' => array_values(array_map(static function (array $row): string {
+        return (string) ($row['label'] ?? '');
+    }, $apiDailyCallStats)),
+    'dates' => array_values(array_map(static function (array $row): string {
+        return (string) ($row['date'] ?? '');
+    }, $apiDailyCallStats)),
+    'values' => array_values(array_map(static function (array $row): int {
+        return intval($row['count'] ?? 0);
+    }, $apiDailyCallStats)),
+];
+
 $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
 $moduleSlugAttr = htmlspecialchars($moduleSlug, ENT_QUOTES);
 $moduleSlugUrl = urlencode($moduleSlug);
@@ -83,6 +132,10 @@ $apiSectionShouldExpand = true;
 $cfApiText = static function (string $key, string $default, array $params = [], bool $escape = true): string {
     return cfclient_lang($key, $default, $params, $escape);
 };
+$apiLocaleIsChinese = strtolower((string) ($currentClientLanguage ?? 'english')) === 'chinese';
+$apiTrendTitleDefault = $apiLocaleIsChinese ? '近 15 天每日总调用次数' : 'Total Daily Calls (Last 15 Days)';
+$apiTrendHintDefault = $apiLocaleIsChinese ? '将鼠标悬停在折线点上可查看明细' : 'Hover over points to see details';
+$apiTrendCallsUnit = $apiLocaleIsChinese ? '次调用' : 'calls';
 ?>
 
 <div class="card mt-4" id="api-management-card">
@@ -201,6 +254,18 @@ $cfApiText = static function (string $key, string $default, array $params = [], 
             <?php endif; ?>
         </div>
         <?php endif; ?>
+
+        <div class="mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0"><?php echo $cfApiText('cfclient.api.trend.title', $apiTrendTitleDefault, [], true); ?></h6>
+                <span class="badge bg-light text-secondary border"><?php echo intval($apiDailySeriesDays); ?>D</span>
+            </div>
+            <div class="api-usage-trend-chart-wrap">
+                <canvas id="apiUsageTrendCanvas" class="api-usage-trend-canvas" height="240"></canvas>
+                <div id="apiUsageTrendTooltip" class="api-usage-trend-tooltip" role="status" aria-live="polite"></div>
+            </div>
+            <div class="small text-muted mt-2"><?php echo $cfApiText('cfclient.api.trend.hint', $apiTrendHintDefault, [], true); ?></div>
+        </div>
 
         <!-- API端点信息 -->
         <div class="mt-3">
@@ -553,7 +618,207 @@ function deleteApiKey(keyId) {
     });
 }
 
+const apiUsageTrendPayload = <?php echo json_encode($apiDailyTrendPayload, CFMOD_SAFE_JSON_FLAGS); ?>;
+const apiUsageTrendCallsUnit = <?php echo json_encode($apiTrendCallsUnit, CFMOD_SAFE_JSON_FLAGS); ?>;
+
+function renderApiUsageTrendChart() {
+    const canvas = document.getElementById('apiUsageTrendCanvas');
+    const tooltip = document.getElementById('apiUsageTrendTooltip');
+    if (!canvas || !canvas.getContext) {
+        return;
+    }
+
+    const ctx = canvas.getContext('2d');
+    const labels = Array.isArray(apiUsageTrendPayload.labels) ? apiUsageTrendPayload.labels : [];
+    const dates = Array.isArray(apiUsageTrendPayload.dates) ? apiUsageTrendPayload.dates : [];
+    const values = Array.isArray(apiUsageTrendPayload.values)
+        ? apiUsageTrendPayload.values.map(function(item){ return Number(item) || 0; })
+        : [];
+
+    const formatAxisValue = function(value) {
+        if (value >= 1000) {
+            const k = value / 1000;
+            if (Math.abs(k - Math.round(k)) < 0.01) {
+                return Math.round(k) + 'k';
+            }
+            return k.toFixed(1) + 'k';
+        }
+        return String(Math.round(value));
+    };
+
+    const formatTooltipValue = function(value) {
+        return (Number(value) || 0).toLocaleString('en-US');
+    };
+
+    const calcNiceMax = function(rawMax) {
+        const safeMax = Math.max(1, Number(rawMax) || 0);
+        const exponent = Math.floor(Math.log10(safeMax));
+        const magnitude = Math.pow(10, exponent);
+        const normalized = safeMax / magnitude;
+        let niceBase = 10;
+        if (normalized <= 1) {
+            niceBase = 1;
+        } else if (normalized <= 2) {
+            niceBase = 2;
+        } else if (normalized <= 5) {
+            niceBase = 5;
+        }
+        return niceBase * magnitude;
+    };
+
+    let points = [];
+
+    const draw = function() {
+        const dpr = window.devicePixelRatio || 1;
+        const cssWidth = Math.max(320, canvas.clientWidth || 320);
+        const cssHeight = Math.max(220, canvas.clientHeight || 220);
+        canvas.width = Math.floor(cssWidth * dpr);
+        canvas.height = Math.floor(cssHeight * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+        const padding = { left: 48, right: 16, top: 16, bottom: 34 };
+        const plotWidth = cssWidth - padding.left - padding.right;
+        const plotHeight = cssHeight - padding.top - padding.bottom;
+        const maxValue = calcNiceMax(Math.max.apply(null, values.concat([0])));
+        const tickCount = 4;
+
+        ctx.strokeStyle = '#e9ecef';
+        ctx.fillStyle = '#6c757d';
+        ctx.lineWidth = 1;
+        ctx.font = '12px Arial, sans-serif';
+
+        for (let i = 0; i <= tickCount; i++) {
+            const ratio = i / tickCount;
+            const y = padding.top + plotHeight * ratio;
+            const value = maxValue * (1 - ratio);
+            ctx.beginPath();
+            ctx.moveTo(padding.left, y);
+            ctx.lineTo(cssWidth - padding.right, y);
+            ctx.stroke();
+
+            ctx.textAlign = 'right';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(formatAxisValue(value), padding.left - 8, y);
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(padding.left, padding.top);
+        ctx.lineTo(padding.left, cssHeight - padding.bottom);
+        ctx.lineTo(cssWidth - padding.right, cssHeight - padding.bottom);
+        ctx.strokeStyle = '#cfd4da';
+        ctx.stroke();
+
+        points = [];
+        const len = values.length;
+        const stepX = len > 1 ? plotWidth / (len - 1) : 0;
+
+        for (let i = 0; i < len; i++) {
+            const x = len > 1 ? (padding.left + stepX * i) : (padding.left + plotWidth / 2);
+            const ratio = maxValue > 0 ? values[i] / maxValue : 0;
+            const y = padding.top + plotHeight * (1 - ratio);
+            points.push({ x: x, y: y, value: values[i], date: dates[i] || labels[i] || '' });
+        }
+
+        if (points.length > 1) {
+            ctx.beginPath();
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = '#0d6efd';
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            ctx.stroke();
+        }
+
+        points.forEach(function(point) {
+            ctx.beginPath();
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#0d6efd';
+            ctx.lineWidth = 2;
+            ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        });
+
+        ctx.fillStyle = '#6c757d';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.font = '11px Arial, sans-serif';
+        for (let i = 0; i < labels.length; i++) {
+            const x = labels.length > 1 ? (padding.left + stepX * i) : (padding.left + plotWidth / 2);
+            ctx.fillText(labels[i], x, cssHeight - padding.bottom + 8);
+        }
+    };
+
+    const hideTooltip = function() {
+        if (!tooltip) {
+            return;
+        }
+        tooltip.style.opacity = '0';
+        tooltip.style.visibility = 'hidden';
+    };
+
+    const showTooltip = function(point) {
+        if (!tooltip || !point) {
+            return;
+        }
+        tooltip.textContent = point.date + ': ' + formatTooltipValue(point.value) + ' ' + apiUsageTrendCallsUnit;
+        tooltip.style.opacity = '1';
+        tooltip.style.visibility = 'visible';
+
+        const tipWidth = tooltip.offsetWidth || 0;
+        const tipHeight = tooltip.offsetHeight || 0;
+        let left = point.x + 12;
+        let top = point.y - tipHeight - 10;
+
+        const maxLeft = (canvas.clientWidth || 0) - tipWidth - 6;
+        if (left > maxLeft) {
+            left = point.x - tipWidth - 12;
+        }
+        if (left < 6) {
+            left = 6;
+        }
+        if (top < 6) {
+            top = point.y + 10;
+        }
+
+        tooltip.style.left = left + 'px';
+        tooltip.style.top = top + 'px';
+    };
+
+    canvas.addEventListener('mousemove', function(event) {
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+
+        let hovered = null;
+        for (let i = 0; i < points.length; i++) {
+            const point = points[i];
+            const dx = x - point.x;
+            const dy = y - point.y;
+            if ((dx * dx + dy * dy) <= 64) {
+                hovered = point;
+                break;
+            }
+        }
+
+        if (hovered) {
+            showTooltip(hovered);
+        } else {
+            hideTooltip();
+        }
+    });
+
+    canvas.addEventListener('mouseleave', hideTooltip);
+
+    draw();
+    window.addEventListener('resize', draw);
+}
+
 document.addEventListener('DOMContentLoaded', function () {
+    renderApiUsageTrendChart();
+
     var collapseEl = document.getElementById('apiManagementBody');
     var iconEl = document.getElementById('apiManagementToggleIcon');
     var toggleBtn = document.getElementById('apiManagementToggleBtn');
@@ -615,6 +880,37 @@ document.addEventListener('DOMContentLoaded', function () {
 
 #api-management-card .user-select-all {
     user-select: all;
+}
+
+#api-management-card .api-usage-trend-chart-wrap {
+    position: relative;
+    border: 1px solid #e9ecef;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 8px 8px 4px;
+}
+
+#api-management-card .api-usage-trend-canvas {
+    display: block;
+    width: 100%;
+    height: 240px;
+}
+
+#api-management-card .api-usage-trend-tooltip {
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+    background: rgba(33, 37, 41, 0.92);
+    color: #fff;
+    font-size: 12px;
+    border-radius: 6px;
+    padding: 6px 8px;
+    white-space: nowrap;
+    transition: opacity 0.15s ease;
+    z-index: 6;
 }
 </style>
 
