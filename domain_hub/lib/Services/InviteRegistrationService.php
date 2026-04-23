@@ -18,7 +18,7 @@ class CfInviteRegistrationService
     public static function resolveGateMode(array $moduleSettings): string
     {
         $mode = strtolower(trim((string) ($moduleSettings['invite_registration_gate_mode'] ?? '')));
-        if (in_array($mode, ['invite_only', 'github_only', 'invite_or_github'], true)) {
+        if (in_array($mode, ['invite_only', 'github_only', 'telegram_only', 'invite_or_github', 'invite_or_telegram', 'github_or_telegram', 'invite_or_github_or_telegram'], true)) {
             return $mode;
         }
 
@@ -37,11 +37,17 @@ class CfInviteRegistrationService
     public static function isInviteOptionEnabled(array $moduleSettings): bool
     {
         $mode = self::resolveGateMode($moduleSettings);
-        if (in_array($mode, ['invite_only', 'invite_or_github'], true)) {
+        if (in_array($mode, ['invite_only', 'invite_or_github', 'invite_or_telegram', 'invite_or_github_or_telegram'], true)) {
             return true;
         }
 
         if ($mode === 'github_only' && !self::isGithubOauthReady($moduleSettings)) {
+            return true;
+        }
+        if ($mode === 'telegram_only' && !self::isTelegramSilentReady($moduleSettings)) {
+            return true;
+        }
+        if ($mode === 'github_or_telegram' && !self::isGithubOauthReady($moduleSettings) && !self::isTelegramSilentReady($moduleSettings)) {
             return true;
         }
 
@@ -51,11 +57,21 @@ class CfInviteRegistrationService
     public static function isGithubOptionEnabled(array $moduleSettings): bool
     {
         $mode = self::resolveGateMode($moduleSettings);
-        if (!in_array($mode, ['github_only', 'invite_or_github'], true)) {
+        if (!in_array($mode, ['github_only', 'invite_or_github', 'github_or_telegram', 'invite_or_github_or_telegram'], true)) {
             return false;
         }
 
         return self::isGithubOauthReady($moduleSettings);
+    }
+
+    public static function isTelegramOptionEnabled(array $moduleSettings): bool
+    {
+        $mode = self::resolveGateMode($moduleSettings);
+        if (!in_array($mode, ['telegram_only', 'invite_or_telegram', 'github_or_telegram', 'invite_or_github_or_telegram'], true)) {
+            return false;
+        }
+
+        return self::isTelegramSilentReady($moduleSettings);
     }
 
     private static function isGithubOauthReady(array $moduleSettings): bool
@@ -69,6 +85,57 @@ class CfInviteRegistrationService
         } catch (\Throwable $e) {
             return false;
         }
+    }
+
+    public static function resolveTelegramBotUsername(array $moduleSettings): string
+    {
+        $username = trim((string) ($moduleSettings['invite_registration_telegram_bot_username'] ?? ''));
+        if ($username === '') {
+            $username = trim((string) ($moduleSettings['telegram_group_bot_username'] ?? ''));
+        }
+        $username = ltrim($username, '@');
+        if ($username === '') {
+            return '';
+        }
+        if (!preg_match('/^[A-Za-z0-9_]{5,64}$/', $username)) {
+            return '';
+        }
+
+        return $username;
+    }
+
+    public static function resolveTelegramBotToken(array $moduleSettings): string
+    {
+        $raw = trim((string) ($moduleSettings['invite_registration_telegram_bot_token'] ?? ''));
+        if ($raw === '') {
+            $raw = trim((string) ($moduleSettings['telegram_group_bot_token'] ?? ''));
+        }
+        if ($raw === '') {
+            return '';
+        }
+        if (strpos($raw, 'enc::') === 0) {
+            $raw = substr($raw, strlen('enc::'));
+            $raw = trim((string) cfmod_decrypt_sensitive($raw));
+        }
+
+        return trim($raw);
+    }
+
+    public static function resolveTelegramAuthMaxAge(array $moduleSettings): int
+    {
+        $value = (int) ($moduleSettings['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400));
+        return max(60, min(604800, $value));
+    }
+
+    public static function isTelegramSilentReady(array $moduleSettings): bool
+    {
+        $botUsername = self::resolveTelegramBotUsername($moduleSettings);
+        $botToken = self::resolveTelegramBotToken($moduleSettings);
+        if ($botUsername === '' || $botToken === '') {
+            return false;
+        }
+
+        return (bool) preg_match('/^[0-9]{5,20}:[A-Za-z0-9_-]{20,120}$/', $botToken);
     }
 
     /**
@@ -322,6 +389,210 @@ class CfInviteRegistrationService
             'created_at' => $now,
             'updated_at' => $now,
         ]);
+    }
+
+    public static function unlockByTelegram(int $userId, array $moduleSettings, array $authPayload = []): void
+    {
+        self::ensureTables();
+        self::ensureTelegramBindingTable();
+
+        if ($userId <= 0) {
+            throw new \InvalidArgumentException('invalid_user');
+        }
+        if (!self::isGateEnabled($moduleSettings)) {
+            throw new \InvalidArgumentException('gate_disabled');
+        }
+        if (!self::isTelegramOptionEnabled($moduleSettings)) {
+            throw new \InvalidArgumentException('telegram_not_enabled');
+        }
+
+        $botToken = self::resolveTelegramBotToken($moduleSettings);
+        if (!self::isTelegramSilentReady($moduleSettings)) {
+            throw new \InvalidArgumentException('telegram_invalid_config');
+        }
+
+        $authData = self::verifyTelegramAuthPayload($authPayload, $botToken, self::resolveTelegramAuthMaxAge($moduleSettings));
+        $telegramUserId = (int) ($authData['telegram_user_id'] ?? 0);
+        if ($telegramUserId <= 0) {
+            throw new \InvalidArgumentException('telegram_auth_invalid');
+        }
+
+        $now = date('Y-m-d H:i:s');
+        $bindingTable = 'mod_cloudflare_telegram_reward_bindings';
+
+        Capsule::connection()->transaction(function () use ($userId, $telegramUserId, $authData, $now, $bindingTable) {
+            $profile = Capsule::table(self::TABLE_UNLOCK)
+                ->where('userid', $userId)
+                ->lockForUpdate()
+                ->first();
+            if (!$profile) {
+                $profile = self::createProfile($userId);
+            }
+
+            $bindingExisting = Capsule::table($bindingTable)
+                ->where('userid', $userId)
+                ->lockForUpdate()
+                ->first();
+
+            $bindingByTelegram = Capsule::table($bindingTable)
+                ->where('telegram_user_id', $telegramUserId)
+                ->lockForUpdate()
+                ->first();
+            if ($bindingByTelegram && (int) ($bindingByTelegram->userid ?? 0) !== $userId) {
+                throw new \InvalidArgumentException('telegram_used');
+            }
+
+            $bindingPayload = [
+                'telegram_user_id' => $telegramUserId,
+                'telegram_username' => ($authData['telegram_username'] ?? '') !== '' ? (string) $authData['telegram_username'] : null,
+                'first_name' => ($authData['first_name'] ?? '') !== '' ? (string) $authData['first_name'] : null,
+                'last_name' => ($authData['last_name'] ?? '') !== '' ? (string) $authData['last_name'] : null,
+                'photo_url' => ($authData['photo_url'] ?? '') !== '' ? (string) $authData['photo_url'] : null,
+                'auth_date' => max(0, (int) ($authData['auth_date'] ?? 0)),
+                'updated_at' => $now,
+            ];
+            if ($bindingExisting) {
+                Capsule::table($bindingTable)
+                    ->where('id', (int) ($bindingExisting->id ?? 0))
+                    ->update($bindingPayload);
+            } else {
+                $bindingPayload['userid'] = $userId;
+                $bindingPayload['created_at'] = $now;
+                Capsule::table($bindingTable)->insert($bindingPayload);
+            }
+
+            if (empty($profile->unlocked_at)) {
+                Capsule::table(self::TABLE_UNLOCK)
+                    ->where('id', (int) ($profile->id ?? 0))
+                    ->update([
+                        'unlocked_at' => $now,
+                        'updated_at' => $now,
+                    ]);
+
+                $emailTag = 'telegram:' . $telegramUserId;
+                if (($authData['telegram_username'] ?? '') !== '') {
+                    $emailTag .= ':' . (string) $authData['telegram_username'];
+                }
+
+                Capsule::table(self::TABLE_LOGS)->insert([
+                    'invite_code_id' => (int) ($profile->id ?? 0),
+                    'inviter_userid' => 0,
+                    'invitee_userid' => $userId,
+                    'invitee_email' => $emailTag,
+                    'invitee_ip' => 'telegram_oauth',
+                    'invite_code' => 'TELEGRAM_OAUTH',
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+            }
+        });
+    }
+
+    private static function verifyTelegramAuthPayload(array $authPayload, string $botToken, int $maxAgeSeconds): array
+    {
+        $payload = self::normalizeTelegramAuthPayload($authPayload);
+        $telegramUserId = (int) ($payload['id'] ?? 0);
+        $authDate = (int) ($payload['auth_date'] ?? 0);
+        $hash = strtolower(trim((string) ($payload['hash'] ?? '')));
+
+        if ($telegramUserId <= 0 || $authDate <= 0 || $hash === '') {
+            throw new \InvalidArgumentException('telegram_auth_invalid');
+        }
+        if ($maxAgeSeconds > 0 && (time() - $authDate) > $maxAgeSeconds) {
+            throw new \InvalidArgumentException('telegram_auth_expired');
+        }
+
+        $dataCheckString = self::buildTelegramDataCheckString($payload);
+        if ($dataCheckString === '') {
+            throw new \InvalidArgumentException('telegram_auth_invalid');
+        }
+
+        $secretKey = hash('sha256', $botToken, true);
+        $expectedHash = hash_hmac('sha256', $dataCheckString, $secretKey);
+        if (!hash_equals($expectedHash, $hash)) {
+            throw new \InvalidArgumentException('telegram_auth_invalid');
+        }
+
+        return [
+            'telegram_user_id' => $telegramUserId,
+            'telegram_username' => self::normalizeTelegramUsername((string) ($payload['username'] ?? '')),
+            'first_name' => trim((string) ($payload['first_name'] ?? '')),
+            'last_name' => trim((string) ($payload['last_name'] ?? '')),
+            'photo_url' => trim((string) ($payload['photo_url'] ?? '')),
+            'auth_date' => $authDate,
+        ];
+    }
+
+    private static function normalizeTelegramAuthPayload(array $authPayload): array
+    {
+        $normalized = [];
+        foreach ($authPayload as $key => $value) {
+            if (!is_string($key) || $key === '') {
+                continue;
+            }
+            if (is_array($value) || is_object($value) || $value === null) {
+                continue;
+            }
+            $normalized[$key] = trim((string) $value);
+        }
+        return $normalized;
+    }
+
+    private static function buildTelegramDataCheckString(array $payload): string
+    {
+        $pairs = [];
+        foreach ($payload as $key => $value) {
+            if ($key === 'hash' || $value === '') {
+                continue;
+            }
+            $pairs[$key] = $key . '=' . $value;
+        }
+        ksort($pairs, SORT_STRING);
+        return implode("\n", array_values($pairs));
+    }
+
+    private static function normalizeTelegramUsername(string $username): string
+    {
+        $username = trim($username);
+        $username = ltrim($username, '@');
+        if ($username === '') {
+            return '';
+        }
+        if (!preg_match('/^[A-Za-z0-9_]{5,64}$/', $username)) {
+            return '';
+        }
+        return strtolower($username);
+    }
+
+    private static function ensureTelegramBindingTable(): void
+    {
+        if (class_exists('CfTelegramGroupRewardService')) {
+            try {
+                CfTelegramGroupRewardService::ensureTables();
+                return;
+            } catch (\Throwable $e) {
+            }
+        }
+
+        try {
+            $schema = Capsule::schema();
+            if (!$schema->hasTable('mod_cloudflare_telegram_reward_bindings')) {
+                $schema->create('mod_cloudflare_telegram_reward_bindings', function ($table) {
+                    $table->increments('id');
+                    $table->integer('userid')->unsigned()->unique();
+                    $table->bigInteger('telegram_user_id')->unsigned()->unique();
+                    $table->string('telegram_username', 64)->nullable();
+                    $table->string('first_name', 255)->nullable();
+                    $table->string('last_name', 255)->nullable();
+                    $table->string('photo_url', 255)->nullable();
+                    $table->integer('auth_date')->unsigned()->default(0);
+                    $table->timestamps();
+                    $table->index(['userid'], 'idx_cf_tg_binding_user');
+                    $table->index(['telegram_user_id'], 'idx_cf_tg_binding_telegram_user');
+                });
+            }
+        } catch (\Throwable $e) {
+        }
     }
 
     /**

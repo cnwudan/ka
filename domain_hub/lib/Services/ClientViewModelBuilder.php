@@ -168,11 +168,15 @@ class CfClientViewModelBuilder
         $githubOptionEnabled = class_exists('CfInviteRegistrationService')
             ? CfInviteRegistrationService::isGithubOptionEnabled($moduleSettings)
             : false;
+        $telegramOptionEnabled = class_exists('CfInviteRegistrationService')
+            ? CfInviteRegistrationService::isTelegramOptionEnabled($moduleSettings)
+            : false;
 
         $globals['inviteRegistrationGateMode'] = $inviteGateMode;
         $globals['inviteRegistrationEnabled'] = $inviteRegistrationEnabled;
         $globals['inviteRegistrationInviteEnabled'] = $inviteOptionEnabled;
         $globals['inviteRegistrationGithubEnabled'] = $githubOptionEnabled;
+        $globals['inviteRegistrationTelegramEnabled'] = $telegramOptionEnabled;
 
         $isUserPrivileged = $userId > 0 && function_exists('cf_is_user_privileged') && cf_is_user_privileged($userId);
         $globals['isUserPrivileged'] = $isUserPrivileged;
@@ -204,6 +208,9 @@ class CfClientViewModelBuilder
             'github_name' => '',
             'github_created_at' => null,
         ];
+        $globals['inviteRegistrationTelegramConfigured'] = false;
+        $globals['inviteRegistrationTelegramBotUsername'] = '';
+        $globals['inviteRegistrationTelegramAuthMaxAge'] = max(60, min(604800, (int) ($moduleSettings['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400))));
 
         if ($inviteRegistrationEnabled) {
             $inviteRegPage = isset($_GET['invite_reg_page']) ? max(1, (int) $_GET['invite_reg_page']) : 1;
@@ -231,6 +238,11 @@ class CfClientViewModelBuilder
                 }
                 $githubBaseQuery['invite_registration_oauth'] = 'github_start';
                 $globals['inviteRegistrationGithubAuthUrl'] = $githubEntryScript . '?' . http_build_query($githubBaseQuery);
+            }
+
+            if (class_exists('CfInviteRegistrationService')) {
+                $globals['inviteRegistrationTelegramConfigured'] = CfInviteRegistrationService::isTelegramSilentReady($moduleSettings);
+                $globals['inviteRegistrationTelegramBotUsername'] = CfInviteRegistrationService::resolveTelegramBotUsername($moduleSettings);
             }
         } else {
             $globals['inviteRegistration'] = [
@@ -533,6 +545,9 @@ class CfClientViewModelBuilder
             'invite_registration_github_client_secret' => '',
             'invite_registration_github_min_months' => '0',
             'invite_registration_github_min_repos' => '0',
+            'invite_registration_telegram_bot_username' => '',
+            'invite_registration_telegram_bot_token' => '',
+            'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
             'enable_github_star_reward' => '0',
             'github_star_repo_url' => '',

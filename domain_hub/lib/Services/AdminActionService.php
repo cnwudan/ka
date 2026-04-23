@@ -1642,6 +1642,27 @@ class CfAdminActionService
             $telegramGroupLink = '';
         }
 
+        $allowedInviteGateModes = ['disabled', 'invite_only', 'github_only', 'telegram_only', 'invite_or_github', 'invite_or_telegram', 'github_or_telegram', 'invite_or_github_or_telegram'];
+        $inviteRegistrationGateMode = trim((string) ($_POST['invite_registration_gate_mode'] ?? ($moduleSettings['invite_registration_gate_mode'] ?? 'disabled')));
+        if (!in_array($inviteRegistrationGateMode, $allowedInviteGateModes, true)) {
+            $inviteRegistrationGateMode = 'disabled';
+        }
+        $inviteTelegramBotUsername = trim((string) ($_POST['invite_registration_telegram_bot_username'] ?? ($moduleSettings['invite_registration_telegram_bot_username'] ?? '')));
+        if ($inviteTelegramBotUsername !== '' && strpos($inviteTelegramBotUsername, '@') === 0) {
+            $inviteTelegramBotUsername = ltrim($inviteTelegramBotUsername, '@');
+        }
+        $postedInviteTelegramBotToken = trim((string) ($_POST['invite_registration_telegram_bot_token'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedInviteTelegramBotToken)) {
+            $postedInviteTelegramBotToken = '';
+        }
+        $existingInviteTelegramBotToken = trim((string) ($moduleSettings['invite_registration_telegram_bot_token'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingInviteTelegramBotToken)) {
+            $existingInviteTelegramBotToken = '';
+        }
+        $inviteTelegramBotToken = $postedInviteTelegramBotToken !== '' ? $postedInviteTelegramBotToken : $existingInviteTelegramBotToken;
+        $inviteTelegramAuthMaxAgeInput = intval($_POST['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400)));
+        $inviteTelegramAuthMaxAge = max(60, min(604800, $inviteTelegramAuthMaxAgeInput));
+
         try {
             self::persistModuleSettings([
                 'pause_free_registration' => $pause,
@@ -1673,6 +1694,10 @@ class CfAdminActionService
                 'telegram_group_bot_token' => $telegramGroupBotToken,
                 'telegram_group_reward_amount' => (string) $telegramGroupRewardAmount,
                 'telegram_reward_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
+                'invite_registration_gate_mode' => $inviteRegistrationGateMode,
+                'invite_registration_telegram_bot_username' => $inviteTelegramBotUsername,
+                'invite_registration_telegram_bot_token' => $inviteTelegramBotToken,
+                'invite_registration_telegram_auth_max_age_seconds' => (string) $inviteTelegramAuthMaxAge,
                 'risk_scan_batch_size' => (string) $riskScanBatchSize,
                 'rate_limit_register_per_hour' => (string) $rateLimitRegister,
                 'rate_limit_dns_per_hour' => (string) $rateLimitDns,
@@ -1711,6 +1736,10 @@ class CfAdminActionService
                     'telegram_group_bot_token_set' => $telegramGroupBotToken !== '' ? 1 : 0,
                     'telegram_group_reward_amount' => $telegramGroupRewardAmount,
                     'telegram_reward_auth_max_age_seconds' => $telegramAuthMaxAge,
+                    'invite_registration_gate_mode' => $inviteRegistrationGateMode,
+                    'invite_registration_telegram_bot_username' => $inviteTelegramBotUsername,
+                    'invite_registration_telegram_bot_token_set' => $inviteTelegramBotToken !== '' ? 1 : 0,
+                    'invite_registration_telegram_auth_max_age_seconds' => $inviteTelegramAuthMaxAge,
                     'rate_limit_register_per_hour' => $rateLimitRegister,
                     'rate_limit_dns_per_hour' => $rateLimitDns,
                     'rate_limit_api_key_per_hour' => $rateLimitApiKey,

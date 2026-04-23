@@ -83,6 +83,7 @@ class CfSettingsRepository
 
         $settings = $this->normalizeInviteRegistrationGithubSecret($settings);
         $settings = $this->normalizeTelegramGroupBotToken($settings);
+        $settings = $this->normalizeInviteRegistrationTelegramBotToken($settings);
         $settings = $this->applyDefaults($settings);
         $settings = $this->synchronizeProviders($settings);
         $settings = $this->migrateLegacyFields($settings);
@@ -98,6 +99,11 @@ class CfSettingsRepository
     private function normalizeTelegramGroupBotToken(array $settings): array
     {
         return $this->normalizeSensitiveSetting($settings, 'telegram_group_bot_token');
+    }
+
+    private function normalizeInviteRegistrationTelegramBotToken(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'invite_registration_telegram_bot_token');
     }
 
     private function normalizeSensitiveSetting(array $settings, string $key): array
@@ -276,6 +282,9 @@ class CfSettingsRepository
             'invite_registration_github_client_secret' => '',
             'invite_registration_github_min_months' => '0',
             'invite_registration_github_min_repos' => '0',
+            'invite_registration_telegram_bot_username' => '',
+            'invite_registration_telegram_bot_token' => '',
+            'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
             'privileged_allow_register_suspended_root' => '0',
             'privileged_unlimited_invite_generation' => '1',

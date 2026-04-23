@@ -1546,10 +1546,14 @@ function domain_hub_config() {
             "Options" => [
                 "invite_only" => "仅邀请码",
                 "github_only" => "仅 GitHub",
+                "telegram_only" => "仅 Telegram（静默授权）",
                 "invite_or_github" => "邀请码 / GitHub 二选一",
+                "invite_or_telegram" => "邀请码 / Telegram 二选一",
+                "github_or_telegram" => "GitHub / Telegram 二选一",
+                "invite_or_github_or_telegram" => "邀请码 / GitHub / Telegram 三选一",
             ],
             "Default" => "invite_only",
-            "Description" => "控制首次进入时的验证方式。老用户白名单（已有域名/配额/邀请记录）会自动放行。",
+            "Description" => "控制首次进入时的验证方式。老用户白名单（已有域名/配额/邀请记录）会自动放行。Telegram 授权需在 BotFather 配置域名白名单。",
         ],
         "invite_registration_github_client_id" => [
             "FriendlyName" => "GitHub OAuth Client ID",
@@ -1576,6 +1580,25 @@ function domain_hub_config() {
             "Size" => "5",
             "Default" => "0",
             "Description" => "GitHub 账号公开仓库数量需至少为 N（0=不限制）",
+        ],
+        "invite_registration_telegram_bot_username" => [
+            "FriendlyName" => "Telegram 准入 Bot 用户名",
+            "Type" => "text",
+            "Size" => "64",
+            "Description" => "用于新用户准入静默授权登录控件（填写 @botname 或 botname；留空时回退 Telegram 社群奖励 Bot）",
+        ],
+        "invite_registration_telegram_bot_token" => [
+            "FriendlyName" => "Telegram 准入 Bot Token",
+            "Type" => "password",
+            "Size" => "120",
+            "Description" => "用于验证 Telegram 登录回传数据（留空时回退 Telegram 社群奖励 Bot Token，系统自动加密存储）",
+        ],
+        "invite_registration_telegram_auth_max_age_seconds" => [
+            "FriendlyName" => "Telegram 准入授权有效期（秒）",
+            "Type" => "text",
+            "Size" => "8",
+            "Default" => "86400",
+            "Description" => "限制 Telegram 静默授权回传数据时效（60-604800）",
         ],
         "invite_registration_inviter_min_months" => [
             "FriendlyName" => "邀请码发放者最低月龄",
