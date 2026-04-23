@@ -172,7 +172,7 @@ $apiMaskKey = static function (string $plainKey): string {
 ?>
 
 <div class="card mt-4" id="api-management-card">
-    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+    <div class="card-header api-management-header d-flex justify-content-between align-items-center">
         <button class="btn btn-link text-white text-decoration-none p-0 d-flex align-items-center gap-2" type="button" id="apiManagementToggleBtn" aria-expanded="<?php echo $apiSectionShouldExpand ? 'true' : 'false'; ?>" aria-controls="apiManagementBody">
             <span class="h5 mb-0 d-flex align-items-center gap-2">
                 <i class="fas fa-key"></i>
@@ -238,7 +238,27 @@ $apiMaskKey = static function (string $plainKey): string {
                 <article class="api-key-panel-row <?php echo !$isKeyActive ? 'is-disabled' : ''; ?>">
                     <div class="api-key-panel-main">
                         <div class="api-key-panel-head">
-                            <strong class="api-key-name"><?php echo htmlspecialchars($key->key_name); ?></strong>
+                            <div class="api-key-name-wrap">
+                                <strong class="api-key-name" id="apiKeyNameLabel<?php echo intval($key->id); ?>"><?php echo htmlspecialchars($key->key_name); ?></strong>
+                                <div class="api-key-name-editor d-none" id="apiKeyNameEditor<?php echo intval($key->id); ?>">
+                                    <input
+                                        type="text"
+                                        class="form-control form-control-sm api-key-name-input"
+                                        id="apiKeyNameInput<?php echo intval($key->id); ?>"
+                                        maxlength="100"
+                                        value="<?php echo htmlspecialchars($key->key_name, ENT_QUOTES); ?>"
+                                    >
+                                    <button type="button" class="btn btn-sm api-inline-icon-btn" onclick="saveApiKeyName(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.save_name', '保存名称', [], true)); ?>">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-sm api-inline-icon-btn" onclick="cancelApiKeyNameEdit(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.cancel_edit', '取消编辑', [], true)); ?>">
+                                        <i class="fas fa-times"></i>
+                                    </button>
+                                </div>
+                                <button type="button" class="btn btn-sm api-key-name-edit-btn" id="apiKeyNameEditBtn<?php echo intval($key->id); ?>" onclick="startApiKeyNameEdit(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.edit_name', '修改密钥名称', [], true)); ?>">
+                                    <i class="fas fa-pen"></i>
+                                </button>
+                            </div>
                             <span class="api-status-pill <?php echo $isKeyActive ? 'is-active' : 'is-disabled'; ?>">
                                 <span class="api-status-dot"></span>
                                 <span><?php echo $isKeyActive ? $cfApiText('cfclient.api.status.active', '启用', [], true) : $cfApiText('cfclient.api.status.disabled', '禁用', [], true); ?></span>
@@ -290,8 +310,9 @@ $apiMaskKey = static function (string $plainKey): string {
                     </div>
 
                     <div class="api-row-actions">
-                        <button type="button" class="btn btn-sm api-action-btn api-action-view" onclick="showApiKeyDetails(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
+                        <button type="button" class="btn btn-sm api-action-btn api-action-view" onclick="return showApiKeyDetails(<?php echo intval($key->id); ?>, this);" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
                             <i class="fas fa-eye"></i>
+                            <span class="api-action-label"><?php echo $cfApiText('cfclient.api.actions.view_short', '详情', [], true); ?></span>
                         </button>
                         <?php if ($isKeyActive): ?>
                             <button type="button" class="btn btn-sm api-action-btn api-action-regenerate" onclick="regenerateApiKey(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.regenerate', '重新生成', [], true)); ?>">
@@ -586,6 +607,98 @@ function copyApiKeyValue(domId) {
     copyToClipboard(full);
 }
 
+function startApiKeyNameEdit(keyId) {
+    var labelEl = document.getElementById('apiKeyNameLabel' + keyId);
+    var editorEl = document.getElementById('apiKeyNameEditor' + keyId);
+    var inputEl = document.getElementById('apiKeyNameInput' + keyId);
+    var editBtn = document.getElementById('apiKeyNameEditBtn' + keyId);
+    if (!labelEl || !editorEl || !inputEl) {
+        return;
+    }
+
+    labelEl.classList.add('d-none');
+    editorEl.classList.remove('d-none');
+    if (editBtn) {
+        editBtn.classList.add('d-none');
+    }
+    inputEl.focus();
+    inputEl.select();
+}
+
+function cancelApiKeyNameEdit(keyId) {
+    var labelEl = document.getElementById('apiKeyNameLabel' + keyId);
+    var editorEl = document.getElementById('apiKeyNameEditor' + keyId);
+    var inputEl = document.getElementById('apiKeyNameInput' + keyId);
+    var editBtn = document.getElementById('apiKeyNameEditBtn' + keyId);
+    if (!labelEl || !editorEl || !inputEl) {
+        return;
+    }
+
+    inputEl.value = labelEl.textContent || '';
+    editorEl.classList.add('d-none');
+    labelEl.classList.remove('d-none');
+    if (editBtn) {
+        editBtn.classList.remove('d-none');
+    }
+}
+
+function saveApiKeyName(keyId) {
+    var labelEl = document.getElementById('apiKeyNameLabel' + keyId);
+    var editorEl = document.getElementById('apiKeyNameEditor' + keyId);
+    var inputEl = document.getElementById('apiKeyNameInput' + keyId);
+    var editBtn = document.getElementById('apiKeyNameEditBtn' + keyId);
+    if (!labelEl || !editorEl || !inputEl) {
+        return;
+    }
+
+    var nextName = (inputEl.value || '').trim();
+    if (!nextName) {
+        alert(cfLang('api.nameEmpty', '密钥名称不能为空'));
+        inputEl.focus();
+        return;
+    }
+
+    if (nextName.length > 100) {
+        alert(cfLang('api.nameTooLong', '密钥名称最多100个字符'));
+        inputEl.focus();
+        return;
+    }
+
+    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_update_api_key_name', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': (window.CF_MOD_CSRF || '')
+        },
+        body: JSON.stringify({
+            key_id: keyId,
+            key_name: nextName
+        })
+    })
+    .then(function(response) {
+        if (!response.ok) {
+            throw new Error('http_' + response.status);
+        }
+        return response.json();
+    })
+    .then(function(result) {
+        if (!result || !result.success) {
+            throw new Error((result && result.error) ? result.error : cfLang('api.renameFailed', '保存失败，请稍后重试'));
+        }
+        labelEl.textContent = result.key_name || nextName;
+        inputEl.value = labelEl.textContent;
+        editorEl.classList.add('d-none');
+        labelEl.classList.remove('d-none');
+        if (editBtn) {
+            editBtn.classList.remove('d-none');
+        }
+    })
+    .catch(function(error) {
+        var message = error && error.message ? error.message : cfLang('api.renameFailed', '保存失败，请稍后重试');
+        alert(cfLang('api.renameFailedWithReason', '保存失败：') + message);
+    });
+}
+
 // 创建API密钥
 function createApiKey() {
     const form = document.getElementById('createApiKeyForm');
@@ -638,49 +751,83 @@ function createApiKey() {
 }
 
 // 查看API密钥详情
-function showApiKeyDetails(keyId) {
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_get_api_key_details&key_id=' + keyId)
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                const key = result.key;
-                const html = `
-                    <dl class="row">
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.name_label', '密钥名称：', [], true); ?></dt>
-                        <dd class="col-sm-9">${key.key_name}</dd>
-                        
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.key_label', 'API Key：', [], true); ?></dt>
-                        <dd class="col-sm-9"><code>${key.api_key}</code></dd>
-                        
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.status_label', '状态：', [], true); ?></dt>
-                        <dd class="col-sm-9">
-                            <span class="badge bg-${key.status === 'active' ? 'success' : 'danger'}">
-                                ${key.status === 'active' ? cfLang('api.statusActive', '启用') : cfLang('api.statusDisabled', '禁用')}
-                            </span>
-                        </dd>
-                        
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.requests_label', '请求次数：', [], true); ?></dt>
-                        <dd class="col-sm-9">${key.request_count.toLocaleString()}</dd>
-                        
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.last_used_label', '最后使用：', [], true); ?></dt>
-                        <dd class="col-sm-9">${key.last_used_at || cfLang('api.neverUsed', '从未使用')}</dd>
-                        
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.created_label', '创建时间：', [], true); ?></dt>
-                        <dd class="col-sm-9">${key.created_at}</dd>
-                        
-                        ${key.ip_whitelist ? `
-                        <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.ip_label', 'IP白名单：', [], true); ?></dt>
-                        <dd class="col-sm-9"><pre>${key.ip_whitelist.split(',').join('\n')}</pre></dd>
-                        ` : ''}
-                    </dl>
+function showApiKeyDetails(keyId, triggerBtn) {
+    var btn = triggerBtn || null;
+    if (btn) {
+        btn.setAttribute('disabled', 'disabled');
+    }
+
+    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_get_api_key_details&key_id=' + encodeURIComponent(keyId))
+        .then(function(response) {
+            if (!response.ok) {
+                throw new Error('http_' + response.status);
+            }
+            return response.json();
+        })
+        .then(function(result) {
+            if (!result || !result.success) {
+                throw new Error((result && result.error) ? result.error : cfLang('api.detailsFailed', '获取详情失败：'));
+            }
+
+            var key = result.key || {};
+            var requestCount = Number(key.request_count || 0).toLocaleString();
+            var statusText = key.status === 'active' ? cfLang('api.statusActive', '启用') : cfLang('api.statusDisabled', '禁用');
+            var statusClass = key.status === 'active' ? 'success' : 'danger';
+            var lastUsed = key.last_used_at || cfLang('api.neverUsed', '从未使用');
+            var ipBlock = '';
+            if (key.ip_whitelist) {
+                ipBlock = `
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.ip_label', 'IP白名单：', [], true); ?></dt>
+                    <dd class="col-sm-9"><pre>${String(key.ip_whitelist).split(',').join('\\n')}</pre></dd>
                 `;
-                document.getElementById('apiKeyDetailsContent').innerHTML = html;
-                const modal = new bootstrap.Modal(document.getElementById('apiKeyDetailsModal'));
-                modal.show();
-            } else {
-                alert(cfLang('api.detailsFailed', '获取详情失败：') + result.error);
+            }
+
+            var html = `
+                <dl class="row mb-0">
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.name_label', '密钥名称：', [], true); ?></dt>
+                    <dd class="col-sm-9">${key.key_name || ''}</dd>
+
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.key_label', 'API Key：', [], true); ?></dt>
+                    <dd class="col-sm-9"><code>${key.api_key || ''}</code></dd>
+
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.status_label', '状态：', [], true); ?></dt>
+                    <dd class="col-sm-9"><span class="badge bg-${statusClass}">${statusText}</span></dd>
+
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.requests_label', '请求次数：', [], true); ?></dt>
+                    <dd class="col-sm-9">${requestCount}</dd>
+
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.last_used_label', '最后使用：', [], true); ?></dt>
+                    <dd class="col-sm-9">${lastUsed}</dd>
+
+                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.created_label', '创建时间：', [], true); ?></dt>
+                    <dd class="col-sm-9">${key.created_at || ''}</dd>
+                    ${ipBlock}
+                </dl>
+            `;
+
+            var detailsEl = document.getElementById('apiKeyDetailsContent');
+            if (detailsEl) {
+                detailsEl.innerHTML = html;
+            }
+
+            var modalEl = document.getElementById('apiKeyDetailsModal');
+            if (!modalEl) {
+                throw new Error(cfLang('api.modalMissing', '详情弹窗未找到'));
+            }
+            var modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+            modal.show();
+        })
+        .catch(function(error) {
+            var message = error && error.message ? error.message : cfLang('api.detailsFailed', '获取详情失败');
+            alert(cfLang('api.detailsFailed', '获取详情失败：') + message);
+        })
+        .finally(function() {
+            if (btn) {
+                btn.removeAttribute('disabled');
             }
         });
+
+    return false;
 }
 
 // 重新生成API密钥
@@ -994,6 +1141,28 @@ document.addEventListener('DOMContentLoaded', function () {
     collapseEl.addEventListener('shown.bs.collapse', updateIcon);
     collapseEl.addEventListener('hidden.bs.collapse', updateIcon);
     updateIcon();
+
+    var nameInputs = document.querySelectorAll('.api-key-name-input');
+    nameInputs.forEach(function (input) {
+        input.addEventListener('keydown', function (event) {
+            var idMatch = (input.id || '').match(/(\d+)$/);
+            if (!idMatch) {
+                return;
+            }
+            var keyId = parseInt(idMatch[1], 10);
+            if (!Number.isFinite(keyId) || keyId <= 0) {
+                return;
+            }
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                saveApiKeyName(keyId);
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                cancelApiKeyNameEdit(keyId);
+            }
+        });
+    });
 });
 </script>
 
@@ -1010,6 +1179,21 @@ document.addEventListener('DOMContentLoaded', function () {
     padding: 10px;
     border-radius: 5px;
     overflow-x: auto;
+}
+
+#api-management-card .api-management-header {
+    background: linear-gradient(135deg, #6f84ab 0%, #7f93b8 100%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+#api-management-card #apiManagementToggleBtn {
+    color: #ffffff;
+}
+
+#api-management-card #apiManagementToggleBtn:hover,
+#api-management-card #apiManagementToggleBtn:focus {
+    color: #ffffff;
+    opacity: 0.95;
 }
 
 #api-management-card .api-create-toolbar {
@@ -1106,9 +1290,49 @@ document.addEventListener('DOMContentLoaded', function () {
     margin-bottom: 0.65rem;
 }
 
+#api-management-card .api-key-name-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.38rem;
+    min-width: 0;
+}
+
 #api-management-card .api-key-name {
     font-size: 0.96rem;
     color: #1f2937;
+    line-height: 1.25;
+}
+
+#api-management-card .api-key-name-edit-btn {
+    width: 28px;
+    height: 28px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    color: #7b8798;
+    background: transparent;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#api-management-card .api-key-name-edit-btn:hover,
+#api-management-card .api-key-name-edit-btn:focus {
+    color: #1d4ed8;
+    border-color: #c8d7ff;
+    background: #eef4ff;
+}
+
+#api-management-card .api-key-name-editor {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+#api-management-card .api-key-name-input {
+    width: 200px;
+    min-width: 140px;
+    border-radius: 8px;
 }
 
 #api-management-card .api-status-pill {
@@ -1231,17 +1455,27 @@ document.addEventListener('DOMContentLoaded', function () {
 }
 
 #api-management-card .api-action-btn {
-    width: 32px;
+    min-width: 32px;
     height: 32px;
     border-radius: 8px;
     border: 1px solid transparent;
     background: transparent;
     color: #9aa4b2;
-    padding: 0;
+    padding: 0 0.42rem;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    gap: 0.25rem;
     transition: all 0.2s ease;
+}
+
+#api-management-card .api-action-view {
+    min-width: 58px;
+}
+
+#api-management-card .api-action-label {
+    font-size: 0.76rem;
+    line-height: 1;
 }
 
 #api-management-card .api-key-panel-row:hover .api-action-view,
@@ -1329,6 +1563,18 @@ document.addEventListener('DOMContentLoaded', function () {
 
     #api-management-card .api-row-actions {
         align-items: center;
+    }
+
+    #api-management-card .api-action-label {
+        display: none;
+    }
+
+    #api-management-card .api-action-view {
+        min-width: 32px;
+    }
+
+    #api-management-card .api-key-name-input {
+        width: 150px;
     }
 
     #api-management-card .api-create-toolbar {
