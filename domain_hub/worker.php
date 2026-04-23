@@ -364,6 +364,24 @@ function cfmod_worker_resolve_fix_scope(array $payload): array {
 }
 
 
+function cfmod_worker_is_sensitive_dns_type(string $recordType): bool {
+    return in_array(strtoupper(trim($recordType)), ['NS', 'MX', 'SRV'], true);
+}
+
+function cfmod_worker_allow_sensitive_delete(array $payload, array $settings = []): bool {
+    if (cfmod_worker_payload_bool($payload, 'allow_sensitive_delete', false)) {
+        return true;
+    }
+
+    $settingRaw = strtolower(trim((string) ($settings['sync_allow_sensitive_delete'] ?? '0')));
+    if ($settingRaw === '') {
+        return false;
+    }
+
+    return in_array($settingRaw, ['1', 'on', 'yes', 'true', 'enabled'], true);
+}
+
+
 function cfmod_risk_scan_response_error($response): string
 {
     if (!is_array($response)) {
@@ -685,6 +703,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
     $targetRoot = strtolower(trim((string) ($payload['rootdomain'] ?? '')));
     $targetUserId = intval($payload['userid'] ?? 0);
     $fixScope = cfmod_worker_resolve_fix_scope($payload);
+    $allowSensitiveDelete = cfmod_worker_allow_sensitive_delete($payload, $settings);
 
     $subsQuery = Capsule::table('mod_cloudflare_subdomain')
         ->orderBy('id', 'asc');
@@ -714,6 +733,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
             'differences_total' => 0,
             'warnings' => ['no_subdomains'],
             'fix_scope' => $fixScope,
+            'allow_sensitive_delete' => $allowSensitiveDelete ? 1 : 0,
         ];
         if ($targetRoot !== '') {
             $emptyStats['rootdomain'] = $targetRoot;
@@ -742,6 +762,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
         'warnings' => [],
         'priority' => $priority,
         'fix_scope' => $fixScope,
+        'allow_sensitive_delete' => $allowSensitiveDelete ? 1 : 0,
     ];
     if ($targetRoot !== '') {
         $stats['rootdomain'] = $targetRoot;
@@ -782,7 +803,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
             }
 
             try {
-                cfmod_calibrate_subdomain($jobId, $mode, $cf, $s, $zoneCache, $zoneId, $stats, $priority, $fixScope);
+                cfmod_calibrate_subdomain($jobId, $mode, $cf, $s, $zoneCache, $zoneId, $stats, $priority, $fixScope, $allowSensitiveDelete);
             } catch (\Throwable $e) {
                 $stats['warnings'][] = 'calibrate_error:' . $s->id;
                 cfmod_report_exception('calibrate_subdomain', $e);
@@ -835,7 +856,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
 /**
  * @param CloudflareAPI|DNSPodLegacyAPI|DNSPodIntlAPI|mixed $cf
  */
-function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$zoneCache, string $zoneId, array &$stats, string $priority, array $fixScope = []): void {
+function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$zoneCache, string $zoneId, array &$stats, string $priority, array $fixScope = [], bool $allowSensitiveDelete = false): void {
     if (!is_object($cf) || !method_exists($cf, 'getDnsRecords')) {
         throw new \InvalidArgumentException('calibrate_subdomain requires a provider client supporting getDnsRecords');
     }
@@ -939,6 +960,8 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
                     if ($mode === 'fix') {
                         if (!$allowFixExtra) {
                             $action = 'scope_skip_extra';
+                        } elseif (cfmod_worker_is_sensitive_dns_type((string) $t) && !$allowSensitiveDelete) {
+                            $action = 'scope_skip_sensitive';
                         } elseif (!empty($cr['id'])) {
                             $res = $cf->deleteSubdomain($zoneId, $cr['id'], [
                                 'name' => $n,
@@ -2492,6 +2515,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
     $targetRoot = strtolower(trim((string) ($payload['rootdomain'] ?? '')));
     $targetUserId = intval($payload['userid'] ?? 0);
     $fixScope = cfmod_worker_resolve_fix_scope($payload);
+    $allowSensitiveDelete = cfmod_worker_allow_sensitive_delete($payload, $settings);
     $allowFixTtl = $fixScope['ttl'] ?? true;
     $allowFixMissing = $fixScope['missing'] ?? true;
     $allowFixExtra = $fixScope['extra'] ?? true;
@@ -2513,6 +2537,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
         'warnings' => [],
         'priority' => $priority,
         'fix_scope' => $fixScope,
+        'allow_sensitive_delete' => $allowSensitiveDelete ? 1 : 0,
     ];
     if ($targetRoot !== '') {
         $stats['rootdomain'] = $targetRoot;
@@ -2654,6 +2679,8 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
                                     if ($mode === 'fix') {
                                         if (!$allowFixExtra) {
                                             $action = 'scope_skip_extra';
+                                        } elseif (cfmod_worker_is_sensitive_dns_type((string) $recordType) && !$allowSensitiveDelete) {
+                                            $action = 'scope_skip_sensitive';
                                         } elseif (!empty($cr['id'])) {
                                             $res = $cf->deleteSubdomain($zone, $cr['id'], [
                                                 'name' => $recordName,
@@ -3169,6 +3196,8 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
         'deleted' => 0,
         'failed' => 0,
         'warnings' => [],
+        'cursor_start' => 0,
+        'cursor_end' => 0,
     ];
 
     try {
@@ -3199,25 +3228,47 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
         $deepDeleteSetting = in_array(($settings['domain_cleanup_deep_delete'] ?? 'yes'), ['1','on','yes','true'], true);
         $deepDelete = $deepDeletePayload || $deepDeleteSetting;
 
+        $cursor = intval($payload['cursor_id'] ?? 0);
+        if ($cursor < 0) {
+            $cursor = 0;
+        }
+        $stats['cursor_start'] = $cursor;
+
         $thresholdTs = time() - ($totalRetentionDays * 86400);
         $threshold = date('Y-m-d H:i:s', $thresholdTs);
 
         $expiredQuery = Capsule::table('mod_cloudflare_subdomain')
+            ->where('id', '>', $cursor)
             ->where('never_expires', 0)
             ->whereNotNull('expires_at')
             ->whereNull('auto_deleted_at')
             ->whereNotIn('status', ['deleted', 'Deleted'])
             ->where('expires_at', '<', $threshold)
             ->orderBy('id', 'asc')
-            ->limit($batchSize);
+            ->limit($batchSize + 1);
 
-        $records = $expiredQuery->get();
-        if ($records instanceof \Illuminate\Support\Collection) {
-            $records = $records->all();
+        $rowsRaw = $expiredQuery->get();
+        if ($rowsRaw instanceof \Illuminate\Support\Collection) {
+            $rowsRaw = $rowsRaw->all();
         }
+        if (!is_array($rowsRaw)) {
+            $rowsRaw = [];
+        }
+
+        if (empty($rowsRaw)) {
+            $stats['cursor_end'] = $cursor;
+            $stats['has_more'] = false;
+            $stats['message'] = $cursor > 0 ? 'cleanup_cursor_completed' : 'nothing_to_cleanup';
+            return $stats;
+        }
+
+        $hasMore = count($rowsRaw) > $batchSize;
+        $records = $hasMore ? array_slice($rowsRaw, 0, $batchSize) : $rowsRaw;
 
         $stats['processed_subdomains'] = count($records);
         if ($stats['processed_subdomains'] === 0) {
+            $stats['cursor_end'] = $cursor;
+            $stats['has_more'] = false;
             $stats['message'] = 'nothing_to_cleanup';
             return $stats;
         }
@@ -3228,12 +3279,16 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
         $failures = [];
         $deletedIds = [];
         $deletedCount = 0;
+        $lastScannedId = $cursor;
 
         foreach ($records as $record) {
             $recordId = intval($record->id ?? 0);
             if ($recordId <= 0) {
                 $stats['warnings'][] = 'invalid_record_id';
                 continue;
+            }
+            if ($recordId > $lastScannedId) {
+                $lastScannedId = $recordId;
             }
 
             $userid = intval($record->userid ?? 0);
@@ -3330,17 +3385,20 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
             $stats['warnings'][] = count($failures) > 20 ? 'partial_failures_truncated' : 'partial_failures';
         }
 
-        if ($stats['processed_subdomains'] === $batchSize) {
+        $stats['cursor_end'] = $lastScannedId;
+
+        if ($hasMore && $lastScannedId > $cursor) {
             $stats['has_more'] = true;
             try {
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'cleanup_expired_subdomains',
                     'payload_json' => json_encode([
+                        'cursor_id' => $lastScannedId,
                         'batch_size' => $batchSize,
                         'deep_delete' => $deepDelete ? 1 : 0,
                         'auto' => !empty($payload['auto'])
                     ], JSON_UNESCAPED_UNICODE),
-                    'priority' => 15,
+                    'priority' => intval($job->priority ?? 15),
                     'status' => 'pending',
                     'attempts' => 0,
                     'next_run_at' => null,
@@ -3348,8 +3406,14 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
                     'updated_at' => $nowStr
                 ]);
             } catch (\Throwable $queueMore) {
+                $stats['warnings'][] = 'requeue_failed';
                 cfmod_report_exception('cleanup_expired_subdomains_requeue', $queueMore);
             }
+        } elseif ($hasMore && $lastScannedId <= $cursor) {
+            $stats['has_more'] = false;
+            $stats['warnings'][] = 'cursor_not_advanced';
+        } else {
+            $stats['has_more'] = false;
         }
 
         $stats['message'] = 'deleted ' . $deletedCount . ' expired subdomains';
@@ -3361,7 +3425,6 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
 
     return $stats;
 }
-
 function cfmod_delete_local_subdomain_artifacts(array $subdomainIds): array {
     $uniqueIds = array_values(array_filter(array_unique(array_map('intval', $subdomainIds)), function ($value) {
         return $value > 0;

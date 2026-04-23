@@ -194,6 +194,96 @@ function api_provider_not_found($result): bool {
         || strpos($message, '不存在') !== false;
 }
 
+function api_normalize_dns_content(string $content, string $type = ''): string {
+    $value = trim($content);
+    if ($value === '') {
+        return '';
+    }
+    if (strlen($value) >= 2 && substr($value, 0, 1) === '"' && substr($value, -1) === '"') {
+        $value = substr($value, 1, -1);
+    }
+    if (strpos($value, ' ') === false && substr($value, -1) === '.') {
+        $value = rtrim($value, '.');
+    }
+    $recordType = strtoupper(trim($type));
+    if ($recordType === 'TXT') {
+        return $value;
+    }
+    return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+}
+
+function api_remote_record_matches_local(array $remoteRecord, $localRecord): bool {
+    $remoteName = strtolower(trim((string) ($remoteRecord['name'] ?? '')));
+    $remoteType = strtoupper(trim((string) ($remoteRecord['type'] ?? '')));
+    $remoteContent = api_normalize_dns_content((string) ($remoteRecord['content'] ?? ''), $remoteType);
+
+    $localName = strtolower(trim((string) ($localRecord->name ?? '')));
+    $localType = strtoupper(trim((string) ($localRecord->type ?? '')));
+    $localContent = api_normalize_dns_content((string) ($localRecord->content ?? ''), $localType);
+
+    return $remoteName === $localName
+        && $remoteType === $localType
+        && $remoteContent === $localContent;
+}
+
+function api_fetch_remote_records_for_local($providerClient, string $zoneId, $localRecord): ?array {
+    if (!$providerClient || !method_exists($providerClient, 'getDnsRecords')) {
+        return null;
+    }
+
+    try {
+        $name = (string) ($localRecord->name ?? '');
+        $type = strtoupper(trim((string) ($localRecord->type ?? '')));
+        $params = ['per_page' => 1000];
+        if ($type !== '') {
+            $params['type'] = $type;
+        }
+        $listRes = $providerClient->getDnsRecords($zoneId, $name, $params);
+        if (!($listRes['success'] ?? false)) {
+            return null;
+        }
+        return is_array($listRes['result'] ?? null) ? ($listRes['result'] ?? []) : [];
+    } catch (\Throwable $e) {
+        return null;
+    }
+}
+
+function api_find_remote_record_id_for_local($providerClient, string $zoneId, $localRecord): ?string {
+    $records = api_fetch_remote_records_for_local($providerClient, $zoneId, $localRecord);
+    if ($records === null) {
+        return null;
+    }
+    foreach ($records as $remoteRecord) {
+        if (!is_array($remoteRecord)) {
+            continue;
+        }
+        if (!api_remote_record_matches_local($remoteRecord, $localRecord)) {
+            continue;
+        }
+        $id = isset($remoteRecord['id']) ? trim((string) $remoteRecord['id']) : '';
+        if ($id !== '') {
+            return $id;
+        }
+    }
+    return '';
+}
+
+function api_remote_record_exists_for_local($providerClient, string $zoneId, $localRecord): ?bool {
+    $records = api_fetch_remote_records_for_local($providerClient, $zoneId, $localRecord);
+    if ($records === null) {
+        return null;
+    }
+    foreach ($records as $remoteRecord) {
+        if (!is_array($remoteRecord)) {
+            continue;
+        }
+        if (api_remote_record_matches_local($remoteRecord, $localRecord)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 function api_handle_subdomain_register(array $data, $keyRow, array $settings): array {
     $code = 200;
     $result = null;
@@ -2052,7 +2142,7 @@ function handleApiRequest(){
                     } else {
                         $sid = intval($rec->subdomain_id);
                         $zone = $rec->zone_id;
-                        $rid = $rec->record_id;
+                        $rid = trim((string) ($rec->record_id ?? ''));
                         $s = Capsule::table('mod_cloudflare_subdomain')
                             ->where('id', $sid)
                             ->where('userid', $keyRow->userid)
@@ -2070,10 +2160,22 @@ function handleApiRequest(){
                                 $result = ['error' => 'provider unavailable'];
                             } else {
                                 $cf = $providerContext['client'];
+                                $effectiveZone = $zone ?: ($s->cloudflare_zone_id ?: $s->rootdomain);
                                 $deleteFailed = null;
-                                if ($rid) {
+                                $effectiveRecordId = $rid;
+
+                                if ($effectiveRecordId === '') {
+                                    $resolvedRecordId = api_find_remote_record_id_for_local($cf, $effectiveZone, $rec);
+                                    if ($resolvedRecordId === null) {
+                                        $deleteFailed = 'provider lookup failed';
+                                    } else {
+                                        $effectiveRecordId = $resolvedRecordId;
+                                    }
+                                }
+
+                                if ($deleteFailed === null && $effectiveRecordId !== '') {
                                     try {
-                                        $delRes = $cf->deleteSubdomain($zone ?: ($s->cloudflare_zone_id ?: $s->rootdomain), $rid, [
+                                        $delRes = $cf->deleteSubdomain($effectiveZone, $effectiveRecordId, [
                                             'name' => $rec->name ?? null,
                                             'type' => $rec->type ?? null,
                                             'content' => $rec->content ?? null,
@@ -2083,6 +2185,15 @@ function handleApiRequest(){
                                         }
                                     } catch (\Throwable $e) {
                                         $deleteFailed = $e->getMessage();
+                                    }
+                                }
+
+                                if ($deleteFailed === null) {
+                                    $remoteExists = api_remote_record_exists_for_local($cf, $effectiveZone, $rec);
+                                    if ($remoteExists === null) {
+                                        $deleteFailed = 'provider verify failed';
+                                    } elseif ($remoteExists === true) {
+                                        $deleteFailed = 'remote delete not confirmed';
                                     }
                                 }
 
