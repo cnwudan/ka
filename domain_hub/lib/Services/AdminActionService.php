@@ -1618,6 +1618,24 @@ class CfAdminActionService
         $githubStarRewardAmountInput = intval($_POST['github_star_reward_amount'] ?? ($moduleSettings['github_star_reward_amount'] ?? 1));
         $githubStarRewardAmount = max(1, min(1000, $githubStarRewardAmountInput));
 
+        $enableTelegramGroupReward = (($_POST['enable_telegram_group_reward'] ?? '') === '1');
+        $telegramGroupLink = trim((string) ($_POST['telegram_group_link'] ?? ($moduleSettings['telegram_group_link'] ?? '')));
+        $telegramGroupChatId = trim((string) ($_POST['telegram_group_chat_id'] ?? ($moduleSettings['telegram_group_chat_id'] ?? '')));
+        $telegramGroupBotUsername = trim((string) ($_POST['telegram_group_bot_username'] ?? ($moduleSettings['telegram_group_bot_username'] ?? '')));
+        if ($telegramGroupBotUsername !== '' && strpos($telegramGroupBotUsername, '@') === 0) {
+            $telegramGroupBotUsername = ltrim($telegramGroupBotUsername, '@');
+        }
+        $postedTelegramBotToken = trim((string) ($_POST['telegram_group_bot_token'] ?? ''));
+        $existingTelegramBotToken = trim((string) ($moduleSettings['telegram_group_bot_token'] ?? ''));
+        $telegramGroupBotToken = $postedTelegramBotToken !== '' ? $postedTelegramBotToken : $existingTelegramBotToken;
+        $telegramGroupRewardAmountInput = intval($_POST['telegram_group_reward_amount'] ?? ($moduleSettings['telegram_group_reward_amount'] ?? 1));
+        $telegramGroupRewardAmount = max(1, min(1000, $telegramGroupRewardAmountInput));
+        $telegramAuthMaxAgeInput = intval($_POST['telegram_reward_auth_max_age_seconds'] ?? ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400));
+        $telegramAuthMaxAge = max(60, min(604800, $telegramAuthMaxAgeInput));
+        if (preg_match('/^\s*javascript:/i', $telegramGroupLink)) {
+            $telegramGroupLink = '';
+        }
+
         try {
             self::persistModuleSettings([
                 'pause_free_registration' => $pause,
@@ -1642,6 +1660,13 @@ class CfAdminActionService
                 'enable_github_star_reward' => $enableGithubStarReward ? '1' : '0',
                 'github_star_repo_url' => $githubStarRepoUrl,
                 'github_star_reward_amount' => (string) $githubStarRewardAmount,
+                'enable_telegram_group_reward' => $enableTelegramGroupReward ? '1' : '0',
+                'telegram_group_link' => $telegramGroupLink,
+                'telegram_group_chat_id' => $telegramGroupChatId,
+                'telegram_group_bot_username' => $telegramGroupBotUsername,
+                'telegram_group_bot_token' => $telegramGroupBotToken,
+                'telegram_group_reward_amount' => (string) $telegramGroupRewardAmount,
+                'telegram_reward_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
                 'risk_scan_batch_size' => (string) $riskScanBatchSize,
                 'rate_limit_register_per_hour' => (string) $rateLimitRegister,
                 'rate_limit_dns_per_hour' => (string) $rateLimitDns,
@@ -1673,6 +1698,13 @@ class CfAdminActionService
                     'enable_github_star_reward' => $enableGithubStarReward ? 1 : 0,
                     'github_star_repo_url' => $githubStarRepoUrl,
                     'github_star_reward_amount' => $githubStarRewardAmount,
+                    'enable_telegram_group_reward' => $enableTelegramGroupReward ? 1 : 0,
+                    'telegram_group_link' => $telegramGroupLink,
+                    'telegram_group_chat_id' => $telegramGroupChatId,
+                    'telegram_group_bot_username' => $telegramGroupBotUsername,
+                    'telegram_group_bot_token_set' => $telegramGroupBotToken !== '' ? 1 : 0,
+                    'telegram_group_reward_amount' => $telegramGroupRewardAmount,
+                    'telegram_reward_auth_max_age_seconds' => $telegramAuthMaxAge,
                     'rate_limit_register_per_hour' => $rateLimitRegister,
                     'rate_limit_dns_per_hour' => $rateLimitDns,
                     'rate_limit_api_key_per_hour' => $rateLimitApiKey,

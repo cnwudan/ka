@@ -247,6 +247,7 @@ if (!empty($rootInviteRequiredMap) && is_array($rootInviteRequiredMap)) {
 $cfClientHasGiftFeature = !empty($domainGiftEnabled);
 $cfClientHasToolFeatures = !empty($quotaRedeemEnabled)
     || !empty($githubStarRewardEnabled)
+    || !empty($telegramGroupRewardEnabled)
     || $sslRequestEnabled
     || $dnsUnlockFeatureEnabled
     || $inviteRegistrationEnabled

@@ -270,9 +270,9 @@ class CfTelegramGroupRewardService
 
     private static function resolveGroupHash(string $groupLink, string $chatId): string
     {
-        $base = strtolower(trim($groupLink));
+        $base = strtolower(trim($chatId));
         if ($base === '') {
-            $base = strtolower(trim($chatId));
+            $base = strtolower(trim($groupLink));
         }
         return hash('sha256', $base);
     }
@@ -558,7 +558,7 @@ class CfTelegramGroupRewardService
         $rewardAmount = self::resolveRewardAmount($moduleSettings);
         $groupHash = self::resolveGroupHash($groupLink, $chatId);
 
-        if ($groupLink === '') {
+        if ($groupLink !== '' && preg_match('/^\s*javascript:/i', $groupLink)) {
             throw new CfTelegramGroupRewardException('invalid_group_link');
         }
         if (!self::validateChatId($chatId)) {
@@ -581,7 +581,14 @@ class CfTelegramGroupRewardService
 
         $authData = null;
         $normalizedAuthPayload = self::normalizeAuthPayload($authPayload);
-        if (!empty($normalizedAuthPayload)) {
+        $hasAuthPayload = false;
+        foreach (['id', 'auth_date', 'hash'] as $requiredKey) {
+            if (trim((string) ($normalizedAuthPayload[$requiredKey] ?? '')) !== '') {
+                $hasAuthPayload = true;
+                break;
+            }
+        }
+        if ($hasAuthPayload) {
             $authData = self::verifyAuthPayload($normalizedAuthPayload, $botToken, $maxAgeSeconds);
         }
 
