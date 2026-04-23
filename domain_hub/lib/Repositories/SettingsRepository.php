@@ -176,6 +176,7 @@ class CfSettingsRepository
             'sponsor_title' => '赞助 DNSHE',
             'sponsor_description' => 'DNSHE 的成长离不开社区的支持。你的每一份赞助都将用于支付服务器与根域名的续费开支。',
             'sponsor_methods' => '',
+            'sponsor_acknowledgements' => '',
         ];
 
         foreach ($defaults as $key => $value) {

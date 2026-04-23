@@ -336,7 +336,7 @@ $apiMaskKey = static function (string $plainKey): string {
 
         <div class="mt-4">
             <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0"><?php echo $cfApiText('cfclient.api.trend.title', $apiTrendTitleDefault, [], true); ?></h6>
+                <h6 class="mb-0"><?php echo $cfApiText('cfclient.api.trend.title', $apiTrendTitleDefault, [intval($apiDailySeriesDays)], true); ?></h6>
                 <span class="badge bg-light text-secondary border"><?php echo intval($apiDailySeriesDays); ?>D</span>
             </div>
             <div class="api-usage-trend-chart-wrap">
