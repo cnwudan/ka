@@ -309,7 +309,7 @@ $dnsLineOptions = [
                                 </button>
                             </div>
                         </div>
-                        <div class="d-flex align-items-center gap-1 mb-3">
+                        <div class="d-flex align-items-center gap-0 mb-3">
                             <div class="form-check mb-0 ns-force-check">
                                 <input class="form-check-input" type="checkbox" name="force_replace" id="force_replace" value="1">
                                 <label class="form-check-label ns-force-label" for="force_replace"><?php echo $modalText('cfclient.modals.ns.label.force_short', $nsForceShortDefault); ?></label>

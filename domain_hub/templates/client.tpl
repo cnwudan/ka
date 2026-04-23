@@ -661,12 +661,12 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            margin-left: 2px;
+            margin-left: 0;
         }
 
         .ns-force-help i {
             font-size: 1rem;
-            transform: translateY(-1px);
+            transform: translateY(1px);
         }
 
         .ns-force-help:hover,
