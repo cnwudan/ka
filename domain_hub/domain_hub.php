@@ -1633,6 +1633,13 @@ function domain_hub_config() {
             "Cols" => "60",
             "Description" => "每行一个，格式：赞助方式|链接。支持双语：中文,English|链接。示例：服务器赞助,Server Sponsorship|https://example.com/server",
         ],
+        "sponsor_acknowledgements" => [
+            "FriendlyName" => "赞助者鸣谢清单",
+            "Type" => "textarea",
+            "Rows" => "5",
+            "Cols" => "60",
+            "Description" => "每行一个，格式：赞助者名称|链接。支持双语：中文,English|链接。示例：示例科技,Example Tech|https://example.com",
+        ],
         "enable_github_star_reward" => [
             "FriendlyName" => "启用 GitHub 点赞奖励",
             "Type" => "yesno",

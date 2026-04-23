@@ -30,6 +30,40 @@ $resolveBilingualText = static function (string $raw, string $fallbackZh, string
     return $raw;
 };
 
+$parseSponsorRows = static function (string $rawConfig) use ($resolveBilingualText): array {
+    $rawConfig = trim($rawConfig);
+    if ($rawConfig === '') {
+        return [];
+    }
+
+    $rows = [];
+    $lines = preg_split('/\r?\n/', $rawConfig) ?: [];
+    foreach ($lines as $line) {
+        $line = trim((string) $line);
+        if ($line === '') {
+            continue;
+        }
+
+        $parts = explode('|', $line, 2);
+        $nameRaw = trim((string) ($parts[0] ?? ''));
+        $url = trim((string) ($parts[1] ?? ''));
+        if ($nameRaw === '') {
+            continue;
+        }
+
+        if ($url !== '' && !preg_match('#^https?://#i', $url)) {
+            $url = '';
+        }
+
+        $rows[] = [
+            'label' => $resolveBilingualText($nameRaw, $nameRaw, $nameRaw),
+            'url' => $url,
+        ];
+    }
+
+    return $rows;
+};
+
 $sponsorTitle = $resolveBilingualText(
     (string) ($module_settings['sponsor_title'] ?? ''),
     '赞助 DNSHE',
@@ -41,36 +75,15 @@ $sponsorDescription = $resolveBilingualText(
     'DNSHE grows with community support. Every sponsorship helps cover server and root domain renewal costs.'
 );
 
-$sponsorMethodRows = [];
-$rawSponsorMethods = trim((string) ($module_settings['sponsor_methods'] ?? ''));
-if ($rawSponsorMethods !== '') {
-    $lines = preg_split('/\r?\n/', $rawSponsorMethods) ?: [];
-    foreach ($lines as $line) {
-        $line = trim((string) $line);
-        if ($line === '') {
-            continue;
-        }
-        $parts = explode('|', $line, 2);
-        $labelRaw = trim((string) ($parts[0] ?? ''));
-        $url = trim((string) ($parts[1] ?? ''));
-        if ($labelRaw === '') {
-            continue;
-        }
-        if ($url !== '' && !preg_match('#^https?://#i', $url)) {
-            $url = '';
-        }
-        $sponsorMethodRows[] = [
-            'label' => $resolveBilingualText($labelRaw, $labelRaw, $labelRaw),
-            'url' => $url,
-        ];
-    }
-}
+$sponsorMethodRows = $parseSponsorRows((string) ($module_settings['sponsor_methods'] ?? ''));
 if (empty($sponsorMethodRows)) {
     $sponsorMethodRows = [
         ['label' => 'USDT', 'url' => ''],
         ['label' => $partnerIsChinese ? '服务器赞助' : 'Server Sponsorship', 'url' => ''],
     ];
 }
+
+$sponsorAcknowledgementRows = $parseSponsorRows((string) ($module_settings['sponsor_acknowledgements'] ?? ''));
 ?>
 
 <div class="row g-3">
@@ -125,17 +138,20 @@ if (empty($sponsorMethodRows)) {
     </div>
 
     <div class="col-lg-5">
-        <div class="card border-0 shadow-sm h-100">
+        <div class="card border-0 shadow-sm h-100 partner-sponsor-card">
             <div class="card-body">
                 <h5 class="card-title mb-3">
                     <i class="fas fa-heart text-danger me-2"></i><?php echo htmlspecialchars($sponsorTitle, ENT_QUOTES); ?>
                 </h5>
                 <p class="text-muted mb-3"><?php echo nl2br(htmlspecialchars($sponsorDescription, ENT_QUOTES)); ?></p>
 
-                <div class="list-group list-group-flush">
+                <div class="partner-sponsor-section-title mb-2">
+                    <?php echo $partnerText('cfclient.partner.sponsor.methods_title', '赞助方式', 'Sponsorship Methods'); ?>
+                </div>
+                <div class="list-group list-group-flush partner-sponsor-method-list">
                     <?php foreach ($sponsorMethodRows as $method): ?>
-                        <div class="list-group-item px-0 border-0 d-flex align-items-center justify-content-between">
-                            <span><i class="fas fa-gift text-warning me-2"></i><?php echo htmlspecialchars((string) $method['label'], ENT_QUOTES); ?></span>
+                        <div class="list-group-item px-0 border-0 d-flex align-items-center justify-content-between gap-2">
+                            <span class="partner-sponsor-method-name"><i class="fas fa-gift text-warning me-2"></i><?php echo htmlspecialchars((string) $method['label'], ENT_QUOTES); ?></span>
                             <?php if (!empty($method['url'])): ?>
                                 <a href="<?php echo htmlspecialchars((string) $method['url'], ENT_QUOTES); ?>" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline-primary">
                                     <?php echo $partnerText('cfclient.partner.sponsor.open', '查看', 'Open'); ?>
@@ -146,7 +162,103 @@ if (empty($sponsorMethodRows)) {
                         </div>
                     <?php endforeach; ?>
                 </div>
+
+                <hr class="my-3">
+
+                <div class="partner-sponsor-section-title mb-1">
+                    <?php echo $partnerText('cfclient.partner.sponsor.acknowledgements_title', '赞助者鸣谢清单', 'Sponsor Acknowledgements'); ?>
+                </div>
+                <div class="small text-muted mb-2">
+                    <?php echo $partnerText('cfclient.partner.sponsor.acknowledgements_hint', '感谢以下赞助者对 DNSHE 的持续支持', 'Special thanks to the sponsors who keep supporting DNSHE'); ?>
+                </div>
+
+                <?php if (!empty($sponsorAcknowledgementRows)): ?>
+                    <div class="partner-sponsor-tags">
+                        <?php foreach ($sponsorAcknowledgementRows as $sponsor): ?>
+                            <?php if (!empty($sponsor['url'])): ?>
+                                <a
+                                    href="<?php echo htmlspecialchars((string) $sponsor['url'], ENT_QUOTES); ?>"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="partner-sponsor-tag"
+                                ><?php echo htmlspecialchars((string) $sponsor['label'], ENT_QUOTES); ?></a>
+                            <?php else: ?>
+                                <span class="partner-sponsor-tag is-static"><?php echo htmlspecialchars((string) $sponsor['label'], ENT_QUOTES); ?></span>
+                            <?php endif; ?>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <div class="partner-sponsor-empty">
+                        <?php echo $partnerText('cfclient.partner.sponsor.acknowledgements_empty', '期待你的名字出现在这里', 'Your name could be here next'); ?>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     </div>
 </div>
+
+<style>
+.partner-sponsor-card .partner-sponsor-section-title {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #475569;
+    letter-spacing: 0.01em;
+}
+
+.partner-sponsor-card .partner-sponsor-method-list .list-group-item {
+    padding-top: 0.42rem;
+    padding-bottom: 0.42rem;
+}
+
+.partner-sponsor-card .partner-sponsor-method-name {
+    color: #334155;
+    font-size: 0.92rem;
+}
+
+.partner-sponsor-card .partner-sponsor-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.partner-sponsor-card .partner-sponsor-tag {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 0.3rem 0.72rem;
+    border-radius: 999px;
+    border: 1px solid #bfdbfe;
+    background: #eff6ff;
+    color: #2563eb;
+    font-size: 0.82rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-decoration: none;
+    transition: all 0.2s ease;
+}
+
+.partner-sponsor-card .partner-sponsor-tag:hover,
+.partner-sponsor-card .partner-sponsor-tag:focus {
+    color: #1d4ed8;
+    background: #dbeafe;
+    border-color: #93c5fd;
+    text-decoration: underline;
+}
+
+.partner-sponsor-card .partner-sponsor-tag.is-static {
+    color: #334155;
+    background: #f8fafc;
+    border-color: #e2e8f0;
+    text-decoration: none;
+    cursor: default;
+}
+
+.partner-sponsor-card .partner-sponsor-empty {
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 0.82rem;
+    padding: 0.5rem 0.72rem;
+}
+</style>
