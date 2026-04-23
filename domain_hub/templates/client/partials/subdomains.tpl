@@ -308,12 +308,32 @@
                                                                 <?php if(!empty($recordsForDisplay)): ?>
                                                                     <?php foreach ($recordsForDisplay as $r): ?>
                                                                     <tr>
+                                                                        <?php
+                                                                            $recordNameRaw = rtrim(trim((string)($r->name ?? '')), '.');
+                                                                            $subdomainFqdnRaw = rtrim(trim((string)($e->subdomain ?? '')), '.');
+                                                                            $recordHostDisplay = '@';
+                                                                            if ($recordNameRaw !== '' && $recordNameRaw !== '@') {
+                                                                                $recordNameLower = strtolower($recordNameRaw);
+                                                                                $subdomainLower = strtolower($subdomainFqdnRaw);
+                                                                                if ($subdomainLower !== '' && $recordNameLower !== $subdomainLower) {
+                                                                                    $suffix = '.' . $subdomainLower;
+                                                                                    if (substr($recordNameLower, -strlen($suffix)) === $suffix) {
+                                                                                        $recordHostDisplay = substr($recordNameRaw, 0, strlen($recordNameRaw) - strlen($suffix));
+                                                                                        if ($recordHostDisplay === '') {
+                                                                                            $recordHostDisplay = '@';
+                                                                                        }
+                                                                                    } else {
+                                                                                        $recordHostDisplay = $recordNameRaw;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        ?>
                                                                         <td>
                                                                             <span class="dns-record-name">
-                                                                                <?php if($r->name === '@'): ?>
+                                                                                <?php if($recordHostDisplay === '@'): ?>
                                                                                     <span class="badge bg-primary fs-6 fw-bold">@</span>
                                                                                 <?php else: ?>
-                                                                                    <span class="dns-name-text"><?php echo htmlspecialchars($r->name); ?></span>
+                                                                                    <span class="dns-name-text"><?php echo htmlspecialchars($recordHostDisplay); ?></span>
                                                                                 <?php endif; ?>
                                                                             </span>
                                                                         </td>
@@ -350,7 +370,7 @@
                                                                                 <button type="button" class="btn btn-outline-secondary" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
                                                                                 <button type="button" class="btn btn-outline-secondary ms-1" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.delete', '删除', [], true); ?></button>
                                                                                 <?php else: ?>
-                                                                                <button type="button" class="btn btn-outline-primary" onclick="showDnsForm(<?php echo $e->id; ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', true, '<?php echo htmlspecialchars($r->record_id); ?>', '<?php echo htmlspecialchars(str_replace('.' . $e->subdomain, '', $r->name) === $r->name ? '@' : str_replace('.' . $e->subdomain, '', $r->name)); ?>', '<?php echo htmlspecialchars($r->type); ?>', '<?php echo htmlspecialchars($r->content); ?>')"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
+                                                                                <button type="button" class="btn btn-outline-primary" onclick="showDnsForm(<?php echo $e->id; ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', true, '<?php echo htmlspecialchars($r->record_id); ?>', '<?php echo htmlspecialchars($recordHostDisplay); ?>', '<?php echo htmlspecialchars($r->type); ?>', '<?php echo htmlspecialchars($r->content); ?>')"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
                                                                                 <form method="post" class="ms-1" onsubmit="return confirm('<?php echo cfclient_lang('cfclient.subdomains.confirm.delete_dns', '确定删除该DNS记录？', [], true); ?>');">
                                                                                     <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
                                                                                     <input type="hidden" name="action" value="delete_dns_record">
