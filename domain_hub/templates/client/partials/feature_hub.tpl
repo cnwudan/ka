@@ -24,6 +24,19 @@ $githubStarHistoryItems = is_array($githubStarRewardHistory['items'] ?? null) ? 
 $githubStarHistoryPage = max(1, (int) ($githubStarRewardHistory['page'] ?? 1));
 $githubStarHistoryTotalPages = max(1, (int) ($githubStarRewardHistory['totalPages'] ?? 1));
 
+$telegramGroupRewardEnabled = !empty($telegramGroupRewardEnabled);
+$telegramGroupRewardGroupLink = trim((string) ($telegramGroupRewardGroupLink ?? ''));
+$telegramGroupRewardAmount = max(1, (int) ($telegramGroupRewardAmount ?? 1));
+$telegramGroupRewardAlreadyClaimed = !empty($telegramGroupRewardAlreadyClaimed);
+$telegramGroupRewardTelegramBound = !empty($telegramGroupRewardTelegramBound);
+$telegramGroupRewardTelegramUserId = (int) ($telegramGroupRewardTelegramUserId ?? 0);
+$telegramGroupRewardTelegramUsername = trim((string) ($telegramGroupRewardTelegramUsername ?? ''));
+$telegramGroupRewardBotUsername = trim((string) ($telegramGroupRewardBotUsername ?? ''));
+$telegramGroupRewardHistory = is_array($telegramGroupRewardHistory ?? null) ? $telegramGroupRewardHistory : ['items' => [], 'page' => 1, 'totalPages' => 1];
+$telegramGroupHistoryItems = is_array($telegramGroupRewardHistory['items'] ?? null) ? $telegramGroupRewardHistory['items'] : [];
+$telegramGroupHistoryPage = max(1, (int) ($telegramGroupRewardHistory['page'] ?? 1));
+$telegramGroupHistoryTotalPages = max(1, (int) ($telegramGroupRewardHistory['totalPages'] ?? 1));
+
 $sslRequestEnabled = !empty($sslRequestEnabled);
 $sslRequestDomains = is_array($sslRequestDomains ?? null) ? $sslRequestDomains : [];
 $sslCertificates = is_array($sslCertificates ?? null) ? $sslCertificates : ['items' => [], 'page' => 1, 'totalPages' => 1];
@@ -40,6 +53,7 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
     || $hasRootdomainInvite
     || $sslRequestEnabled
     || $githubStarRewardEnabled
+    || $telegramGroupRewardEnabled
     || $digFeatureEnabled;
 ?>
 
@@ -218,6 +232,90 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                 </div>
             </div>
         <?php endif; ?>
+
+        <?php if ($telegramGroupRewardEnabled): ?>
+            <?php
+            $telegramDisplayName = $telegramGroupRewardTelegramUsername !== ''
+                ? '@' . ltrim($telegramGroupRewardTelegramUsername, '@')
+                : ($telegramGroupRewardTelegramUserId > 0 ? ('ID: ' . $telegramGroupRewardTelegramUserId) : '');
+            $telegramClaimDisabled = $telegramGroupRewardAlreadyClaimed || !$telegramGroupRewardTelegramBound;
+            ?>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex flex-column">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h6 class="card-title mb-0"><i class="fab fa-telegram-plane text-primary me-2"></i><?php echo $featureText('cfclient.feature.telegram_group.title', 'Telegram 社群奖励', 'Telegram Group Reward'); ?></h6>
+                            <?php if ($telegramGroupRewardAlreadyClaimed): ?>
+                                <span class="badge bg-success"><?php echo $featureText('cfclient.feature.telegram_group.claimed', '已领取', 'Claimed'); ?></span>
+                            <?php else: ?>
+                                <span class="badge bg-warning text-dark"><?php echo $featureText('cfclient.feature.telegram_group.pending', '待领取', 'Pending'); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.telegram_group.desc', '加入官方群组并完成 Telegram 身份验证后可领取额度奖励。', 'Join the official group and complete Telegram verification to claim extra quota.'); ?></p>
+                        <p class="small mb-3"><?php echo $featureText('cfclient.feature.telegram_group.reward_amount', '当前奖励：+%s 注册额度', 'Current reward: +%s quota', [intval($telegramGroupRewardAmount)]); ?></p>
+                        <div class="d-flex flex-column gap-2 mt-auto">
+                            <?php if ($telegramGroupRewardGroupLink !== ''): ?>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a href="<?php echo htmlspecialchars($telegramGroupRewardGroupLink, ENT_QUOTES); ?>" class="btn btn-outline-primary" target="_blank" rel="noopener noreferrer">
+                                        <i class="fab fa-telegram-plane me-1"></i><?php echo $featureText('cfclient.feature.telegram_group.goto', '前往群组', 'Open Group'); ?>
+                                    </a>
+                                </div>
+                            <?php endif; ?>
+                            <?php if (!$telegramGroupRewardAlreadyClaimed && $telegramGroupRewardBotUsername !== ''): ?>
+                                <div class="small text-muted" id="telegramRewardAuthStatus">
+                                    <?php echo $telegramGroupRewardTelegramBound
+                                        ? $featureText('cfclient.feature.telegram_group.bound_hint', '当前已绑定：%s，可直接领取或重新授权。', 'Bound account: %s. You can claim now or re-authorize.', [$telegramDisplayName !== '' ? $telegramDisplayName : '-'])
+                                        : $featureText('cfclient.feature.telegram_group.auth_hint', '请先点击 Telegram 授权按钮完成身份绑定。', 'Please complete Telegram authorization first.'); ?>
+                                </div>
+                                <div class="telegram-login-widget-wrap">
+                                    <script async src="https://telegram.org/js/telegram-widget.js?22"
+                                        data-telegram-login="<?php echo htmlspecialchars($telegramGroupRewardBotUsername, ENT_QUOTES); ?>"
+                                        data-size="large"
+                                        data-userpic="false"
+                                        data-request-access="write"
+                                        data-onauth="cfTelegramRewardOnAuth(user)">
+                                    </script>
+                                </div>
+                            <?php endif; ?>
+                            <form method="post" class="m-0 d-flex flex-column gap-2" id="telegramGroupRewardForm">
+                                <input type="hidden" name="action" value="claim_telegram_group_reward">
+                                <input type="hidden" name="telegram_auth_id" id="telegramRewardAuthId" value="">
+                                <input type="hidden" name="telegram_auth_username" id="telegramRewardAuthUsername" value="">
+                                <input type="hidden" name="telegram_auth_first_name" id="telegramRewardAuthFirstName" value="">
+                                <input type="hidden" name="telegram_auth_last_name" id="telegramRewardAuthLastName" value="">
+                                <input type="hidden" name="telegram_auth_photo_url" id="telegramRewardAuthPhotoUrl" value="">
+                                <input type="hidden" name="telegram_auth_date" id="telegramRewardAuthDate" value="">
+                                <input type="hidden" name="telegram_auth_hash" id="telegramRewardAuthHash" value="">
+                                <label class="small text-muted mb-0" for="telegramRewardUsernameInput">
+                                    <?php echo $featureText('cfclient.feature.telegram_group.account', 'Telegram 账号', 'Telegram Account'); ?>
+                                </label>
+                                <input
+                                    type="text"
+                                    class="form-control form-control-sm"
+                                    id="telegramRewardUsernameInput"
+                                    name="telegram_username"
+                                    value="<?php echo htmlspecialchars($telegramDisplayName, ENT_QUOTES); ?>"
+                                    placeholder="<?php echo htmlspecialchars($featureText('cfclient.feature.telegram_group.account_placeholder', '请先授权 Telegram 账号', 'Please authorize your Telegram account first')); ?>"
+                                    readonly
+                                >
+                                <button type="submit" class="btn btn-primary" id="telegramRewardClaimButton" <?php echo $telegramClaimDisabled ? 'disabled' : ''; ?>>
+                                    <i class="fas fa-check-circle me-1"></i><?php echo $featureText('cfclient.feature.telegram_group.claim_button', '验证加入并领取额度', 'Verify membership and claim reward'); ?>
+                                </button>
+                            </form>
+                            <?php if ($telegramGroupRewardBotUsername === '' && !$telegramGroupRewardAlreadyClaimed): ?>
+                                <div class="alert alert-warning small mb-0">
+                                    <?php echo $featureText('cfclient.feature.telegram_group.bot_missing', '管理员尚未配置 Telegram 机器人用户名，暂无法完成前台授权。', 'The Telegram bot username is not configured yet, so authorization is unavailable.'); ?>
+                                </div>
+                            <?php else: ?>
+                                <div class="small text-muted">
+                                    <?php echo $featureText('cfclient.feature.telegram_group.verify_tip', '领取时会校验该 Telegram 账号是否已加入指定群组。', 'The system verifies whether this Telegram account has joined the configured group.'); ?>
+                                </div>
+                            <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
     </div>
 
     <?php if ($digFeatureEnabled): ?>
@@ -376,8 +474,141 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
             </div>
         </div>
     <?php endif; ?>
+
+    <?php if ($telegramGroupRewardEnabled): ?>
+        <div class="card border-0 shadow-sm mt-3">
+            <div class="card-body">
+                <h6 class="card-title mb-3"><i class="fas fa-history me-2 text-primary"></i><?php echo $featureText('cfclient.feature.telegram_group.history_title', 'Telegram 社群奖励记录', 'Telegram Reward History'); ?></h6>
+                <?php if (!empty($telegramGroupHistoryItems)): ?>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th><?php echo $featureText('cfclient.feature.telegram_group.history.time', '时间', 'Time'); ?></th>
+                                    <th><?php echo $featureText('cfclient.feature.telegram_group.history.group', '群组', 'Group'); ?></th>
+                                    <th><?php echo $featureText('cfclient.feature.telegram_group.history.account', '账号', 'Account'); ?></th>
+                                    <th><?php echo $featureText('cfclient.feature.telegram_group.history.reward', '奖励', 'Reward'); ?></th>
+                                    <th><?php echo $featureText('cfclient.feature.telegram_group.history.status', '状态', 'Status'); ?></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($telegramGroupHistoryItems as $item): ?>
+                                    <?php $itemUsername = trim((string) ($item['telegram_username'] ?? '')); ?>
+                                    <tr>
+                                        <td><?php echo htmlspecialchars((string) ($item['created_at'] ?? ''), ENT_QUOTES); ?></td>
+                                        <td>
+                                            <?php $groupLinkItem = trim((string) ($item['group_link'] ?? '')); ?>
+                                            <?php if ($groupLinkItem !== ''): ?>
+                                                <a href="<?php echo htmlspecialchars($groupLinkItem, ENT_QUOTES); ?>" target="_blank" rel="noopener noreferrer">
+                                                    <?php echo htmlspecialchars($groupLinkItem, ENT_QUOTES); ?>
+                                                </a>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>
+                                            <?php if ($itemUsername !== ''): ?>
+                                                @<?php echo htmlspecialchars(ltrim($itemUsername, '@'), ENT_QUOTES); ?>
+                                            <?php else: ?>
+                                                <span class="text-muted">ID: <?php echo intval($item['telegram_user_id'] ?? 0); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td>+<?php echo intval($item['reward_amount'] ?? 0); ?></td>
+                                        <td>
+                                            <?php if (($item['status'] ?? '') === 'granted'): ?>
+                                                <span class="badge bg-success"><?php echo $featureText('cfclient.feature.telegram_group.history.granted', '已发放', 'Granted'); ?></span>
+                                            <?php else: ?>
+                                                <span class="badge bg-secondary"><?php echo htmlspecialchars((string) ($item['status'] ?? ''), ENT_QUOTES); ?></span>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <?php if ($telegramGroupHistoryTotalPages > 1): ?>
+                        <nav class="mt-3">
+                            <ul class="pagination pagination-sm mb-0">
+                                <?php for ($page = 1; $page <= $telegramGroupHistoryTotalPages; $page++): ?>
+                                    <?php
+                                    $pageParams = $cfClientBaseEntryQuery ?? ['m' => $moduleSlug];
+                                    $pageParams['view'] = 'tools';
+                                    $pageParams['telegram_reward_page'] = $page;
+                                    $pageUrl = ($cfClientEntryScript ?? 'index.php') . '?' . http_build_query($pageParams);
+                                    ?>
+                                    <li class="page-item <?php echo $page === $telegramGroupHistoryPage ? 'active' : ''; ?>">
+                                        <a class="page-link" href="<?php echo htmlspecialchars($pageUrl, ENT_QUOTES); ?>"><?php echo $page; ?></a>
+                                    </li>
+                                <?php endfor; ?>
+                            </ul>
+                        </nav>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <div class="alert alert-light border mb-0">
+                        <i class="fas fa-info-circle me-1"></i><?php echo $featureText('cfclient.feature.telegram_group.history.empty', '暂无 Telegram 社群奖励记录。', 'No Telegram reward records yet.'); ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
+    <?php endif; ?>
 <?php else: ?>
     <div class="alert alert-info">
         <i class="fas fa-info-circle me-1"></i><?php echo $featureText('cfclient.feature.none', '当前没有可用的扩展功能模块。', 'No additional feature modules are currently available.'); ?>
     </div>
+<?php endif; ?>
+
+
+<?php if ($telegramGroupRewardEnabled): ?>
+    <script>
+    (function () {
+        const usernameInput = document.getElementById('telegramRewardUsernameInput');
+        const claimButton = document.getElementById('telegramRewardClaimButton');
+        const statusNode = document.getElementById('telegramRewardAuthStatus');
+        const authMap = {
+            id: document.getElementById('telegramRewardAuthId'),
+            username: document.getElementById('telegramRewardAuthUsername'),
+            first_name: document.getElementById('telegramRewardAuthFirstName'),
+            last_name: document.getElementById('telegramRewardAuthLastName'),
+            photo_url: document.getElementById('telegramRewardAuthPhotoUrl'),
+            auth_date: document.getElementById('telegramRewardAuthDate'),
+            hash: document.getElementById('telegramRewardAuthHash')
+        };
+
+        window.cfTelegramRewardOnAuth = function (user) {
+            if (!user || typeof user !== 'object') {
+                return;
+            }
+            Object.keys(authMap).forEach(function (key) {
+                if (!authMap[key]) {
+                    return;
+                }
+                const value = Object.prototype.hasOwnProperty.call(user, key) && user[key] !== null && user[key] !== undefined
+                    ? String(user[key])
+                    : '';
+                authMap[key].value = value;
+            });
+
+            if (usernameInput) {
+                const displayName = user.username ? ('@' + String(user.username).replace(/^@+/, '')) : ('ID: ' + String(user.id || ''));
+                usernameInput.value = displayName;
+            }
+
+            if (statusNode) {
+                const label = user.username ? ('@' + String(user.username).replace(/^@+/, '')) : ('ID: ' + String(user.id || ''));
+                statusNode.textContent = <?php echo json_encode($featureText('cfclient.feature.telegram_group.auth_ready', '已完成 Telegram 授权：%s，现在可以提交领取。', 'Telegram authorized: %s. You can claim now.', ['%s'], false)); ?>.replace('%s', label);
+                statusNode.classList.remove('text-danger');
+            }
+
+            if (claimButton && !claimButton.hasAttribute('data-force-disabled')) {
+                claimButton.removeAttribute('disabled');
+            }
+        };
+
+        <?php if ($telegramGroupRewardAlreadyClaimed): ?>
+        if (claimButton) {
+            claimButton.setAttribute('data-force-disabled', '1');
+        }
+        <?php endif; ?>
+    })();
+    </script>
 <?php endif; ?>

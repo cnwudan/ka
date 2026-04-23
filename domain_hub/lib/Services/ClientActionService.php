@@ -408,6 +408,75 @@ class CfClientActionService
             ];
         }
 
+        if ($_POST['action'] === 'claim_telegram_group_reward') {
+            try {
+                if (!class_exists('CfTelegramGroupRewardService')) {
+                    throw new \RuntimeException('service_missing');
+                }
+                $authPayload = [
+                    'id' => trim((string) ($_POST['telegram_auth_id'] ?? $_POST['telegram_id'] ?? '')),
+                    'username' => trim((string) ($_POST['telegram_auth_username'] ?? $_POST['telegram_username'] ?? '')),
+                    'first_name' => trim((string) ($_POST['telegram_auth_first_name'] ?? '')),
+                    'last_name' => trim((string) ($_POST['telegram_auth_last_name'] ?? '')),
+                    'photo_url' => trim((string) ($_POST['telegram_auth_photo_url'] ?? '')),
+                    'auth_date' => trim((string) ($_POST['telegram_auth_date'] ?? '')),
+                    'hash' => trim((string) ($_POST['telegram_auth_hash'] ?? '')),
+                ];
+                $result = CfTelegramGroupRewardService::claim(
+                    intval($userid ?? 0),
+                    $module_settings,
+                    (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+                    (string) ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+                    $authPayload
+                );
+                $msg = self::actionTextByLanguage(
+                    'telegram_group_reward.success',
+                    '验证成功！已奖励 %s 个注册额度。',
+                    'Verification passed! You have received %s additional registration quota.',
+                    [intval($result['reward_amount'] ?? 0)]
+                );
+                $msg_type = 'success';
+            } catch (CfTelegramGroupRewardException $e) {
+                $reason = $e->getReason();
+                if ($reason === 'disabled') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.disabled', '当前未启用 Telegram 社群奖励功能。', 'Telegram group reward is currently disabled.');
+                } elseif ($reason === 'invalid_group_link' || $reason === 'invalid_chat_id' || $reason === 'invalid_bot_token') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.invalid_config', '管理员尚未完成 Telegram 奖励配置，请稍后再试。', 'The Telegram reward settings are incomplete. Please try again later.');
+                } elseif ($reason === 'auth_required') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.auth_required', '请先完成 Telegram 授权绑定后再领取奖励。', 'Please complete Telegram authorization before claiming the reward.');
+                } elseif ($reason === 'auth_invalid') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.auth_invalid', 'Telegram 授权信息无效，请重新授权后再试。', 'Telegram authorization data is invalid. Please authorize again.');
+                } elseif ($reason === 'auth_expired') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.auth_expired', 'Telegram 授权已过期，请重新授权后再试。', 'Telegram authorization has expired. Please authorize again.');
+                } elseif ($reason === 'already_claimed') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.already', '您已经领取过 Telegram 社群奖励。', 'You have already claimed the Telegram group reward.');
+                } elseif ($reason === 'telegram_used') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.telegram_used', '该 Telegram 账号已被其他用户领取奖励，请使用自己的账号。', 'This Telegram account has already been used by another user to claim rewards.');
+                } elseif ($reason === 'not_joined' || $reason === 'member_not_found') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.not_joined', '未检测到您已加入指定社群，请加入后再重试。', 'We could not verify that you joined the required group. Please join and try again.');
+                } elseif ($reason === 'verify_rate_limited') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.verify_rate_limited', 'Telegram 校验请求过于频繁，请稍后再试。', 'Too many Telegram verification requests. Please try again later.');
+                } elseif ($reason === 'verify_failed') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.verify_failed', '暂时无法完成 Telegram 校验，请稍后再试。', 'Telegram verification is temporarily unavailable. Please try again later.');
+                } elseif ($reason === 'quota_unavailable') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.quota_error', '配额信息读取失败，请稍后重试。', 'Unable to load quota data. Please try again later.');
+                } elseif ($reason === 'invalid_user') {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.invalid_user', '未找到登录用户，请刷新页面后重试。', 'No logged-in user was found. Please refresh the page and try again.');
+                } else {
+                    $msg = self::actionTextByLanguage('telegram_group_reward.error', '领取失败：%s', 'Claim failed: %s', [$e->getMessage()]);
+                }
+                $msg_type = 'danger';
+            } catch (\Throwable $e) {
+                $msg = self::actionTextByLanguage('telegram_group_reward.error', '领取失败：%s', 'Claim failed: %s', [$e->getMessage()]);
+                $msg_type = 'danger';
+            }
+            return [
+                'msg' => $msg,
+                'msg_type' => $msg_type,
+                'registerError' => $registerError,
+            ];
+        }
+
 
         if ($_POST['action'] === 'request_ssl_certificate') {
             try {
@@ -2640,7 +2709,7 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
     private static function resolveClientRateLimitScope(string $action): ?string
     {
         static $dnsActions = ['create_dns', 'update_dns', 'delete_dns_record', 'toggle_cdn', 'toggle_record_cdn', 'delete_subdomain'];
-        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'submit_partner_application'];
+        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'submit_partner_application'];
         if ($action === 'register') {
             return CfRateLimiter::SCOPE_REGISTER;
         }

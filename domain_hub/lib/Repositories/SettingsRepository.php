@@ -82,6 +82,7 @@ class CfSettingsRepository
         }
 
         $settings = $this->normalizeInviteRegistrationGithubSecret($settings);
+        $settings = $this->normalizeTelegramGroupBotToken($settings);
         $settings = $this->applyDefaults($settings);
         $settings = $this->synchronizeProviders($settings);
         $settings = $this->migrateLegacyFields($settings);
@@ -91,7 +92,16 @@ class CfSettingsRepository
 
     private function normalizeInviteRegistrationGithubSecret(array $settings): array
     {
-        $key = 'invite_registration_github_client_secret';
+        return $this->normalizeSensitiveSetting($settings, 'invite_registration_github_client_secret');
+    }
+
+    private function normalizeTelegramGroupBotToken(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'telegram_group_bot_token');
+    }
+
+    private function normalizeSensitiveSetting(array $settings, string $key): array
+    {
         if (!array_key_exists($key, $settings)) {
             return $settings;
         }
@@ -177,6 +187,13 @@ class CfSettingsRepository
             'sponsor_description' => 'DNSHE 的成长离不开社区的支持。你的每一份赞助都将用于支付服务器与根域名的续费开支。',
             'sponsor_methods' => '',
             'sponsor_acknowledgements' => '',
+            'enable_telegram_group_reward' => '0',
+            'telegram_group_link' => '',
+            'telegram_group_chat_id' => '',
+            'telegram_group_bot_username' => '',
+            'telegram_group_bot_token' => '',
+            'telegram_group_reward_amount' => '1',
+            'telegram_reward_auth_max_age_seconds' => '86400',
             'job_running_timeout_minutes' => '120',
             'queue_heartbeat_interval_seconds' => '20',
             'transfer_clone_full_zone' => '1',

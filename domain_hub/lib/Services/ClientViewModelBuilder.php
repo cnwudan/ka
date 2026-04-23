@@ -312,6 +312,45 @@ class CfClientViewModelBuilder
         $globals['githubStarRewardGithubUsername'] = (string) ($githubRewardState['github_username'] ?? '');
         $globals['githubStarRewardHistory'] = $githubRewardHistory;
 
+        $telegramRewardState = [
+            'enabled' => false,
+            'group_link' => '',
+            'chat_id' => '',
+            'reward_amount' => 1,
+            'claimed' => false,
+            'telegram_bound' => false,
+            'telegram_user_id' => 0,
+            'telegram_username' => '',
+            'bot_username' => '',
+        ];
+        $telegramRewardHistory = [
+            'items' => [],
+            'page' => 1,
+            'perPage' => 10,
+            'total' => 0,
+            'totalPages' => 1,
+        ];
+        if (class_exists('CfTelegramGroupRewardService')) {
+            try {
+                $telegramRewardState = CfTelegramGroupRewardService::getUserClaimState($userId, $moduleSettings);
+                if (!empty($telegramRewardState['enabled'])) {
+                    $telegramRewardPage = isset($_GET['telegram_reward_page']) ? max(1, (int) $_GET['telegram_reward_page']) : 1;
+                    $telegramRewardHistory = CfTelegramGroupRewardService::getUserHistory($userId, $telegramRewardPage, 10);
+                }
+            } catch (\Throwable $e) {
+            }
+        }
+        $globals['telegramGroupRewardEnabled'] = !empty($telegramRewardState['enabled']);
+        $globals['telegramGroupRewardGroupLink'] = (string) ($telegramRewardState['group_link'] ?? '');
+        $globals['telegramGroupRewardChatId'] = (string) ($telegramRewardState['chat_id'] ?? '');
+        $globals['telegramGroupRewardAmount'] = max(1, (int) ($telegramRewardState['reward_amount'] ?? 1));
+        $globals['telegramGroupRewardAlreadyClaimed'] = !empty($telegramRewardState['claimed']);
+        $globals['telegramGroupRewardTelegramBound'] = !empty($telegramRewardState['telegram_bound']);
+        $globals['telegramGroupRewardTelegramUserId'] = (int) ($telegramRewardState['telegram_user_id'] ?? 0);
+        $globals['telegramGroupRewardTelegramUsername'] = (string) ($telegramRewardState['telegram_username'] ?? '');
+        $globals['telegramGroupRewardBotUsername'] = (string) ($telegramRewardState['bot_username'] ?? '');
+        $globals['telegramGroupRewardHistory'] = $telegramRewardHistory;
+
         $sslRequestEnabled = false;
         $sslRequestDomains = [];
         $sslCertificates = [
@@ -498,6 +537,13 @@ class CfClientViewModelBuilder
             'enable_github_star_reward' => '0',
             'github_star_repo_url' => '',
             'github_star_reward_amount' => '1',
+            'enable_telegram_group_reward' => '0',
+            'telegram_group_link' => '',
+            'telegram_group_chat_id' => '',
+            'telegram_group_bot_username' => '',
+            'telegram_group_bot_token' => '',
+            'telegram_group_reward_amount' => '1',
+            'telegram_reward_auth_max_age_seconds' => '86400',
             'enable_ssl_request' => '1',
             'letsencrypt_email' => '',
             'ssl_acme_client' => 'auto',
