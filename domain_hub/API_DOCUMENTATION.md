@@ -300,7 +300,10 @@ curl -X POST "https://您的域名/index.php?m=domain_hub&endpoint=subdomains&ac
 ```json
 {
   "success": true,
-  "message": "Subdomain deleted successfully"
+  "message": "Subdomain deleted successfully",
+  "subdomain_id": 1,
+  "full_domain": "test.example.com",
+  "dns_records_deleted": 4
 }
 ```
 
@@ -381,14 +384,17 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&ac
   "records": [
     {
       "id": 1,
+      "record_id": "5a0ce6c4d1d4c71bc5e60a2a2a0e4997",
       "name": "test.example.com",
       "type": "A",
       "content": "192.168.1.1",
       "ttl": 600,
       "priority": null,
+      "line": null,
       "proxied": false,
       "status": "active",
-      "created_at": "2025-10-19 10:05:00"
+      "created_at": "2025-10-19 10:05:00",
+      "updated_at": "2025-10-19 10:05:00"
     },
     {
       "id": 2,
@@ -405,7 +411,7 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&ac
 }
 ```
 
-> 提示：列表返回的 `id` 即模块内部记录ID，可直接用于 `update`/`delete` 操作；若需要云解析服务商 `record_id`，请在创建记录时自行保存或通过后台排查工具获取。
+> 提示：列表同时返回模块内部 `id` 和云解析服务商 `record_id`。`update`/`delete` 可使用任意一个字段定位记录（推荐优先使用 `id`）。
 
 ---
 
@@ -419,11 +425,20 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&ac
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | subdomain_id | integer | 是 | 子域名ID |
-| type | string | 是 | 记录类型（A/AAAA/CNAME/MX/TXT） |
-| name | string | 否 | 记录名称（留空则使用子域名） |
-| content | string | 是 | 记录值 |
-| ttl | integer | 否 | TTL值（默认600，且不可低于600） |
-| priority | integer | 否 | 优先级（MX记录需要） |
+| type | string | 是 | 记录类型（A/AAAA/CNAME/MX/TXT/NS/SRV/CAA） |
+| name | string | 否 | 记录名称（`@` 或留空=当前子域本身；支持完整域名） |
+| content | string | 条件必填 | 记录值（SRV/CAA 可由结构化参数自动组装） |
+| ttl | integer | 否 | TTL值（默认600） |
+| priority | integer | 否 | MX优先级（MX默认10）/SRV优先级（默认0） |
+| line | string | 否 | 解析线路（DNSPod/AliDNS可用，其他供应商自动忽略） |
+| record_weight / weight | integer | 否 | SRV 权重 |
+| record_port / port | integer | 否 | SRV 端口（1-65535） |
+| record_target / target | string | 否 | SRV 目标主机 |
+| caa_flag | integer | 否 | CAA flag（默认0） |
+| caa_tag | string | 否 | CAA tag（默认 issue） |
+| caa_value | string | 否 | CAA value |
+
+> 说明：若后台关闭 NS 管理（`disable_ns_management`），则 `NS` 类型写入会被拒绝。
 
 **请求示例：**
 ```bash
@@ -444,7 +459,8 @@ curl -X POST "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&a
 {
   "success": true,
   "message": "DNS record created successfully",
-  "record_id": 3
+  "id": 3,
+  "record_id": "5a0ce6c4d1d4c71bc5e60a2a2a0e4997"
 }
 ```
 
@@ -454,15 +470,25 @@ curl -X POST "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&a
 
 **端点：** `dns_records`  
 **操作：** `update`  
-**方法：** `POST` 或 `PUT`
+**方法：** `POST` 或 `PUT` 或 `PATCH`
 
 **请求参数：**
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| record_id | integer | 是 | DNS记录ID |
-| content | string | 否 | 新的记录值 |
-| ttl | integer | 否 | 新的TTL值 |
-| priority | integer | 否 | 新的优先级 |
+| record_id | string | 否 | 记录定位ID（可传模块 `id` 或供应商 `record_id`） |
+| id | integer | 否 | 模块内部记录ID（推荐） |
+| type | string | 否 | 新类型（A/AAAA/CNAME/MX/TXT/NS/SRV/CAA） |
+| name | string | 否 | 新名称（`@` 或留空=当前子域本身） |
+| content | string | 否 | 新记录值 |
+| ttl | integer | 否 | 新TTL值 |
+| priority | integer | 否 | MX/SRV优先级 |
+| line | string | 否 | 解析线路 |
+| record_weight / weight | integer | 否 | SRV 权重 |
+| record_port / port | integer | 否 | SRV 端口 |
+| record_target / target | string | 否 | SRV 目标主机 |
+| caa_flag / caa_tag / caa_value | mixed | 否 | CAA结构化参数 |
+
+> 至少提供 `record_id` 或 `id` 其中之一。
 
 **请求示例：**
 ```bash
@@ -471,7 +497,8 @@ curl -X POST "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&a
   -H "X-API-Secret: yyyyyyyyyyyy" \
   -H "Content-Type: application/json" \
   -d '{
-    "record_id": 1,
+    "id": 1,
+    "type": "A",
     "content": "192.168.1.200",
     "ttl": 600
   }'
@@ -481,7 +508,9 @@ curl -X POST "https://您的域名/index.php?m=domain_hub&endpoint=dns_records&a
 ```json
 {
   "success": true,
-  "message": "DNS record updated successfully"
+  "message": "DNS record updated successfully",
+  "id": 1,
+  "record_id": "5a0ce6c4d1d4c71bc5e60a2a2a0e4997"
 }
 ```
 
