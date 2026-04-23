@@ -173,7 +173,7 @@ $apiMaskKey = static function (string $plainKey): string {
 
 <div class="card mt-4" id="api-management-card">
     <div class="card-header api-management-header d-flex justify-content-between align-items-center">
-        <button class="btn btn-link text-white text-decoration-none p-0 d-flex align-items-center gap-2" type="button" id="apiManagementToggleBtn" aria-expanded="<?php echo $apiSectionShouldExpand ? 'true' : 'false'; ?>" aria-controls="apiManagementBody">
+        <button class="btn btn-link text-decoration-none p-0 d-flex align-items-center gap-2" type="button" id="apiManagementToggleBtn" aria-expanded="<?php echo $apiSectionShouldExpand ? 'true' : 'false'; ?>" aria-controls="apiManagementBody">
             <span class="h5 mb-0 d-flex align-items-center gap-2">
                 <i class="fas fa-key"></i>
                 <span><?php echo $cfApiText('cfclient.api.card.title', 'API密钥管理', [], true); ?></span>
@@ -310,9 +310,6 @@ $apiMaskKey = static function (string $plainKey): string {
                     </div>
 
                     <div class="api-row-actions">
-                        <button type="button" class="btn btn-sm api-action-btn api-action-view" onclick="return showApiKeyDetails(<?php echo intval($key->id); ?>, this);" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
-                            <i class="fas fa-eye"></i>
-                        </button>
                         <?php if ($isKeyActive): ?>
                             <button type="button" class="btn btn-sm api-action-btn api-action-regenerate" onclick="regenerateApiKey(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.regenerate', '重新生成', [], true)); ?>">
                                 <i class="fas fa-sync"></i>
@@ -399,20 +396,6 @@ $apiMaskKey = static function (string $plainKey): string {
     </div>
 </div>
 
-<!-- API密钥详情模态框 -->
-<div class="modal fade" id="apiKeyDetailsModal" tabindex="-1">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title"><?php echo $cfApiText('cfclient.api.modal.detail.title', 'API密钥详情', [], true); ?></h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body" id="apiKeyDetailsContent">
-                <!-- 动态加载内容 -->
-            </div>
-        </div>
-    </div>
-</div>
 
 <!-- API新密钥显示模态框 -->
 <div class="modal fade" id="newApiKeyModal" tabindex="-1">
@@ -784,80 +767,6 @@ function createApiKey() {
     });
 }
 
-// 查看API密钥详情
-function showApiKeyDetails(keyId, triggerBtn) {
-    var btn = triggerBtn || null;
-    if (btn) {
-        btn.setAttribute('disabled', 'disabled');
-    }
-
-    fetch(buildApiAjaxUrl('ajax_get_api_key_details', { key_id: keyId }))
-        .then(parseJsonResponse)
-        .then(function(result) {
-            if (!result || !result.success) {
-                throw new Error((result && result.error) ? result.error : cfLang('api.detailsFailed', '获取详情失败：'));
-            }
-
-            var key = result.key || {};
-            var requestCount = Number(key.request_count || 0).toLocaleString();
-            var statusText = key.status === 'active' ? cfLang('api.statusActive', '启用') : cfLang('api.statusDisabled', '禁用');
-            var statusClass = key.status === 'active' ? 'success' : 'danger';
-            var lastUsed = key.last_used_at || cfLang('api.neverUsed', '从未使用');
-            var ipBlock = '';
-            if (key.ip_whitelist) {
-                ipBlock = `
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.ip_label', 'IP白名单：', [], true); ?></dt>
-                    <dd class="col-sm-9"><pre>${String(key.ip_whitelist).split(',').join('\\n')}</pre></dd>
-                `;
-            }
-
-            var html = `
-                <dl class="row mb-0">
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.name_label', '密钥名称：', [], true); ?></dt>
-                    <dd class="col-sm-9">${key.key_name || ''}</dd>
-
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.key_label', 'API Key：', [], true); ?></dt>
-                    <dd class="col-sm-9"><code>${key.api_key || ''}</code></dd>
-
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.status_label', '状态：', [], true); ?></dt>
-                    <dd class="col-sm-9"><span class="badge bg-${statusClass}">${statusText}</span></dd>
-
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.requests_label', '请求次数：', [], true); ?></dt>
-                    <dd class="col-sm-9">${requestCount}</dd>
-
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.last_used_label', '最后使用：', [], true); ?></dt>
-                    <dd class="col-sm-9">${lastUsed}</dd>
-
-                    <dt class="col-sm-3"><?php echo $cfApiText('cfclient.api.modal.detail.created_label', '创建时间：', [], true); ?></dt>
-                    <dd class="col-sm-9">${key.created_at || ''}</dd>
-                    ${ipBlock}
-                </dl>
-            `;
-
-            var detailsEl = document.getElementById('apiKeyDetailsContent');
-            if (detailsEl) {
-                detailsEl.innerHTML = html;
-            }
-
-            var modalEl = document.getElementById('apiKeyDetailsModal');
-            if (!modalEl) {
-                throw new Error(cfLang('api.modalMissing', '详情弹窗未找到'));
-            }
-            var modal = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
-            modal.show();
-        })
-        .catch(function(error) {
-            var message = error && error.message ? error.message : cfLang('api.detailsFailed', '获取详情失败');
-            alert(cfLang('api.detailsFailed', '获取详情失败：') + message);
-        })
-        .finally(function() {
-            if (btn) {
-                btn.removeAttribute('disabled');
-            }
-        });
-
-    return false;
-}
 
 // 重新生成API密钥
 function regenerateApiKey(keyId) {
@@ -1211,17 +1120,17 @@ document.addEventListener('DOMContentLoaded', function () {
 }
 
 #api-management-card .api-management-header {
-    background: #2D3A54;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.16);
+    background: var(--bs-info-bg-subtle, #cff4fc);
+    border-bottom: 1px solid var(--bs-info-border-subtle, #9eeaf9);
 }
 
 #api-management-card #apiManagementToggleBtn {
-    color: #ffffff;
+    color: var(--bs-info-text-emphasis, #055160);
 }
 
 #api-management-card #apiManagementToggleBtn:hover,
 #api-management-card #apiManagementToggleBtn:focus {
-    color: #ffffff;
+    color: var(--bs-info-text-emphasis, #055160);
     opacity: 0.95;
 }
 
@@ -1497,12 +1406,6 @@ document.addEventListener('DOMContentLoaded', function () {
     transition: all 0.2s ease;
 }
 
-#api-management-card .api-key-panel-row:hover .api-action-view,
-#api-management-card .api-action-view:focus {
-    background: #e8f0ff;
-    color: #2962ff;
-    border-color: #d5e3ff;
-}
 
 #api-management-card .api-key-panel-row:hover .api-action-regenerate,
 #api-management-card .api-action-regenerate:focus {
