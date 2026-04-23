@@ -6,11 +6,14 @@ $announcementView = $announcementView ?? ($cfAdminViewModel['announcements'] ?? 
 $admin_announce_enabled = (string) ($announcementView['enabled'] ?? '0');
 $admin_announce_title = (string) ($announcementView['title'] ?? '公告');
 $admin_announce_html = (string) ($announcementView['html'] ?? '');
+$admin_announce_preview_title = (string) ($announcementView['title_preview'] ?? $admin_announce_title);
+$admin_announce_preview_html = (string) ($announcementView['html_preview'] ?? $admin_announce_html);
 
 $titleText = $lang['announcement_card_title'] ?? '后台公告';
 $enableLabel = $lang['announcement_enable_label'] ?? '启用公告';
 $titleLabel = $lang['announcement_title_label'] ?? '标题';
 $contentLabel = $lang['announcement_content_label'] ?? '内容（支持HTML）';
+$bilingualHint = $lang['announcement_bilingual_hint'] ?? '支持双语分隔：中文丨English（使用中文竖线“丨”分隔）';
 $saveLabel = $lang['announcement_save_button'] ?? '保存公告';
 $modalButton = $lang['announcement_modal_ack'] ?? '我知道了';
 ?>
@@ -33,6 +36,7 @@ $modalButton = $lang['announcement_modal_ack'] ?? '我知道了';
       <div class="col-12">
         <label class="form-label" for="admin_announce_html_input"><?php echo htmlspecialchars($contentLabel); ?></label>
         <textarea class="form-control" id="admin_announce_html_input" name="admin_announce_html" rows="4" placeholder="<?php echo htmlspecialchars($contentLabel); ?>"><?php echo str_replace('</textarea>', '&lt;/textarea>', $admin_announce_html); ?></textarea>
+        <small class="text-muted d-block mt-1"><?php echo htmlspecialchars($bilingualHint); ?></small>
       </div>
       <div class="col-12">
         <button class="btn btn-primary"><?php echo htmlspecialchars($saveLabel); ?></button>
@@ -46,11 +50,11 @@ $modalButton = $lang['announcement_modal_ack'] ?? '我知道了';
   <div class="modal-dialog modal-lg modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="fas fa-bullhorn me-2"></i><?php echo htmlspecialchars($admin_announce_title); ?></h5>
+        <h5 class="modal-title"><i class="fas fa-bullhorn me-2"></i><?php echo htmlspecialchars($admin_announce_preview_title); ?></h5>
         <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
       </div>
       <div class="modal-body">
-        <div><?php echo $admin_announce_html; ?></div>
+        <div><?php echo $admin_announce_preview_html; ?></div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-primary" data-dismiss="modal" id="adminAnnounceDismiss"><?php echo htmlspecialchars($modalButton); ?></button>

@@ -2173,63 +2173,110 @@ if($_POST['action'] == "delete_dns_record" && isset($_POST['record_id']) && isse
     $record_id = trim($_POST['record_id']);
 
     try {
-        $result = Capsule::transaction(function () use ($subdomain_id, $record_id, $userid, $module_settings) {
+        $sub = Capsule::table('mod_cloudflare_subdomain')
+            ->where('id', $subdomain_id)
+            ->where('userid', $userid)
+            ->first();
+        if (!$sub) {
+            throw new \RuntimeException('subdomain_not_found');
+        }
+
+        $rec = Capsule::table('mod_cloudflare_dns_records')
+            ->where('subdomain_id', $subdomain_id)
+            ->where('record_id', $record_id)
+            ->first();
+        if (!$rec && ctype_digit($record_id)) {
+            $rec = Capsule::table('mod_cloudflare_dns_records')
+                ->where('subdomain_id', $subdomain_id)
+                ->where('id', intval($record_id))
+                ->first();
+        }
+        if (!$rec) {
+            throw new \RuntimeException('record_not_found');
+        }
+
+        list($cf, $providerError, $providerContext) = cfmod_client_acquire_provider_for_subdomain($sub, $module_settings);
+        if (!$cf) {
+            throw new \RuntimeException($providerError ?: 'provider_unavailable');
+        }
+
+        $effectiveZone = (string) ($rec->zone_id ?: ($sub->cloudflare_zone_id ?: $sub->rootdomain));
+        $effectiveRecordId = trim((string) ($rec->record_id ?? ''));
+        $deleteFailed = null;
+
+        if ($effectiveRecordId === '') {
+            $resolvedRecordId = self::findRemoteRecordIdForLocal($cf, $effectiveZone, $rec);
+            if ($resolvedRecordId === null) {
+                $deleteFailed = 'provider lookup failed';
+            } else {
+                $effectiveRecordId = $resolvedRecordId;
+            }
+        }
+
+        if ($deleteFailed === null && $effectiveRecordId !== '') {
+            try {
+                $delRes = $cf->deleteSubdomain($effectiveZone, $effectiveRecordId, [
+                    'name' => $rec->name ?? null,
+                    'type' => $rec->type ?? null,
+                    'content' => $rec->content ?? null,
+                ]);
+                if (!($delRes['success'] ?? false)) {
+                    $errorCode = $delRes['code'] ?? null;
+                    $errorMessage = $delRes['errors'] ?? ($delRes['message'] ?? '');
+                    if (is_array($errorMessage)) {
+                        $errorMessage = json_encode($errorMessage, JSON_UNESCAPED_UNICODE);
+                    }
+                    $errorMessage = (string) $errorMessage;
+                    $isNotFound = $errorCode === 404
+                        || $errorCode === '404'
+                        || stripos($errorMessage, 'not found') !== false
+                        || stripos($errorMessage, '不存在') !== false
+                        || stripos($errorMessage, 'does not exist') !== false
+                        || stripos($errorMessage, 'record not found') !== false;
+                    if (!$isNotFound) {
+                        $deleteFailed = $errorMessage;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $deleteFailed = $e->getMessage();
+            }
+        }
+
+        if ($deleteFailed === null) {
+            $remoteExists = self::remoteRecordExistsForLocal($cf, $effectiveZone, $rec);
+            if ($remoteExists === null) {
+                $deleteFailed = 'provider verify failed';
+            } elseif ($remoteExists === true) {
+                $deleteFailed = 'remote delete not confirmed';
+            }
+        }
+
+        if ($deleteFailed !== null) {
+            throw new \RuntimeException('dns_delete_failed: ' . (string) $deleteFailed);
+        }
+
+        $result = Capsule::transaction(function () use ($subdomain_id, $userid, $rec, $effectiveRecordId) {
             $sub = Capsule::table('mod_cloudflare_subdomain')
                 ->where('id', $subdomain_id)
                 ->where('userid', $userid)
                 ->lockForUpdate()
                 ->first();
-
             if (!$sub) {
                 throw new \RuntimeException('subdomain_not_found');
             }
 
-            $rec = Capsule::table('mod_cloudflare_dns_records')
+            $deletedRows = Capsule::table('mod_cloudflare_dns_records')
+                ->where('id', intval($rec->id))
                 ->where('subdomain_id', $subdomain_id)
-                ->where('record_id', $record_id)
-                ->lockForUpdate()
-                ->first();
-
-            if (!$rec) {
+                ->delete();
+            if ($deletedRows <= 0) {
                 throw new \RuntimeException('record_not_found');
             }
 
-            list($cf, $providerError, $providerContext) = cfmod_client_acquire_provider_for_subdomain($sub, $module_settings);
-            if (!$cf) {
-                throw new \RuntimeException($providerError ?: 'provider_unavailable');
-            }
-
-            $delRes = $cf->deleteSubdomain($sub->cloudflare_zone_id, $record_id, [
-                'name' => $rec->name,
-                'type' => $rec->type,
-                'content' => $rec->content,
-            ]);
-
-            if (!($delRes['success'] ?? false)) {
-                $errorCode = $delRes['code'] ?? null;
-                $errorMessage = $delRes['errors'] ?? $delRes['message'] ?? '';
-                if (is_array($errorMessage)) {
-                    $errorMessage = json_encode($errorMessage, JSON_UNESCAPED_UNICODE);
-                }
-                $errorMessage = (string) $errorMessage;
-
-                $isNotFound = $errorCode === 404 
-                    || $errorCode === '404'
-                    || stripos($errorMessage, 'not found') !== false 
-                    || stripos($errorMessage, '不存在') !== false
-                    || stripos($errorMessage, 'does not exist') !== false
-                    || stripos($errorMessage, 'record not found') !== false;
-
-                if (!$isNotFound) {
-                    throw new \RuntimeException('dns_delete_failed: ' . $errorMessage);
-                }
-            }
-
-            Capsule::table('mod_cloudflare_dns_records')
-                ->where('id', $rec->id)
-                ->delete();
-
-            if ($rec->name === $sub->subdomain && $sub->dns_record_id === $record_id) {
+            $subDnsRecordId = trim((string) ($sub->dns_record_id ?? ''));
+            $localRecordId = trim((string) ($rec->record_id ?? ''));
+            if ((string) ($rec->name ?? '') === (string) ($sub->subdomain ?? '')
+                && ($subDnsRecordId !== '' && ($subDnsRecordId === $localRecordId || $subDnsRecordId === $effectiveRecordId))) {
                 Capsule::table('mod_cloudflare_subdomain')
                     ->where('id', $subdomain_id)
                     ->update([
@@ -2255,7 +2302,7 @@ if($_POST['action'] == "delete_dns_record" && isset($_POST['record_id']) && isse
 
             return [
                 'subdomain_id' => $subdomain_id,
-                'record_id' => $record_id,
+                'record_id' => (string) ($effectiveRecordId !== '' ? $effectiveRecordId : ($rec->record_id ?? '')),
                 'record_name' => $rec->name ?? '',
                 'record_type' => $rec->type ?? '',
             ];
@@ -2875,6 +2922,101 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
         } catch (\Throwable $e) {
             return '';
         }
+    }
+
+    private static function normalizeDnsContent(string $content, string $type = ''): string
+    {
+        $value = trim($content);
+        if ($value === '') {
+            return '';
+        }
+        if (strlen($value) >= 2 && substr($value, 0, 1) === '"' && substr($value, -1) === '"') {
+            $value = substr($value, 1, -1);
+        }
+        if (strpos($value, ' ') === false && substr($value, -1) === '.') {
+            $value = rtrim($value, '.');
+        }
+        $recordType = strtoupper(trim($type));
+        if ($recordType === 'TXT') {
+            return $value;
+        }
+        return function_exists('mb_strtolower') ? mb_strtolower($value, 'UTF-8') : strtolower($value);
+    }
+
+    private static function remoteRecordMatchesLocal(array $remoteRecord, $localRecord): bool
+    {
+        $remoteName = strtolower(trim((string) ($remoteRecord['name'] ?? '')));
+        $remoteType = strtoupper(trim((string) ($remoteRecord['type'] ?? '')));
+        $remoteContent = self::normalizeDnsContent((string) ($remoteRecord['content'] ?? ''), $remoteType);
+
+        $localName = strtolower(trim((string) ($localRecord->name ?? '')));
+        $localType = strtoupper(trim((string) ($localRecord->type ?? '')));
+        $localContent = self::normalizeDnsContent((string) ($localRecord->content ?? ''), $localType);
+
+        return $remoteName === $localName
+            && $remoteType === $localType
+            && $remoteContent === $localContent;
+    }
+
+    private static function fetchRemoteRecordsForLocal($providerClient, string $zoneId, $localRecord): ?array
+    {
+        if (!$providerClient || !method_exists($providerClient, 'getDnsRecords')) {
+            return null;
+        }
+
+        try {
+            $name = (string) ($localRecord->name ?? '');
+            $type = strtoupper(trim((string) ($localRecord->type ?? '')));
+            $params = ['per_page' => 1000];
+            if ($type !== '') {
+                $params['type'] = $type;
+            }
+            $listRes = $providerClient->getDnsRecords($zoneId, $name, $params);
+            if (!($listRes['success'] ?? false)) {
+                return null;
+            }
+            return is_array($listRes['result'] ?? null) ? ($listRes['result'] ?? []) : [];
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    private static function findRemoteRecordIdForLocal($providerClient, string $zoneId, $localRecord): ?string
+    {
+        $records = self::fetchRemoteRecordsForLocal($providerClient, $zoneId, $localRecord);
+        if ($records === null) {
+            return null;
+        }
+        foreach ($records as $remoteRecord) {
+            if (!is_array($remoteRecord)) {
+                continue;
+            }
+            if (!self::remoteRecordMatchesLocal($remoteRecord, $localRecord)) {
+                continue;
+            }
+            $id = isset($remoteRecord['id']) ? trim((string) $remoteRecord['id']) : '';
+            if ($id !== '') {
+                return $id;
+            }
+        }
+        return '';
+    }
+
+    private static function remoteRecordExistsForLocal($providerClient, string $zoneId, $localRecord): ?bool
+    {
+        $records = self::fetchRemoteRecordsForLocal($providerClient, $zoneId, $localRecord);
+        if ($records === null) {
+            return null;
+        }
+        foreach ($records as $remoteRecord) {
+            if (!is_array($remoteRecord)) {
+                continue;
+            }
+            if (self::remoteRecordMatchesLocal($remoteRecord, $localRecord)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static function findLocalRecordByRemote(int $subdomainId, array $remoteRecord)

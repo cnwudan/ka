@@ -390,6 +390,7 @@ add_hook('AfterCronJob', 1, function($vars) {
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'cleanup_expired_subdomains',
                     'payload_json' => json_encode([
+                        'cursor_id' => 0,
                         'batch_size' => $cleanupBatch,
                         'deep_delete' => $cleanupDeep ? 1 : 0,
                         'auto' => true,
