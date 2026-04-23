@@ -16,8 +16,8 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
                     </h5>
                     <div class="text-muted small"><?php echo $giftText('cfclient.gift_center.desc', '从“弹窗”升级为常驻工作台：发起、接收与历史管理一页完成。', 'Upgrade from modal to persistent workspace: initiate, accept, and manage transfer history in one place.'); ?></div>
                 </div>
-                <div class="gift-workbench-tip badge rounded-pill text-bg-light border px-3 py-2">
-                    <i class="fas fa-clock me-1 text-warning"></i>
+                <div class="gift-workbench-tip badge rounded-pill px-3 py-2">
+                    <i class="fas fa-clock me-1"></i>
                     <?php echo $giftText('cfclient.gift_center.ttl', '接收码有效期 %s 小时', 'Transfer code valid for %s hours', [number_format($giftTtlHours)]); ?>
                 </div>
             </div>
@@ -146,6 +146,17 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
     </div>
 
     <style>
+    #giftWorkbench .gift-workbench-tip {
+        background: #fff4df;
+        border: 1px solid #f7c46d;
+        color: #c66a00;
+        font-weight: 700;
+    }
+
+    #giftWorkbench .gift-workbench-tip i {
+        color: #f59e0b;
+    }
+
     #giftWorkbench .gift-workbench-tabs .nav-link {
         border-radius: 999px;
         border: 1px solid #dce4f1;
@@ -211,8 +222,15 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
     }
 
     #giftWorkbench .gift-domain-item.is-locked {
-        opacity: 0.62;
+        opacity: 1;
         cursor: not-allowed;
+        border-color: #f7c8c8;
+        background: #fff5f5;
+    }
+
+    #giftWorkbench .gift-domain-item.is-locked:hover {
+        border-color: #f7c8c8;
+        background: #fff5f5;
     }
 
     #giftWorkbench .gift-domain-item .form-check-input {
@@ -228,6 +246,15 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
         font-weight: 600;
         color: #334155;
         word-break: break-all;
+    }
+
+    #giftWorkbench .gift-domain-lock-text {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 0.45rem;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: #dc2626;
     }
 
     #giftWorkbench .gift-code-value {

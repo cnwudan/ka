@@ -1016,8 +1016,8 @@ proxiedCheckbox.disabled = false;
                     const isLocked = !!item.locked;
                     const rowClass = 'gift-domain-item' + (checked ? ' is-selected' : '') + (isLocked ? ' is-locked' : '');
                     const lockBadge = isLocked
-                        ? '<span class="badge text-bg-warning ms-2">' + htmlEscape(cfLang('giftInTransfer', '转赠中')) + '</span>'
-                        : '<span class="badge text-bg-success ms-2">' + htmlEscape(cfLang('giftAvailable', '可转赠')) + '</span>';
+                        ? '<span class="gift-domain-lock-text"><i class="fas fa-lock me-1"></i>' + htmlEscape(cfLang('giftInTransfer', '转赠中')) + '</span>'
+                        : '';
                     return '<label class="' + rowClass + '">' +
                         '<input class="form-check-input" type="radio" name="giftDomainPick" value="' + id + '" ' + (checked ? 'checked ' : '') + (isLocked ? 'disabled ' : '') + '/>' +
                         '<span class="gift-domain-main">' +
