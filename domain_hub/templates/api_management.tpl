@@ -126,6 +126,7 @@ foreach ($rows as $r) {
 
 $apiEnabled = ($settings['enable_user_api'] ?? 'on') === 'on';
 $maxApiKeys = intval($settings['api_keys_per_user'] ?? 3);
+$maxApiKeys = $maxApiKeys > 0 ? $maxApiKeys : 1;
 $requireQuota = intval($settings['api_require_quota'] ?? 1);
 $ipWhitelistEnabled = ($settings['api_enable_ip_whitelist'] ?? 'no') === 'on';
 
@@ -155,6 +156,19 @@ $apiTrendCountLabel = $apiLocaleIsChinese ? '调用次数' : 'Calls';
 $apiTrendCountUnit = $apiLocaleIsChinese ? '次' : '';
 $apiTrendSuccessLabel = $apiLocaleIsChinese ? '成功率' : 'Success Rate';
 $apiTrendSeparator = $apiLocaleIsChinese ? '：' : ': ';
+$apiKeyCount = count($apiKeys);
+$apiLimitReached = $apiKeyCount >= $maxApiKeys;
+$apiCreateButtonDisabled = !$canCreateApi || $apiLimitReached;
+$apiUsagePercent = min(100, max(0, ($apiKeyCount / $maxApiKeys) * 100));
+$apiMaskKey = static function (string $plainKey): string {
+    $plainKey = trim($plainKey);
+    $length = strlen($plainKey);
+    if ($length <= 12) {
+        return $plainKey;
+    }
+
+    return substr($plainKey, 0, 8) . '******' . substr($plainKey, -4);
+};
 ?>
 
 <div class="card mt-4" id="api-management-card">
@@ -185,92 +199,121 @@ $apiTrendSeparator = $apiLocaleIsChinese ? '：' : ': ';
         </div>
         <?php endif; ?>
 
-        <!-- 创建API密钥按钮 -->
-        <?php if (count($apiKeys) < $maxApiKeys && $canCreateApi): ?>
-        <div class="mb-3">
-            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">
-                <i class="fas fa-plus"></i> <?php echo $cfApiText('cfclient.api.button.create', '创建API密钥', [], true); ?>
-            </button>
-            <span class="text-muted ms-2">
-                <?php echo $cfApiText('cfclient.api.stats.created', '已创建 %1$s / %2$s 个', [number_format(count($apiKeys)), number_format($maxApiKeys)], true); ?>
-            </span>
+        <div class="api-create-toolbar mb-3">
+            <div class="api-create-summary">
+                <div class="api-create-text">
+                    <?php echo $cfApiText('cfclient.api.stats.created', '已创建 %1$s / %2$s 个', [number_format($apiKeyCount), number_format($maxApiKeys)], true); ?>
+                </div>
+                <div class="api-create-progress" aria-hidden="true">
+                    <span class="api-create-progress-bar <?php echo $apiLimitReached ? 'is-limit' : ''; ?>" style="width: <?php echo round($apiUsagePercent, 2); ?>%;"></span>
+                </div>
+            </div>
+            <div class="api-create-actions">
+                <button
+                    type="button"
+                    class="btn btn-success"
+                    data-bs-toggle="modal"
+                    data-bs-target="#createApiKeyModal"
+                    <?php echo $apiCreateButtonDisabled ? 'disabled aria-disabled="true"' : ''; ?>
+                    title="<?php echo htmlspecialchars($apiLimitReached ? $cfApiText('cfclient.api.limit_reached', '已达到可创建上限', [], true) : ($canCreateApi ? $cfApiText('cfclient.api.button.create', '创建API密钥', [], true) : $cfApiText('cfclient.api.button.disabled_quota', '当前配额不足，无法创建', [], true))); ?>"
+                >
+                    <i class="fas fa-plus"></i> <?php echo $cfApiText('cfclient.api.button.create', '创建API密钥', [], true); ?>
+                </button>
+                <?php if ($apiLimitReached): ?>
+                    <span class="api-create-limit-note text-muted"><?php echo $cfApiText('cfclient.api.limit_reached', '已达到可创建上限', [], true); ?></span>
+                <?php endif; ?>
+            </div>
         </div>
-        <?php endif; ?>
 
         <!-- API密钥列表 -->
-        <?php if (count($apiKeys) > 0): ?>
-        <div class="table-responsive">
-            <table class="table table-bordered table-hover">
-                <thead class="table-light">
-                    <tr>
-                        <th><?php echo $cfApiText('cfclient.api.table.name', '密钥名称', [], true); ?></th>
-                        <th>API Key</th>
-                        <th><?php echo $cfApiText('cfclient.api.table.status', '状态', [], true); ?></th>
-                        <th><?php echo $cfApiText('cfclient.api.table.requests', '请求次数', [], true); ?></th>
-                        <th><?php echo $cfApiText('cfclient.api.table.last_used', '最后使用', [], true); ?></th>
-                        <th><?php echo $cfApiText('cfclient.api.table.created_at', '创建时间', [], true); ?></th>
-                        <th><?php echo $cfApiText('cfclient.api.table.actions', '操作', [], true); ?></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($apiKeys as $key): ?>
-                    <tr>
-                        <td>
-                            <strong><?php echo htmlspecialchars($key->key_name); ?></strong>
-                        </td>
-                        <td>
-                            <code class="user-select-all"><?php echo htmlspecialchars($key->api_key); ?></code>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" onclick="copyToClipboard('<?php echo htmlspecialchars($key->api_key); ?>')">
-                                <i class="fas fa-copy"></i>
+        <?php if ($apiKeyCount > 0): ?>
+        <div class="api-key-panel-list">
+            <?php foreach ($apiKeys as $key): ?>
+                <?php
+                $apiKeyValue = (string) ($key->api_key ?? '');
+                $maskedApiKey = $apiMaskKey($apiKeyValue);
+                $apiKeyDomId = 'apiKeyDisplay' . intval($key->id ?? 0);
+                $isKeyActive = ($key->status === 'active');
+                ?>
+                <article class="api-key-panel-row <?php echo !$isKeyActive ? 'is-disabled' : ''; ?>">
+                    <div class="api-key-panel-main">
+                        <div class="api-key-panel-head">
+                            <strong class="api-key-name"><?php echo htmlspecialchars($key->key_name); ?></strong>
+                            <span class="api-status-pill <?php echo $isKeyActive ? 'is-active' : 'is-disabled'; ?>">
+                                <span class="api-status-dot"></span>
+                                <span><?php echo $isKeyActive ? $cfApiText('cfclient.api.status.active', '启用', [], true) : $cfApiText('cfclient.api.status.disabled', '禁用', [], true); ?></span>
+                            </span>
+                        </div>
+
+                        <div class="api-key-secret-wrap">
+                            <code
+                                id="<?php echo htmlspecialchars($apiKeyDomId, ENT_QUOTES); ?>"
+                                class="api-key-code"
+                                data-masked="<?php echo htmlspecialchars($maskedApiKey, ENT_QUOTES); ?>"
+                                data-full="<?php echo htmlspecialchars($apiKeyValue, ENT_QUOTES); ?>"
+                                data-visible="0"
+                            ><?php echo htmlspecialchars($maskedApiKey); ?></code>
+                            <div class="api-key-inline-actions">
+                                <button
+                                    type="button"
+                                    class="btn btn-sm api-inline-icon-btn"
+                                    onclick="toggleApiKeyVisibility('<?php echo htmlspecialchars($apiKeyDomId, ENT_QUOTES); ?>', this)"
+                                    title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.toggle_key', '显示或隐藏完整密钥', [], true)); ?>"
+                                >
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm api-inline-icon-btn"
+                                    onclick="copyApiKeyValue('<?php echo htmlspecialchars($apiKeyDomId, ENT_QUOTES); ?>')"
+                                    title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.copy_key', '复制完整密钥', [], true)); ?>"
+                                >
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="api-key-meta-grid">
+                            <div class="api-key-meta-item">
+                                <span class="api-key-meta-label"><?php echo $cfApiText('cfclient.api.table.requests', '请求次数', [], true); ?></span>
+                                <span class="api-key-meta-value"><?php echo number_format($key->request_count); ?></span>
+                            </div>
+                            <div class="api-key-meta-item">
+                                <span class="api-key-meta-label"><?php echo $cfApiText('cfclient.api.table.last_used', '最后使用', [], true); ?></span>
+                                <span class="api-key-meta-value"><?php echo $key->last_used_at ? date('Y-m-d H:i', strtotime($key->last_used_at)) : $cfApiText('cfclient.api.table.never_used', '从未使用', [], true); ?></span>
+                            </div>
+                            <div class="api-key-meta-item">
+                                <span class="api-key-meta-label"><?php echo $cfApiText('cfclient.api.table.created_at', '创建时间', [], true); ?></span>
+                                <span class="api-key-meta-value"><?php echo date('Y-m-d H:i', strtotime($key->created_at)); ?></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="api-row-actions">
+                        <button type="button" class="btn btn-sm api-action-btn api-action-view" onclick="showApiKeyDetails(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
+                            <i class="fas fa-eye"></i>
+                        </button>
+                        <?php if ($isKeyActive): ?>
+                            <button type="button" class="btn btn-sm api-action-btn api-action-regenerate" onclick="regenerateApiKey(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.regenerate', '重新生成', [], true)); ?>">
+                                <i class="fas fa-sync"></i>
                             </button>
-                        </td>
-                        <td>
-                            <?php if ($key->status === 'active'): ?>
-                                <span class="badge bg-success"><?php echo $cfApiText('cfclient.api.status.active', '启用', [], true); ?></span>
-                            <?php else: ?>
-                                <span class="badge bg-danger"><?php echo $cfApiText('cfclient.api.status.disabled', '禁用', [], true); ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td><?php echo number_format($key->request_count); ?></td>
-                        <td><?php echo $key->last_used_at ? date('Y-m-d H:i', strtotime($key->last_used_at)) : $cfApiText('cfclient.api.table.never_used', '从未使用', [], true); ?></td>
-                        <td><?php echo date('Y-m-d H:i', strtotime($key->created_at)); ?></td>
-                        <td>
-                            <?php if ($key->status === 'disabled'): ?>
-                                <div class="text-danger small">
-                                    <i class="fas fa-lock"></i> <?php echo $cfApiText('cfclient.api.status.disabled_by_admin', '已被管理员禁用', [], true); ?>
-                                    <br>
-                                    <button type="button" class="btn btn-sm btn-info mt-1" onclick="showApiKeyDetails(<?php echo $key->id; ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
-                                        <i class="fas fa-eye"></i> <?php echo $cfApiText('cfclient.api.actions.view', '查看', [], true); ?>
-                                    </button>
-                                </div>
-                            <?php else: ?>
-                                <div class="btn-group btn-group-sm">
-                                    <button type="button" class="btn btn-info" onclick="showApiKeyDetails(<?php echo $key->id; ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
-                                        <i class="fas fa-eye"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-warning" onclick="regenerateApiKey(<?php echo $key->id; ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.regenerate', '重新生成', [], true)); ?>">
-                                        <i class="fas fa-sync"></i>
-                                    </button>
-                                    <button type="button" class="btn btn-danger" onclick="deleteApiKey(<?php echo $key->id; ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.delete', '删除', [], true)); ?>">
-                                        <i class="fas fa-trash"></i>
-                                    </button>
-                                </div>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
+                            <button type="button" class="btn btn-sm api-action-btn api-action-delete" onclick="deleteApiKey(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.delete', '删除', [], true)); ?>">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        <?php else: ?>
+                            <span class="api-row-disabled-note">
+                                <i class="fas fa-lock"></i>
+                                <?php echo $cfApiText('cfclient.api.status.disabled_by_admin', '已被管理员禁用', [], true); ?>
+                            </span>
+                        <?php endif; ?>
+                    </div>
+                </article>
+            <?php endforeach; ?>
         </div>
         <?php else: ?>
-        <div class="alert alert-secondary text-center">
+        <div class="alert alert-secondary text-center api-key-empty-state">
             <i class="fas fa-key fa-3x mb-3 text-muted"></i>
-            <p><?php echo $cfApiText('cfclient.api.empty.message', '您还没有创建任何API密钥', [], true); ?></p>
-            <?php if ($canCreateApi): ?>
-            <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#createApiKeyModal">
-                <i class="fas fa-plus"></i> <?php echo $cfApiText('cfclient.api.button.create_now', '立即创建', [], true); ?>
-            </button>
-            <?php endif; ?>
+            <p class="mb-0"><?php echo $cfApiText('cfclient.api.empty.message', '您还没有创建任何API密钥', [], true); ?></p>
         </div>
         <?php endif; ?>
 
@@ -481,11 +524,66 @@ X-API-Secret: yyyyyyyyyyyy</code></pre>
 <script>
 // 复制到剪贴板
 function copyToClipboard(text) {
-    navigator.clipboard.writeText(text).then(function() {
+    var content = (text || '').toString();
+    if (!content) {
+        return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(content).then(function() {
+            alert(cfLang('api.copySuccess', '已复制到剪贴板'));
+        }, function(err) {
+            console.error(cfLang('api.copyFailed', '复制失败：'), err);
+        });
+        return;
+    }
+
+    var textarea = document.createElement('textarea');
+    textarea.value = content;
+    textarea.setAttribute('readonly', 'readonly');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+        document.execCommand('copy');
         alert(cfLang('api.copySuccess', '已复制到剪贴板'));
-    }, function(err) {
+    } catch (err) {
         console.error(cfLang('api.copyFailed', '复制失败：'), err);
-    });
+    }
+    document.body.removeChild(textarea);
+}
+
+function toggleApiKeyVisibility(domId, triggerBtn) {
+    var target = document.getElementById(domId);
+    if (!target) {
+        return;
+    }
+
+    var isVisible = target.getAttribute('data-visible') === '1';
+    var nextVisible = !isVisible;
+    var masked = target.getAttribute('data-masked') || '';
+    var full = target.getAttribute('data-full') || '';
+
+    target.textContent = nextVisible ? full : masked;
+    target.setAttribute('data-visible', nextVisible ? '1' : '0');
+
+    if (triggerBtn) {
+        var icon = triggerBtn.querySelector('i');
+        if (icon) {
+            icon.classList.toggle('fa-eye', !nextVisible);
+            icon.classList.toggle('fa-eye-slash', nextVisible);
+        }
+    }
+}
+
+function copyApiKeyValue(domId) {
+    var target = document.getElementById(domId);
+    if (!target) {
+        return;
+    }
+    var full = target.getAttribute('data-full') || target.textContent || '';
+    copyToClipboard(full);
 }
 
 // 创建API密钥
@@ -914,8 +1012,275 @@ document.addEventListener('DOMContentLoaded', function () {
     overflow-x: auto;
 }
 
-#api-management-card .user-select-all {
-    user-select: all;
+#api-management-card .api-create-toolbar {
+    border: 1px solid #e8ecf3;
+    border-radius: 12px;
+    background: #fbfcfe;
+    padding: 12px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.9rem;
+    flex-wrap: wrap;
+}
+
+#api-management-card .api-create-summary {
+    min-width: 240px;
+    flex: 1;
+}
+
+#api-management-card .api-create-text {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: #334155;
+    margin-bottom: 0.45rem;
+}
+
+#api-management-card .api-create-progress {
+    width: min(280px, 100%);
+    height: 8px;
+    border-radius: 999px;
+    background: #e8edf5;
+    overflow: hidden;
+}
+
+#api-management-card .api-create-progress-bar {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #4578f8 0%, #62a2ff 100%);
+    transition: width 0.2s ease;
+}
+
+#api-management-card .api-create-progress-bar.is-limit {
+    background: linear-gradient(90deg, #f2994a 0%, #eb5757 100%);
+}
+
+#api-management-card .api-create-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+
+#api-management-card .api-create-actions .btn[disabled] {
+    cursor: not-allowed;
+    opacity: 0.65;
+    box-shadow: none;
+}
+
+#api-management-card .api-create-limit-note {
+    font-size: 0.82rem;
+}
+
+#api-management-card .api-key-panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+#api-management-card .api-key-panel-row {
+    border: 1px solid #e7ebf1;
+    border-radius: 12px;
+    background: #fff;
+    padding: 12px;
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+#api-management-card .api-key-panel-row:hover {
+    border-color: #d8e2ff;
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+}
+
+#api-management-card .api-key-panel-main {
+    flex: 1;
+    min-width: 0;
+}
+
+#api-management-card .api-key-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    margin-bottom: 0.65rem;
+}
+
+#api-management-card .api-key-name {
+    font-size: 0.96rem;
+    color: #1f2937;
+}
+
+#api-management-card .api-status-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.21rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+#api-management-card .api-status-pill .api-status-dot {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+#api-management-card .api-status-pill.is-active {
+    background: #E6F4EA;
+    color: #1E8E3E;
+}
+
+#api-management-card .api-status-pill.is-active .api-status-dot {
+    background: #1E8E3E;
+}
+
+#api-management-card .api-status-pill.is-disabled {
+    background: #fdecea;
+    color: #c5221f;
+}
+
+#api-management-card .api-status-pill.is-disabled .api-status-dot {
+    background: #c5221f;
+}
+
+#api-management-card .api-key-secret-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 38px;
+}
+
+#api-management-card .api-key-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    letter-spacing: 0.25px;
+    color: #2d3748;
+    background: #f7f9fc;
+    border: 1px solid #e4e9f1;
+    border-radius: 8px;
+    padding: 0.42rem 0.58rem;
+    display: inline-block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#api-management-card .api-key-inline-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+}
+
+#api-management-card .api-inline-icon-btn {
+    width: 30px;
+    height: 30px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    color: #6b7280;
+    background: #fff;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#api-management-card .api-inline-icon-btn:hover,
+#api-management-card .api-inline-icon-btn:focus {
+    border-color: #c8d7ff;
+    color: #1d4ed8;
+    background: #eef4ff;
+}
+
+#api-management-card .api-key-meta-grid {
+    margin-top: 0.68rem;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+
+#api-management-card .api-key-meta-item {
+    border: 1px solid #edf1f6;
+    border-radius: 9px;
+    padding: 0.48rem 0.6rem;
+    background: #fbfcff;
+}
+
+#api-management-card .api-key-meta-label {
+    display: block;
+    font-size: 0.74rem;
+    color: #8a94a3;
+    margin-bottom: 0.22rem;
+}
+
+#api-management-card .api-key-meta-value {
+    display: block;
+    font-size: 0.86rem;
+    color: #2d3748;
+    line-height: 1.35;
+}
+
+#api-management-card .api-row-actions {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.34rem;
+    flex-shrink: 0;
+}
+
+#api-management-card .api-action-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: #9aa4b2;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+#api-management-card .api-key-panel-row:hover .api-action-view,
+#api-management-card .api-action-view:focus {
+    background: #e8f0ff;
+    color: #2962ff;
+    border-color: #d5e3ff;
+}
+
+#api-management-card .api-key-panel-row:hover .api-action-regenerate,
+#api-management-card .api-action-regenerate:focus {
+    background: #fff6e5;
+    color: #c68400;
+    border-color: #ffe4aa;
+}
+
+#api-management-card .api-key-panel-row:hover .api-action-delete,
+#api-management-card .api-action-delete:focus {
+    background: #fdecea;
+    color: #c5221f;
+    border-color: #f6c8c6;
+}
+
+#api-management-card .api-row-disabled-note {
+    font-size: 0.75rem;
+    color: #c5221f;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding-top: 0.4rem;
+}
+
+#api-management-card .api-key-panel-row.is-disabled {
+    background: #fefefe;
+}
+
+#api-management-card .api-key-empty-state {
+    border: 1px dashed #d8dee9;
+    border-radius: 12px;
 }
 
 #api-management-card .api-usage-trend-chart-wrap {
@@ -949,6 +1314,31 @@ document.addEventListener('DOMContentLoaded', function () {
     min-width: 136px;
     transition: opacity 0.15s ease;
     z-index: 6;
+}
+
+@media (max-width: 992px) {
+    #api-management-card .api-key-meta-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 768px) {
+    #api-management-card .api-key-panel-row {
+        flex-direction: column;
+    }
+
+    #api-management-card .api-row-actions {
+        align-items: center;
+    }
+
+    #api-management-card .api-create-toolbar {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    #api-management-card .api-create-actions {
+        justify-content: space-between;
+    }
 }
 </style>
 
