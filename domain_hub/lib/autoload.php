@@ -27,6 +27,7 @@ spl_autoload_register(static function (string $class): void {
         'CfRootdomainInviteService' => __DIR__ . '/Services/RootdomainInviteService.php',
         'CfRenewalNoticeService' => __DIR__ . '/Services/RenewalNoticeService.php',
         'CfGithubStarRewardService' => __DIR__ . '/Services/GithubStarRewardService.php',
+        'CfTelegramGroupRewardService' => __DIR__ . '/Services/TelegramGroupRewardService.php',
         'CfSslCertificateService' => __DIR__ . '/Services/SslCertificateService.php',
         'CfWhoisService' => __DIR__ . '/Services/WhoisService.php',
         'CfDigService' => __DIR__ . '/Services/DigService.php',
