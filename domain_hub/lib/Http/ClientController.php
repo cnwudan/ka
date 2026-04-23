@@ -551,7 +551,11 @@ class CfClientController
     private function handleAction(int $userId, $client, array $globals): array
     {
                 // AJAX处理：API密钥管理
-                            $action = $_GET['action'] ?? $_POST['action'] ?? '';
+                            $action = (string) ($_GET['action'] ?? $_POST['action'] ?? '');
+                            $ajaxAction = (string) ($_GET['ajax_action'] ?? $_POST['ajax_action'] ?? '');
+                            if (($action === '' || strtolower($action) === 'addon') && strpos($ajaxAction, 'ajax_') === 0) {
+                                $action = $ajaxAction;
+                            }
 
                             try {
                                 self::enforceAjaxRateLimit($action, $userId);

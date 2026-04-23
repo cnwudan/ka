@@ -312,7 +312,6 @@ $apiMaskKey = static function (string $plainKey): string {
                     <div class="api-row-actions">
                         <button type="button" class="btn btn-sm api-action-btn api-action-view" onclick="return showApiKeyDetails(<?php echo intval($key->id); ?>, this);" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.view', '查看详情', [], true)); ?>">
                             <i class="fas fa-eye"></i>
-                            <span class="api-action-label"><?php echo $cfApiText('cfclient.api.actions.view_short', '详情', [], true); ?></span>
                         </button>
                         <?php if ($isKeyActive): ?>
                             <button type="button" class="btn btn-sm api-action-btn api-action-regenerate" onclick="regenerateApiKey(<?php echo intval($key->id); ?>)" title="<?php echo htmlspecialchars($cfApiText('cfclient.api.actions.regenerate', '重新生成', [], true)); ?>">
@@ -575,6 +574,46 @@ function copyToClipboard(text) {
     document.body.removeChild(textarea);
 }
 
+function buildApiAjaxUrl(actionName, extraParams) {
+    var current = new URL(window.location.href);
+    var currentParams = new URLSearchParams(current.search || '');
+    var params = new URLSearchParams();
+
+    if (currentParams.get('action') === 'addon' && currentParams.get('module')) {
+        params.set('action', 'addon');
+        params.set('module', currentParams.get('module'));
+        params.set('ajax_action', actionName);
+    } else {
+        params.set('m', <?php echo json_encode($moduleSlug, CFMOD_SAFE_JSON_FLAGS); ?>);
+        params.set('action', actionName);
+    }
+
+    if (extraParams && typeof extraParams === 'object') {
+        Object.keys(extraParams).forEach(function (key) {
+            var value = extraParams[key];
+            if (value === undefined || value === null || value === '') {
+                return;
+            }
+            params.set(key, String(value));
+        });
+    }
+
+    return (current.pathname || 'index.php') + '?' + params.toString();
+}
+
+function parseJsonResponse(response) {
+    return response.text().then(function (text) {
+        if (!response.ok) {
+            throw new Error('http_' + response.status);
+        }
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            throw new Error(cfLang('api.responseInvalid', '服务返回异常，请稍后重试'));
+        }
+    });
+}
+
 function toggleApiKeyVisibility(domId, triggerBtn) {
     var target = document.getElementById(domId);
     if (!target) {
@@ -664,7 +703,7 @@ function saveApiKeyName(keyId) {
         return;
     }
 
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_update_api_key_name', {
+    fetch(buildApiAjaxUrl('ajax_update_api_key_name'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -675,12 +714,7 @@ function saveApiKeyName(keyId) {
             key_name: nextName
         })
     })
-    .then(function(response) {
-        if (!response.ok) {
-            throw new Error('http_' + response.status);
-        }
-        return response.json();
-    })
+    .then(parseJsonResponse)
     .then(function(result) {
         if (!result || !result.success) {
             throw new Error((result && result.error) ? result.error : cfLang('api.renameFailed', '保存失败，请稍后重试'));
@@ -715,7 +749,7 @@ function createApiKey() {
         data.ip_whitelist = data.ip_whitelist.split('\n').map(ip => ip.trim()).filter(ip => ip).join(',');
     }
     
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_create_api_key', {
+    fetch(buildApiAjaxUrl('ajax_create_api_key'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -723,7 +757,7 @@ function createApiKey() {
         },
         body: JSON.stringify(data)
     })
-    .then(response => response.json())
+    .then(parseJsonResponse)
     .then(result => {
         if (result.success) {
             // 关闭创建模态框
@@ -757,13 +791,8 @@ function showApiKeyDetails(keyId, triggerBtn) {
         btn.setAttribute('disabled', 'disabled');
     }
 
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_get_api_key_details&key_id=' + encodeURIComponent(keyId))
-        .then(function(response) {
-            if (!response.ok) {
-                throw new Error('http_' + response.status);
-            }
-            return response.json();
-        })
+    fetch(buildApiAjaxUrl('ajax_get_api_key_details', { key_id: keyId }))
+        .then(parseJsonResponse)
         .then(function(result) {
             if (!result || !result.success) {
                 throw new Error((result && result.error) ? result.error : cfLang('api.detailsFailed', '获取详情失败：'));
@@ -836,7 +865,7 @@ function regenerateApiKey(keyId) {
         return;
     }
     
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_regenerate_api_key', {
+    fetch(buildApiAjaxUrl('ajax_regenerate_api_key'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -844,7 +873,7 @@ function regenerateApiKey(keyId) {
         },
         body: JSON.stringify({ key_id: keyId })
     })
-    .then(response => response.json())
+    .then(parseJsonResponse)
     .then(result => {
         if (result.success) {
             document.getElementById('newApiKey').value = result.api_key;
@@ -863,7 +892,7 @@ function deleteApiKey(keyId) {
         return;
     }
     
-    fetch('?m=<?php echo $moduleSlugAttr; ?>&action=ajax_delete_api_key', {
+    fetch(buildApiAjaxUrl('ajax_delete_api_key'), {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -871,7 +900,7 @@ function deleteApiKey(keyId) {
         },
         body: JSON.stringify({ key_id: keyId })
     })
-    .then(response => response.json())
+    .then(parseJsonResponse)
     .then(result => {
         if (result.success) {
             alert(cfLang('api.deleteSuccess', '删除成功'));
@@ -1182,8 +1211,8 @@ document.addEventListener('DOMContentLoaded', function () {
 }
 
 #api-management-card .api-management-header {
-    background: linear-gradient(135deg, #6f84ab 0%, #7f93b8 100%);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+    background: #2D3A54;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.16);
 }
 
 #api-management-card #apiManagementToggleBtn {
@@ -1455,27 +1484,17 @@ document.addEventListener('DOMContentLoaded', function () {
 }
 
 #api-management-card .api-action-btn {
-    min-width: 32px;
+    width: 32px;
     height: 32px;
     border-radius: 8px;
     border: 1px solid transparent;
     background: transparent;
     color: #9aa4b2;
-    padding: 0 0.42rem;
+    padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.25rem;
     transition: all 0.2s ease;
-}
-
-#api-management-card .api-action-view {
-    min-width: 58px;
-}
-
-#api-management-card .api-action-label {
-    font-size: 0.76rem;
-    line-height: 1;
 }
 
 #api-management-card .api-key-panel-row:hover .api-action-view,
@@ -1563,14 +1582,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
     #api-management-card .api-row-actions {
         align-items: center;
-    }
-
-    #api-management-card .api-action-label {
-        display: none;
-    }
-
-    #api-management-card .api-action-view {
-        min-width: 32px;
     }
 
     #api-management-card .api-key-name-input {
