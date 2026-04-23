@@ -57,7 +57,6 @@
                                 <thead class="table-dark">
                                     <tr>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.domain', '域名', [], true); ?></th>
-                                        <th><?php echo cfclient_lang('cfclient.subdomains.table.root', '根域名', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.status', '状态', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.created_at', '注册时间', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.expires_at', '到期时间', [], true); ?></th>
@@ -166,11 +165,8 @@
                                             <?php if ($clientDeleteEnabled && $pendingDelete): ?>
                                                 <span class="badge bg-danger ms-2"><i class="fas fa-clock"></i> <?php echo cfclient_lang('cfclient.subdomains.delete.badge', '待删除', [], true); ?></span>
                                             <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php echo htmlspecialchars($e->rootdomain); ?>
                                             <?php if ($rootInMaintenance): ?>
-                                            <br><span class="badge bg-warning text-dark"><i class="fas fa-tools"></i> <?php echo cfclient_lang('cfclient.subdomains.maintenance.badge', '维护中', [], true); ?></span>
+                                                <span class="badge bg-warning text-dark ms-2"><i class="fas fa-tools"></i> <?php echo cfclient_lang('cfclient.subdomains.maintenance.badge', '维护中', [], true); ?></span>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -275,7 +271,7 @@
                                     
                                     <!-- 展开的详情行 -->
                                     <tr id="details_<?php echo $e->id; ?>" style="display: none;">
-                                        <td colspan="7">
+                                        <td colspan="6">
                                             <div class="p-3 bg-light">
                                                 <h6 class="mb-3"><?php echo cfclient_lang('cfclient.subdomains.details.title', 'DNS解析记录', [], true); ?></h6>
                                                 <?php
