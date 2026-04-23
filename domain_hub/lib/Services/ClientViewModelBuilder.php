@@ -91,9 +91,16 @@ class CfClientViewModelBuilder
         $globals['dnsUnlockPurchasePrice'] = $dnsUnlockPurchasePriceSetting;
 
         $globals['clientAnnounceEnabled'] = in_array(($moduleSettings['admin_announce_enabled'] ?? '0'), ['1','on','yes','true','enabled'], true);
-        $globals['clientAnnounceTitle'] = trim($moduleSettings['admin_announce_title'] ?? '');
+        $rawAnnounceTitle = trim((string) ($moduleSettings['admin_announce_title'] ?? ''));
+        if (function_exists('cfmod_pick_bilingual_text')) {
+            $rawAnnounceTitle = cfmod_pick_bilingual_text($rawAnnounceTitle, $currentLanguage);
+        }
+        $globals['clientAnnounceTitle'] = trim($rawAnnounceTitle);
         $rawAnnounceHtml = (string) ($moduleSettings['admin_announce_html'] ?? '');
         $decodedAnnounceHtml = html_entity_decode($rawAnnounceHtml, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        if (function_exists('cfmod_pick_bilingual_text')) {
+            $decodedAnnounceHtml = cfmod_pick_bilingual_text($decodedAnnounceHtml, $currentLanguage);
+        }
         $trimmedAnnounceHtml = trim($decodedAnnounceHtml);
         if ($trimmedAnnounceHtml !== '' && strip_tags($trimmedAnnounceHtml) === $trimmedAnnounceHtml) {
             $trimmedAnnounceHtml = nl2br($trimmedAnnounceHtml);

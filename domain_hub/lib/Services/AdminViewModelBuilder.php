@@ -538,11 +538,26 @@ class CfAdminViewModelBuilder
         $title = trim((string) ($moduleSettings['admin_announce_title'] ?? '公告')) ?: '公告';
         $rawHtml = (string) ($moduleSettings['admin_announce_html'] ?? '');
         $html = html_entity_decode($rawHtml, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $currentLanguage = function_exists('cfmod_get_current_language_code')
+            ? cfmod_get_current_language_code()
+            : 'english';
+
+        $previewTitle = $title;
+        if (function_exists('cfmod_pick_bilingual_text')) {
+            $previewTitle = cfmod_pick_bilingual_text($title, $currentLanguage);
+        }
+
+        $previewHtml = $html;
+        if (function_exists('cfmod_pick_bilingual_text')) {
+            $previewHtml = cfmod_pick_bilingual_text($html, $currentLanguage);
+        }
 
         return [
             'enabled' => $enabled,
             'title' => $title,
             'html' => $html,
+            'title_preview' => $previewTitle,
+            'html_preview' => $previewHtml,
         ];
     }
 

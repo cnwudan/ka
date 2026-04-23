@@ -293,6 +293,7 @@ return [
 
     'announcement_title_label' => '标题',
     'announcement_content_label' => '内容（支持HTML）',
+    'announcement_bilingual_hint' => '支持双语分隔：中文丨English（使用中文竖线“丨”分隔）',
     'announcement_save_button' => '保存公告',
     'announcement_modal_ack' => '我知道了',
 

@@ -71,6 +71,56 @@ if (!function_exists('cfmod_get_current_language_code')) {
     }
 }
 
+if (!function_exists('cfmod_is_chinese_language')) {
+    function cfmod_is_chinese_language(?string $language = null): bool
+    {
+        $resolved = cfmod_resolve_language_preference($language);
+        return ($resolved['normalized'] ?? 'english') === 'chinese';
+    }
+}
+
+if (!function_exists('cfmod_pick_bilingual_text')) {
+    function cfmod_pick_bilingual_text(string $raw, ?string $language = null, string $delimiter = '丨'): string
+    {
+        $value = trim($raw);
+        if ($value === '') {
+            return '';
+        }
+
+        if ($delimiter === '' || strpos($value, $delimiter) === false) {
+            return $value;
+        }
+
+        $parts = explode($delimiter, $value, 2);
+        if (count($parts) < 2) {
+            return $value;
+        }
+
+        $zh = trim((string) ($parts[0] ?? ''));
+        $en = trim((string) ($parts[1] ?? ''));
+        $isChinese = cfmod_is_chinese_language($language);
+
+        if ($isChinese) {
+            if ($zh !== '') {
+                return $zh;
+            }
+            if ($en !== '') {
+                return $en;
+            }
+            return $value;
+        }
+
+        if ($en !== '') {
+            return $en;
+        }
+        if ($zh !== '') {
+            return $zh;
+        }
+
+        return $value;
+    }
+}
+
 if (!function_exists('cfmod_get_html_lang_code')) {
     function cfmod_get_html_lang_code(): string
     {
