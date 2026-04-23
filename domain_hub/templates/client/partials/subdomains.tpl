@@ -57,7 +57,6 @@
                                 <thead class="table-dark">
                                     <tr>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.domain', '域名', [], true); ?></th>
-                                        <th><?php echo cfclient_lang('cfclient.subdomains.table.root', '根域名', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.status', '状态', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.created_at', '注册时间', [], true); ?></th>
                                         <th><?php echo cfclient_lang('cfclient.subdomains.table.expires_at', '到期时间', [], true); ?></th>
@@ -166,11 +165,8 @@
                                             <?php if ($clientDeleteEnabled && $pendingDelete): ?>
                                                 <span class="badge bg-danger ms-2"><i class="fas fa-clock"></i> <?php echo cfclient_lang('cfclient.subdomains.delete.badge', '待删除', [], true); ?></span>
                                             <?php endif; ?>
-                                        </td>
-                                        <td>
-                                            <?php echo htmlspecialchars($e->rootdomain); ?>
                                             <?php if ($rootInMaintenance): ?>
-                                            <br><span class="badge bg-warning text-dark"><i class="fas fa-tools"></i> <?php echo cfclient_lang('cfclient.subdomains.maintenance.badge', '维护中', [], true); ?></span>
+                                                <span class="badge bg-warning text-dark ms-2"><i class="fas fa-tools"></i> <?php echo cfclient_lang('cfclient.subdomains.maintenance.badge', '维护中', [], true); ?></span>
                                             <?php endif; ?>
                                         </td>
                                         <td>
@@ -275,7 +271,7 @@
                                     
                                     <!-- 展开的详情行 -->
                                     <tr id="details_<?php echo $e->id; ?>" style="display: none;">
-                                        <td colspan="7">
+                                        <td colspan="6">
                                             <div class="p-3 bg-light">
                                                 <h6 class="mb-3"><?php echo cfclient_lang('cfclient.subdomains.details.title', 'DNS解析记录', [], true); ?></h6>
                                                 <?php
@@ -312,12 +308,32 @@
                                                                 <?php if(!empty($recordsForDisplay)): ?>
                                                                     <?php foreach ($recordsForDisplay as $r): ?>
                                                                     <tr>
+                                                                        <?php
+                                                                            $recordNameRaw = rtrim(trim((string)($r->name ?? '')), '.');
+                                                                            $subdomainFqdnRaw = rtrim(trim((string)($e->subdomain ?? '')), '.');
+                                                                            $recordHostDisplay = '@';
+                                                                            if ($recordNameRaw !== '' && $recordNameRaw !== '@') {
+                                                                                $recordNameLower = strtolower($recordNameRaw);
+                                                                                $subdomainLower = strtolower($subdomainFqdnRaw);
+                                                                                if ($subdomainLower !== '' && $recordNameLower !== $subdomainLower) {
+                                                                                    $suffix = '.' . $subdomainLower;
+                                                                                    if (substr($recordNameLower, -strlen($suffix)) === $suffix) {
+                                                                                        $recordHostDisplay = substr($recordNameRaw, 0, strlen($recordNameRaw) - strlen($suffix));
+                                                                                        if ($recordHostDisplay === '') {
+                                                                                            $recordHostDisplay = '@';
+                                                                                        }
+                                                                                    } else {
+                                                                                        $recordHostDisplay = $recordNameRaw;
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        ?>
                                                                         <td>
                                                                             <span class="dns-record-name">
-                                                                                <?php if($r->name === '@'): ?>
+                                                                                <?php if($recordHostDisplay === '@'): ?>
                                                                                     <span class="badge bg-primary fs-6 fw-bold">@</span>
                                                                                 <?php else: ?>
-                                                                                    <span class="dns-name-text"><?php echo htmlspecialchars($r->name); ?></span>
+                                                                                    <span class="dns-name-text"><?php echo htmlspecialchars($recordHostDisplay); ?></span>
                                                                                 <?php endif; ?>
                                                                             </span>
                                                                         </td>
@@ -354,7 +370,7 @@
                                                                                 <button type="button" class="btn btn-outline-secondary" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
                                                                                 <button type="button" class="btn btn-outline-secondary ms-1" disabled title="<?php echo cfclient_lang('cfclient.subdomains.maintenance.tooltip', '根域名维护中', [], true); ?>"><?php echo cfclient_lang('cfclient.subdomains.details.button.delete', '删除', [], true); ?></button>
                                                                                 <?php else: ?>
-                                                                                <button type="button" class="btn btn-outline-primary" onclick="showDnsForm(<?php echo $e->id; ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', true, '<?php echo htmlspecialchars($r->record_id); ?>', '<?php echo htmlspecialchars(str_replace('.' . $e->subdomain, '', $r->name) === $r->name ? '@' : str_replace('.' . $e->subdomain, '', $r->name)); ?>', '<?php echo htmlspecialchars($r->type); ?>', '<?php echo htmlspecialchars($r->content); ?>')"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
+                                                                                <button type="button" class="btn btn-outline-primary" onclick="showDnsForm(<?php echo $e->id; ?>, '<?php echo htmlspecialchars($e->subdomain); ?>', true, '<?php echo htmlspecialchars($r->record_id); ?>', '<?php echo htmlspecialchars($recordHostDisplay); ?>', '<?php echo htmlspecialchars($r->type); ?>', '<?php echo htmlspecialchars($r->content); ?>')"><?php echo cfclient_lang('cfclient.subdomains.details.button.edit', '编辑', [], true); ?></button>
                                                                                 <form method="post" class="ms-1" onsubmit="return confirm('<?php echo cfclient_lang('cfclient.subdomains.confirm.delete_dns', '确定删除该DNS记录？', [], true); ?>');">
                                                                                     <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
                                                                                     <input type="hidden" name="action" value="delete_dns_record">

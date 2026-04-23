@@ -18,6 +18,7 @@ require_once __DIR__ . '/lib/TtlHelper.php';
 require_once __DIR__ . '/lib/RootDomainLimitHelper.php';
 require_once __DIR__ . '/lib/SecurityHelpers.php';
 require_once __DIR__ . '/lib/ProviderResolver.php';
+require_once __DIR__ . '/lib/AdminMaintenance.php';
 
 
 function api_json($arr, $code = 200){
@@ -599,6 +600,234 @@ function api_handle_subdomain_renew(array $data, $keyRow, array $settings): arra
     }
 
     return [$code, $result];
+}
+
+
+
+function api_resolve_dns_record_identifier(array $data): array {
+    $recordIdentifierRaw = $data['record_id'] ?? ($data['id'] ?? null);
+    $recordIdentifier = null;
+    if ($recordIdentifierRaw !== null && !is_array($recordIdentifierRaw)) {
+        $recordIdentifier = trim((string) $recordIdentifierRaw);
+        if ($recordIdentifier === '') {
+            $recordIdentifier = null;
+        }
+    }
+    $localId = intval($data['id'] ?? 0);
+    return [$recordIdentifier, $localId];
+}
+
+function api_find_dns_record_by_identifier(?string $recordIdentifier, int $localId = 0) {
+    $rec = null;
+    if ($recordIdentifier !== null) {
+        if (ctype_digit($recordIdentifier)) {
+            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
+        }
+        if (!$rec) {
+            $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
+        }
+    }
+    if (!$rec && $localId > 0) {
+        $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', $localId)->first();
+    }
+    return $rec;
+}
+
+function api_resolve_record_name_for_subdomain(string $rawName, string $fullSubdomain): string {
+    $name = trim($rawName);
+    if ($name === '' || $name === '@') {
+        return $fullSubdomain;
+    }
+    if (strpos($name, '.') !== false) {
+        return strtolower($name);
+    }
+    return strtolower($name . '.' . $fullSubdomain);
+}
+
+function api_build_dns_content_for_type(string $type, array $data, string $existingContent = ''): array {
+    $type = strtoupper(trim($type));
+    $contentInput = isset($data['content']) ? trim((string) $data['content']) : '';
+    $content = $contentInput !== '' ? $contentInput : trim($existingContent);
+
+    if ($type === 'SRV') {
+        $hasSrvFields = isset($data['record_target']) || isset($data['target']) || isset($data['record_port']) || isset($data['port']) || isset($data['record_weight']) || isset($data['weight']) || isset($data['priority']);
+        if ($hasSrvFields) {
+            $priority = isset($data['priority']) ? intval($data['priority']) : 0;
+            $weight = isset($data['record_weight']) ? intval($data['record_weight']) : intval($data['weight'] ?? 0);
+            $port = isset($data['record_port']) ? intval($data['record_port']) : intval($data['port'] ?? 0);
+            $target = trim((string)($data['record_target'] ?? ($data['target'] ?? '')));
+            if ($target === '') {
+                return [false, '', ['error' => 'record_target required for SRV']];
+            }
+            if ($port < 1 || $port > 65535) {
+                return [false, '', ['error' => 'record_port invalid for SRV']];
+            }
+            $priority = max(0, min(65535, $priority));
+            $weight = max(0, min(65535, $weight));
+            $content = $priority . ' ' . $weight . ' ' . $port . ' ' . rtrim($target, '.');
+        }
+    } elseif ($type === 'CAA') {
+        $hasCaaFields = isset($data['caa_value']) || isset($data['caa_tag']) || isset($data['caa_flag']);
+        if ($hasCaaFields) {
+            $caaValue = trim((string)($data['caa_value'] ?? ''));
+            if ($caaValue === '') {
+                return [false, '', ['error' => 'caa_value required for CAA']];
+            }
+            $caaTag = trim((string)($data['caa_tag'] ?? 'issue'));
+            if ($caaTag === '') {
+                $caaTag = 'issue';
+            }
+            $caaFlag = intval($data['caa_flag'] ?? 0);
+            $content = $caaFlag . ' ' . $caaTag . ' "' . str_replace('"', '\\"', $caaValue) . '"';
+        }
+    }
+
+    if ($content === '') {
+        return [false, '', ['error' => 'content required']];
+    }
+
+    return [true, $content, []];
+}
+
+function api_handle_subdomain_get(array $data, $keyRow): array {
+    $subId = intval($_GET['subdomain_id'] ?? ($data['subdomain_id'] ?? 0));
+    if ($subId <= 0) {
+        return [400, ['error' => 'subdomain_id required']];
+    }
+
+    $sub = Capsule::table('mod_cloudflare_subdomain')
+        ->where('id', $subId)
+        ->where('userid', $keyRow->userid)
+        ->first();
+
+    if (!$sub) {
+        return [404, ['error' => 'subdomain not found']];
+    }
+
+    $records = Capsule::table('mod_cloudflare_dns_records')
+        ->where('subdomain_id', $subId)
+        ->orderBy('id', 'asc')
+        ->get();
+
+    $rows = [];
+    foreach ($records as $record) {
+        $rows[] = [
+            'id' => intval($record->id),
+            'record_id' => $record->record_id,
+            'name' => $record->name,
+            'type' => $record->type,
+            'content' => $record->content,
+            'ttl' => intval($record->ttl),
+            'priority' => $record->priority,
+            'line' => $record->line,
+            'proxied' => boolval($record->proxied),
+            'status' => $record->status,
+            'created_at' => $record->created_at,
+            'updated_at' => $record->updated_at,
+        ];
+    }
+
+    return [200, [
+        'success' => true,
+        'subdomain' => [
+            'id' => intval($sub->id),
+            'subdomain' => $sub->subdomain,
+            'rootdomain' => $sub->rootdomain,
+            'full_domain' => $sub->subdomain,
+            'status' => $sub->status,
+            'created_at' => $sub->created_at,
+            'updated_at' => $sub->updated_at,
+            'expires_at' => $sub->expires_at,
+            'never_expires' => intval($sub->never_expires ?? 0),
+        ],
+        'dns_records' => $rows,
+        'dns_count' => count($rows),
+    ]];
+}
+
+function api_handle_subdomain_delete(array $data, $keyRow, array $settings): array {
+    if (api_setting_enabled($settings['maintenance_mode'] ?? '0')) {
+        return [503, ['error' => 'System under maintenance']];
+    }
+
+    $subId = intval($data['subdomain_id'] ?? ($_POST['subdomain_id'] ?? ($_GET['subdomain_id'] ?? 0)));
+    if ($subId <= 0) {
+        return [400, ['error' => 'subdomain_id required']];
+    }
+
+    $sub = Capsule::table('mod_cloudflare_subdomain')
+        ->where('id', $subId)
+        ->where('userid', $keyRow->userid)
+        ->first();
+    if (!$sub) {
+        return [404, ['error' => 'subdomain not found']];
+    }
+
+    $rootdomain = strtolower(trim((string)($sub->rootdomain ?? '')));
+    if ($rootdomain !== '' && api_is_rootdomain_in_maintenance($rootdomain)) {
+        return [503, ['error' => 'Root domain under maintenance', 'rootdomain' => $rootdomain]];
+    }
+
+    if (api_setting_enabled($settings['disable_dns_write'] ?? '0')) {
+        return [403, ['error' => 'DNS modifications disabled']];
+    }
+
+    try {
+        api_enforce_scope_rate_limit(CfRateLimiter::SCOPE_DNS, $keyRow, $settings, 'api_subdomain_delete');
+    } catch (CfRateLimitExceededException $e) {
+        api_emit_scope_rate_limit_error($e);
+    }
+
+    $deletedDnsCount = 0;
+    try {
+        $providerContext = cfmod_acquire_provider_client_for_subdomain($sub, $settings);
+        if (!$providerContext || empty($providerContext['client'])) {
+            return [500, ['error' => 'provider unavailable']];
+        }
+
+        if (function_exists('cfmod_admin_deep_delete_subdomain')) {
+            $deletedDnsCount = intval(cfmod_admin_deep_delete_subdomain($providerContext['client'], $sub));
+        }
+    } catch (\Throwable $e) {
+        return [502, ['error' => 'provider delete failed', 'message' => cfmod_format_provider_error($e->getMessage())]];
+    }
+
+    try {
+        Capsule::transaction(function () use ($sub, $subId) {
+            Capsule::table('mod_cloudflare_subdomain')->where('id', $subId)->delete();
+
+            $quota = Capsule::table('mod_cloudflare_subdomain_quotas')
+                ->where('userid', $sub->userid)
+                ->lockForUpdate()
+                ->first();
+            if ($quota) {
+                $newUsed = max(0, intval($quota->used_count ?? 0) - 1);
+                Capsule::table('mod_cloudflare_subdomain_quotas')
+                    ->where('userid', $sub->userid)
+                    ->update([
+                        'used_count' => $newUsed,
+                        'updated_at' => date('Y-m-d H:i:s'),
+                    ]);
+            }
+        });
+
+        if (function_exists('cloudflare_subdomain_log')) {
+            cloudflare_subdomain_log('api_delete_subdomain', [
+                'subdomain' => $sub->subdomain,
+                'dns_records_deleted' => $deletedDnsCount,
+            ], intval($sub->userid ?? 0), $subId);
+        }
+
+        return [200, [
+            'success' => true,
+            'message' => 'Subdomain deleted successfully',
+            'subdomain_id' => $subId,
+            'full_domain' => $sub->subdomain,
+            'dns_records_deleted' => $deletedDnsCount,
+        ]];
+    } catch (\Throwable $e) {
+        return [500, ['error' => 'delete failed']];
+    }
 }
 
 if (!class_exists('ApiRenewException')) {
@@ -1586,6 +1815,8 @@ function handleApiRequest(){
                     'subdomains' => $rows,
                     'pagination' => $meta
                 ];
+            } elseif ($action === 'get' && $method === 'GET') {
+                list($code, $result) = api_handle_subdomain_get($data, $keyRow);
             } elseif ($action === 'register' && in_array($method, ['POST', 'PUT'])) {
                 try {
                     api_enforce_scope_rate_limit(CfRateLimiter::SCOPE_REGISTER, $keyRow, $settings, 'api_subdomain_register');
@@ -1595,6 +1826,8 @@ function handleApiRequest(){
                 list($code, $result) = api_handle_subdomain_register($data, $keyRow, $settings);
             } elseif ($action === 'renew' && in_array($method, ['POST', 'PUT'])) {
                 list($code, $result) = api_handle_subdomain_renew($data, $keyRow, $settings);
+            } elseif ($action === 'delete' && in_array($method, ['POST', 'DELETE'])) {
+                list($code, $result) = api_handle_subdomain_delete($data, $keyRow, $settings);
             } else {
                 $code = 404;
                 $result = ['error' => 'unknown action'];
@@ -1618,14 +1851,17 @@ function handleApiRequest(){
                     foreach ($recs as $r) {
                         $rows[] = [
                             'id' => $r->id,
+                            'record_id' => $r->record_id,
                             'name' => $r->name,
                             'type' => $r->type,
                             'content' => $r->content,
                             'ttl' => intval($r->ttl),
                             'priority' => $r->priority,
+                            'line' => $r->line,
                             'proxied' => boolval($r->proxied),
                             'status' => $r->status,
-                            'created_at' => $r->created_at
+                            'created_at' => $r->created_at,
+                            'updated_at' => $r->updated_at,
                         ];
                     }
                     $result = ['success' => true, 'count' => count($rows), 'records' => $rows];
@@ -1650,12 +1886,14 @@ function handleApiRequest(){
                     }
                     $sid = intval($data['subdomain_id'] ?? 0);
                     $type = strtoupper(trim((string)($data['type'] ?? '')));
-                    $content = trim((string)($data['content'] ?? ''));
                     $ttl = cfmod_normalize_ttl($data['ttl'] ?? 600);
-                    $allowedTypes = ['A', 'AAAA', 'CNAME', 'TXT', 'MX'];
+                    $allowedTypes = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'];
                     if (!in_array($type, $allowedTypes, true)) {
                         $code = 400;
                         $result = ['error' => 'invalid type'];
+                    } elseif ($type === 'NS' && api_setting_enabled($settings['disable_ns_management'] ?? '0')) {
+                        $code = 403;
+                        $result = ['error' => 'NS management disabled'];
                     } else {
                         $s = Capsule::table('mod_cloudflare_subdomain')
                             ->where('id', $sid)
@@ -1668,61 +1906,86 @@ function handleApiRequest(){
                             $code = 403;
                             $result = ['error' => 'subdomain suspended'];
                         } else {
-                            $limitPerSub = intval($settings['max_dns_records_per_subdomain'] ?? 0);
                             $providerContext = cfmod_acquire_provider_client_for_subdomain($s, $settings);
+                            $limitPerSub = intval($settings['max_dns_records_per_subdomain'] ?? 0);
                             if (!$providerContext || empty($providerContext['client'])) {
                                 $code = 500;
                                 $result = ['error' => 'provider unavailable'];
                             } else {
                                 $cf = $providerContext['client'];
-                                $name = $s->subdomain;
-                                if (!empty($data['name']) && $data['name'] !== '@') {
-                                    $name = trim($data['name']) . '.' . $s->subdomain;
-                                }
-                                $priority = intval($data['priority'] ?? 10);
-                                try {
-                                    $creation = cf_atomic_run_with_dns_limit($sid, $limitPerSub, function () use ($cf, $s, $type, $content, $ttl, $name, $priority) {
-                                        if ($type === 'MX') {
-                                            $res = $cf->createMXRecord($s->cloudflare_zone_id ?: $s->rootdomain, $name, $content, $priority, $ttl);
-                                        } else {
-                                            $res = $cf->createDnsRecord($s->cloudflare_zone_id ?: $s->rootdomain, $name, $type, $content, $ttl, false);
-                                        }
-                                        if (!($res['success'] ?? false)) {
-                                            $message = $res['errors'][0] ?? ($res['errors'] ?? 'create failed');
-                                            if (is_array($message)) {
-                                                $message = json_encode($message, JSON_UNESCAPED_UNICODE);
-                                            }
-                                            throw new \RuntimeException((string)$message);
-                                        }
-                                        $rid = $res['result']['id'] ?? null;
-                                        Capsule::table('mod_cloudflare_dns_records')->insert([
-                                            'subdomain_id' => $s->id,
-                                            'zone_id' => $s->cloudflare_zone_id ?: $s->rootdomain,
-                                            'record_id' => $rid,
-                                            'name' => strtolower($name),
-                                            'type' => $type,
-                                            'content' => $content,
-                                            'ttl' => $ttl,
-                                            'proxied' => 0,
-                                            'status' => 'active',
-                                            'priority' => $type === 'MX' ? $priority : null,
-                                            'created_at' => date('Y-m-d H:i:s'),
-                                            'updated_at' => date('Y-m-d H:i:s')
-                                        ]);
-                                        CfSubdomainService::markHasDnsHistory($s->id);
-                                        return ['record_id' => $rid];
-                                    });
-                                    CfSubdomainService::syncDnsHistoryFlag($s->id);
-                                    $result = ['success' => true, 'message' => 'DNS record created successfully', 'record_id' => $creation['record_id']];
-                                } catch (CfAtomicRecordLimitException $e) {
-                                    $code = 403;
-                                    $result = ['error' => 'record limit reached'];
-                                } catch (\RuntimeException $e) {
+                                $name = api_resolve_record_name_for_subdomain((string)($data['name'] ?? '@'), (string)$s->subdomain);
+                                list($contentOk, $content, $contentError) = api_build_dns_content_for_type($type, $data);
+                                if (!$contentOk) {
                                     $code = 400;
-                                    $result = ['error' => cfmod_format_provider_error($e->getMessage())];
-                                } catch (\Throwable $e) {
-                                    $code = 500;
-                                    $result = ['error' => 'create failed'];
+                                    $result = $contentError;
+                                } else {
+                                    $priority = intval($data['priority'] ?? 10);
+                                    $priority = max(0, min(65535, $priority));
+                                    $line = trim((string)($data['line'] ?? ''));
+
+                                    try {
+                                        $creation = cf_atomic_run_with_dns_limit($sid, $limitPerSub, function () use ($cf, $s, $type, $content, $ttl, $name, $priority, $line) {
+                                            $zone = $s->cloudflare_zone_id ?: $s->rootdomain;
+                                            if ($type === 'MX') {
+                                                $res = $cf->createMXRecord($zone, $name, $content, $priority, $ttl);
+                                            } elseif (method_exists($cf, 'createDnsRecordRaw')) {
+                                                $payload = [
+                                                    'type' => $type,
+                                                    'name' => $name,
+                                                    'content' => $content,
+                                                    'ttl' => $ttl,
+                                                ];
+                                                if ($line !== '') {
+                                                    $payload['line'] = $line;
+                                                }
+                                                $res = $cf->createDnsRecordRaw($zone, $payload);
+                                            } else {
+                                                $res = $cf->createDnsRecord($zone, $name, $type, $content, $ttl, false);
+                                            }
+                                            if (!($res['success'] ?? false)) {
+                                                $message = $res['errors'][0] ?? ($res['errors'] ?? 'create failed');
+                                                if (is_array($message)) {
+                                                    $message = json_encode($message, JSON_UNESCAPED_UNICODE);
+                                                }
+                                                throw new \RuntimeException((string)$message);
+                                            }
+
+                                            $rid = $res['result']['id'] ?? null;
+                                            $localId = Capsule::table('mod_cloudflare_dns_records')->insertGetId([
+                                                'subdomain_id' => $s->id,
+                                                'zone_id' => $zone,
+                                                'record_id' => $rid,
+                                                'name' => strtolower($name),
+                                                'type' => $type,
+                                                'content' => $content,
+                                                'ttl' => $ttl,
+                                                'proxied' => 0,
+                                                'status' => 'active',
+                                                'priority' => $type === 'MX' ? $priority : null,
+                                                'line' => $line !== '' ? $line : null,
+                                                'created_at' => date('Y-m-d H:i:s'),
+                                                'updated_at' => date('Y-m-d H:i:s')
+                                            ]);
+                                            CfSubdomainService::markHasDnsHistory($s->id);
+                                            return ['record_id' => $rid, 'id' => $localId];
+                                        });
+                                        CfSubdomainService::syncDnsHistoryFlag($s->id);
+                                        $result = [
+                                            'success' => true,
+                                            'message' => 'DNS record created successfully',
+                                            'id' => intval($creation['id'] ?? 0),
+                                            'record_id' => $creation['record_id'] ?? null,
+                                        ];
+                                    } catch (CfAtomicRecordLimitException $e) {
+                                        $code = 403;
+                                        $result = ['error' => 'record limit reached'];
+                                    } catch (\RuntimeException $e) {
+                                        $code = 400;
+                                        $result = ['error' => cfmod_format_provider_error($e->getMessage())];
+                                    } catch (\Throwable $e) {
+                                        $code = 500;
+                                        $result = ['error' => 'create failed'];
+                                    }
                                 }
                             }
                         }
@@ -1842,20 +2105,19 @@ function handleApiRequest(){
                     }
                 }
             } elseif ($action === 'update' && in_array($method, ['POST', 'PUT', 'PATCH'])) {
-                $apiDnsUpdateRecId = intval($data['record_id'] ?? 0);
+                list($recordIdentifier, $localId) = api_resolve_dns_record_identifier($data);
                 $apiDnsUpdateRoot = '';
-                if ($apiDnsUpdateRecId > 0) {
+                if ($recordIdentifier !== null || $localId > 0) {
                     try {
-                        $apiDnsUpdateRec = Capsule::table('mod_cloudflare_dns_records')->where('id', $apiDnsUpdateRecId)->first();
-                        if (!$apiDnsUpdateRec) {
-                            $apiDnsUpdateRec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', (string)$apiDnsUpdateRecId)->first();
-                        }
+                        $apiDnsUpdateRec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
                         if ($apiDnsUpdateRec) {
                             $apiDnsUpdateSid = intval($apiDnsUpdateRec->subdomain_id ?? 0);
                             $apiDnsUpdateRoot = api_get_subdomain_rootdomain($apiDnsUpdateSid);
                         }
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
+
                 if (api_setting_enabled($settings['maintenance_mode'] ?? '0')) {
                     $code = 503;
                     $result = ['error' => 'System under maintenance'];
@@ -1871,20 +2133,17 @@ function handleApiRequest(){
                     } catch (CfRateLimitExceededException $e) {
                         api_emit_scope_rate_limit_error($e);
                     }
-                    $recordId = intval($data['record_id'] ?? 0);
-                    if ($recordId <= 0) {
+
+                    if ($recordIdentifier === null && $localId <= 0) {
                         $code = 400;
                         $result = ['error' => 'record_id required'];
                     } else {
-                        $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', $recordId)->first();
-                        if (!$rec) {
-                            $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordId)->first();
-                        }
+                        $rec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
                         if (!$rec) {
                             $code = 404;
                             $result = ['error' => 'record not found'];
                         } else {
-                            $sid = intval($rec->subdomain_id);
+                            $sid = intval($rec->subdomain_id ?? 0);
                             $s = Capsule::table('mod_cloudflare_subdomain')
                                 ->where('id', $sid)
                                 ->where('userid', $keyRow->userid)
@@ -1896,63 +2155,108 @@ function handleApiRequest(){
                                 $code = 403;
                                 $result = ['error' => 'subdomain suspended'];
                             } else {
-                                $zone = $rec->zone_id ?: ($s->cloudflare_zone_id ?: $s->rootdomain);
-                                $updateData = [];
-                                $newContent = isset($data['content']) ? trim((string)$data['content']) : null;
-                                if ($newContent !== null && $newContent !== '') {
-                                    $updateData['content'] = $newContent;
-                                }
-                                if (isset($data['ttl'])) {
-                                    $updateData['ttl'] = cfmod_normalize_ttl($data['ttl']);
-                                }
-                                if (isset($data['priority'])) {
-                                    $updateData['priority'] = intval($data['priority']);
-                                }
-                                if (empty($updateData)) {
+                                $targetType = strtoupper(trim((string)($data['type'] ?? $rec->type)));
+                                $allowedTypes = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'SRV', 'CAA'];
+                                if (!in_array($targetType, $allowedTypes, true)) {
                                     $code = 400;
-                                    $result = ['error' => 'no updates specified'];
+                                    $result = ['error' => 'invalid type'];
+                                } elseif ($targetType === 'NS' && api_setting_enabled($settings['disable_ns_management'] ?? '0')) {
+                                    $code = 403;
+                                    $result = ['error' => 'NS management disabled'];
                                 } else {
-                                    $providerContext = cfmod_acquire_provider_client_for_subdomain($s, $settings);
-                                    if (!$providerContext || empty($providerContext['client'])) {
-                                        $code = 500;
-                                        $result = ['error' => 'provider unavailable'];
+                                    $hasAnyInput = isset($data['content']) || isset($data['ttl']) || isset($data['priority'])
+                                        || isset($data['name']) || isset($data['type']) || isset($data['line'])
+                                        || isset($data['record_target']) || isset($data['target'])
+                                        || isset($data['record_port']) || isset($data['port'])
+                                        || isset($data['record_weight']) || isset($data['weight'])
+                                        || isset($data['caa_value']) || isset($data['caa_tag']) || isset($data['caa_flag']);
+                                    if (!$hasAnyInput) {
+                                        $code = 400;
+                                        $result = ['error' => 'no updates specified'];
                                     } else {
-                                        $cf = $providerContext['client'];
-                                        try {
-                                            $res = $cf->updateDnsRecord($zone, $rec->record_id, [
-                                                'type' => $rec->type,
-                                                'name' => $rec->name,
-                                                'content' => $updateData['content'] ?? $rec->content,
-                                                'ttl' => $updateData['ttl'] ?? intval($rec->ttl ?? 600),
-                                                'priority' => $updateData['priority'] ?? $rec->priority,
-                                            ]);
-                                            if (!($res['success'] ?? false)) {
-                                                $message = $res['errors'][0] ?? ($res['errors'] ?? 'update failed');
-                                                if (is_array($message)) {
-                                                    $message = json_encode($message, JSON_UNESCAPED_UNICODE);
-                                                }
-                                                throw new \RuntimeException((string)$message);
-                                            }
-                                            $updateColumns = [
-                                                'updated_at' => date('Y-m-d H:i:s'),
-                                            ];
-                                            if (array_key_exists('content', $updateData)) {
-                                                $updateColumns['content'] = $updateData['content'];
-                                            }
-                                            if (array_key_exists('ttl', $updateData)) {
-                                                $updateColumns['ttl'] = $updateData['ttl'];
-                                            }
-                                            if (array_key_exists('priority', $updateData)) {
-                                                $updateColumns['priority'] = $updateData['priority'];
-                                            }
-                                            Capsule::table('mod_cloudflare_dns_records')->where('id', $rec->id)->update($updateColumns);
-                                            $result = ['success' => true, 'message' => 'DNS record updated successfully'];
-                                        } catch (\RuntimeException $e) {
+                                        $zone = $rec->zone_id ?: ($s->cloudflare_zone_id ?: $s->rootdomain);
+                                        $targetName = array_key_exists('name', $data)
+                                            ? api_resolve_record_name_for_subdomain((string)$data['name'], (string)$s->subdomain)
+                                            : (string)($rec->name ?? $s->subdomain);
+                                        $ttlValue = array_key_exists('ttl', $data)
+                                            ? cfmod_normalize_ttl($data['ttl'])
+                                            : cfmod_normalize_ttl($rec->ttl ?? 600);
+                                        $priorityValue = array_key_exists('priority', $data)
+                                            ? intval($data['priority'])
+                                            : intval($rec->priority ?? 10);
+                                        $priorityValue = max(0, min(65535, $priorityValue));
+                                        $lineValue = array_key_exists('line', $data)
+                                            ? trim((string)$data['line'])
+                                            : trim((string)($rec->line ?? ''));
+
+                                        list($contentOk, $targetContent, $contentError) = api_build_dns_content_for_type($targetType, $data, (string)($rec->content ?? ''));
+                                        if (!$contentOk) {
                                             $code = 400;
-                                            $result = ['error' => cfmod_format_provider_error($e->getMessage(), '云解析服务暂时无法更新记录，请稍后再试。')];
-                                        } catch (\Throwable $e) {
-                                            $code = 500;
-                                            $result = ['error' => 'update failed'];
+                                            $result = $contentError;
+                                        } elseif (trim((string)($rec->record_id ?? '')) === '') {
+                                            $code = 400;
+                                            $result = ['error' => 'provider record_id missing'];
+                                        } else {
+                                            $providerContext = cfmod_acquire_provider_client_for_subdomain($s, $settings);
+                                            if (!$providerContext || empty($providerContext['client'])) {
+                                                $code = 500;
+                                                $result = ['error' => 'provider unavailable'];
+                                            } else {
+                                                $cf = $providerContext['client'];
+                                                try {
+                                                    $updatePayload = [
+                                                        'type' => $targetType,
+                                                        'name' => $targetName,
+                                                        'content' => $targetContent,
+                                                        'ttl' => $ttlValue,
+                                                    ];
+                                                    if ($targetType === 'MX') {
+                                                        $updatePayload['priority'] = $priorityValue;
+                                                    }
+                                                    if ($lineValue !== '') {
+                                                        $updatePayload['line'] = $lineValue;
+                                                    }
+
+                                                    if (method_exists($cf, 'updateDnsRecordRaw')) {
+                                                        $res = $cf->updateDnsRecordRaw($zone, (string)$rec->record_id, $updatePayload);
+                                                    } else {
+                                                        $res = $cf->updateDnsRecord($zone, (string)$rec->record_id, $updatePayload);
+                                                    }
+
+                                                    if (!($res['success'] ?? false)) {
+                                                        $message = $res['errors'][0] ?? ($res['errors'] ?? 'update failed');
+                                                        if (is_array($message)) {
+                                                            $message = json_encode($message, JSON_UNESCAPED_UNICODE);
+                                                        }
+                                                        throw new \RuntimeException((string)$message);
+                                                    }
+
+                                                    $newProviderRecordId = $res['result']['id'] ?? ($res['result']['record_id'] ?? $rec->record_id);
+                                                    Capsule::table('mod_cloudflare_dns_records')->where('id', $rec->id)->update([
+                                                        'record_id' => $newProviderRecordId,
+                                                        'name' => strtolower($targetName),
+                                                        'type' => $targetType,
+                                                        'content' => $targetContent,
+                                                        'ttl' => $ttlValue,
+                                                        'priority' => $targetType === 'MX' ? $priorityValue : null,
+                                                        'line' => $lineValue !== '' ? $lineValue : null,
+                                                        'updated_at' => date('Y-m-d H:i:s'),
+                                                    ]);
+
+                                                    $result = [
+                                                        'success' => true,
+                                                        'message' => 'DNS record updated successfully',
+                                                        'id' => intval($rec->id),
+                                                        'record_id' => $newProviderRecordId,
+                                                    ];
+                                                } catch (\RuntimeException $e) {
+                                                    $code = 400;
+                                                    $result = ['error' => cfmod_format_provider_error($e->getMessage(), '云解析服务暂时无法更新记录，请稍后再试。')];
+                                                } catch (\Throwable $e) {
+                                                    $code = 500;
+                                                    $result = ['error' => 'update failed'];
+                                                }
+                                            }
                                         }
                                     }
                                 }
