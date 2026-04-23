@@ -112,27 +112,125 @@ class CfSettingsRepository
             return $settings;
         }
 
-        $prefix = 'enc::';
-        if (strpos($rawValue, $prefix) === 0) {
-            $encrypted = substr($rawValue, strlen($prefix));
-            $settings[$key] = trim((string) cfmod_decrypt_sensitive($encrypted));
+        $plainValue = $this->decodeSensitiveRawValue($rawValue);
+        if ($plainValue !== '' && !$this->isMaskedSensitivePlaceholder($plainValue)) {
+            if (strpos($rawValue, 'enc::') !== 0) {
+                $this->persistSensitiveRawValue($key, $rawValue);
+            }
+            $settings[$key] = $plainValue;
             return $settings;
         }
 
-        $encrypted = cfmod_encrypt_sensitive($rawValue);
-        if ($encrypted !== null && $encrypted !== '') {
-            $stored = $prefix . $encrypted;
+        $fallback = $this->resolveSensitiveFallback($key, [$rawValue]);
+        if (($fallback['plain'] ?? '') !== '') {
+            $settings[$key] = (string) $fallback['plain'];
+            $this->persistSensitiveRawValue($key, (string) ($fallback['raw'] ?? ''));
+            return $settings;
+        }
+
+        $settings[$key] = '';
+        return $settings;
+    }
+
+    private function resolveSensitiveFallback(string $key, array $excludeRawValues = []): array
+    {
+        $excludeRawValues = array_values(array_filter(array_map(static function ($value): string {
+            return trim((string) $value);
+        }, $excludeRawValues), static function (string $value): bool {
+            return $value !== '';
+        }));
+
+        $modules = array_values(array_unique([$this->currentModuleSlug(), $this->legacyModuleSlug()]));
+        foreach ($modules as $module) {
             try {
-                Capsule::table('tbladdonmodules')->updateOrInsert(
-                    ['module' => $this->currentModuleSlug(), 'setting' => $key],
-                    ['value' => $stored]
-                );
+                $rows = Capsule::table('tbladdonmodules')
+                    ->where('module', $module)
+                    ->where('setting', $key)
+                    ->get();
             } catch (\Throwable $e) {
+                $rows = [];
+            }
+
+            foreach ($rows as $row) {
+                $candidateRaw = trim((string) ($row->value ?? ''));
+                if ($candidateRaw === '' || in_array($candidateRaw, $excludeRawValues, true)) {
+                    continue;
+                }
+
+                $candidatePlain = $this->decodeSensitiveRawValue($candidateRaw);
+                if ($candidatePlain === '' || $this->isMaskedSensitivePlaceholder($candidatePlain)) {
+                    continue;
+                }
+
+                return [
+                    'raw' => $candidateRaw,
+                    'plain' => $candidatePlain,
+                    'module' => $module,
+                ];
             }
         }
 
-        $settings[$key] = $rawValue;
-        return $settings;
+        return [
+            'raw' => '',
+            'plain' => '',
+            'module' => '',
+        ];
+    }
+
+    private function decodeSensitiveRawValue(string $rawValue): string
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return '';
+        }
+
+        $prefix = 'enc::';
+        if (strpos($rawValue, $prefix) === 0) {
+            $encrypted = substr($rawValue, strlen($prefix));
+            return trim((string) cfmod_decrypt_sensitive($encrypted));
+        }
+
+        return $rawValue;
+    }
+
+    private function persistSensitiveRawValue(string $key, string $rawValue): void
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return;
+        }
+
+        $stored = $rawValue;
+        if (strpos($stored, 'enc::') !== 0) {
+            $encrypted = cfmod_encrypt_sensitive($stored);
+            if ($encrypted === null || $encrypted === '') {
+                return;
+            }
+            $stored = 'enc::' . $encrypted;
+        }
+
+        try {
+            Capsule::table('tbladdonmodules')->updateOrInsert(
+                ['module' => $this->currentModuleSlug(), 'setting' => $key],
+                ['value' => $stored]
+            );
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function isMaskedSensitivePlaceholder(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        $length = function_exists('mb_strlen') ? (int) mb_strlen($value, 'UTF-8') : strlen($value);
+        if ($length < 4 || $length > 512) {
+            return false;
+        }
+
+        return preg_match('/^[\*\x{FF0A}\x{2022}\x{25CF}]+$/u', $value) === 1;
     }
 
     private function applyDefaults(array $settings): array

@@ -109,10 +109,12 @@ $telegramGroupEnabledSetting = in_array($module_settings['enable_telegram_group_
 $telegramGroupLinkSetting = trim((string) ($module_settings['telegram_group_link'] ?? ''));
 $telegramGroupChatIdSetting = trim((string) ($module_settings['telegram_group_chat_id'] ?? ''));
 $telegramGroupBotUsernameSetting = trim((string) ($module_settings['telegram_group_bot_username'] ?? ''));
-$telegramGroupBotTokenSetting = trim((string) ($module_settings['telegram_group_bot_token'] ?? ''));
-if ($telegramGroupBotTokenSetting !== '' && strpos($telegramGroupBotTokenSetting, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
-    $telegramGroupBotTokenSetting = trim((string) cfmod_decrypt_sensitive(substr($telegramGroupBotTokenSetting, strlen('enc::'))));
+$telegramGroupBotTokenStored = trim((string) ($module_settings['telegram_group_bot_token'] ?? ''));
+$telegramGroupBotTokenConfigured = $telegramGroupBotTokenStored !== '';
+if ($telegramGroupBotTokenConfigured && strpos($telegramGroupBotTokenStored, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+    $telegramGroupBotTokenConfigured = trim((string) cfmod_decrypt_sensitive(substr($telegramGroupBotTokenStored, strlen('enc::')))) !== '';
 }
+$telegramGroupBotTokenPlaceholder = $telegramGroupBotTokenConfigured ? '留空表示保持当前 Token 不变' : '123456:ABCDEF...';
 $telegramGroupRewardSetting = max(1, intval($module_settings['telegram_group_reward_amount'] ?? 1));
 $telegramAuthMaxAgeSetting = max(60, min(604800, intval($module_settings['telegram_reward_auth_max_age_seconds'] ?? 86400)));
 
@@ -396,8 +398,8 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
       </div>
       <div class="col-12 col-lg-4">
         <label class="form-label" for="telegram_group_bot_token"><?php echo htmlspecialchars($telegramGroupBotTokenLabel); ?></label>
-        <input type="password" class="form-control" id="telegram_group_bot_token" name="telegram_group_bot_token" value="<?php echo htmlspecialchars($telegramGroupBotTokenSetting); ?>" placeholder="123456:ABCDEF...">
-        <small class="text-muted"><?php echo htmlspecialchars($telegramGroupBotTokenHint); ?></small>
+        <input type="password" class="form-control" id="telegram_group_bot_token" name="telegram_group_bot_token" value="" autocomplete="new-password" placeholder="<?php echo htmlspecialchars($telegramGroupBotTokenPlaceholder); ?>">
+        <small class="text-muted"><?php echo htmlspecialchars($telegramGroupBotTokenHint); ?><?php if ($telegramGroupBotTokenConfigured): ?>（已检测到历史 Token，留空将保持不变）<?php endif; ?></small>
       </div>
       <div class="col-12 col-lg-2">
         <label class="form-label" for="telegram_group_reward_amount"><?php echo htmlspecialchars($telegramGroupRewardLabel); ?></label>

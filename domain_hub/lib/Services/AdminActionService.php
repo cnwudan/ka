@@ -1626,7 +1626,13 @@ class CfAdminActionService
             $telegramGroupBotUsername = ltrim($telegramGroupBotUsername, '@');
         }
         $postedTelegramBotToken = trim((string) ($_POST['telegram_group_bot_token'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedTelegramBotToken)) {
+            $postedTelegramBotToken = '';
+        }
         $existingTelegramBotToken = trim((string) ($moduleSettings['telegram_group_bot_token'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingTelegramBotToken)) {
+            $existingTelegramBotToken = '';
+        }
         $telegramGroupBotToken = $postedTelegramBotToken !== '' ? $postedTelegramBotToken : $existingTelegramBotToken;
         $telegramGroupRewardAmountInput = intval($_POST['telegram_group_reward_amount'] ?? ($moduleSettings['telegram_group_reward_amount'] ?? 1));
         $telegramGroupRewardAmount = max(1, min(1000, $telegramGroupRewardAmountInput));
@@ -4101,6 +4107,36 @@ class CfAdminActionService
         $slug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
         $legacy = defined('CF_MODULE_NAME_LEGACY') ? CF_MODULE_NAME_LEGACY : 'cloudflare_subdomain';
         return array_values(array_unique([$slug, $legacy]));
+    }
+
+    private static function isMaskedSensitivePlaceholder(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        $length = function_exists('mb_strlen') ? (int) mb_strlen($value, 'UTF-8') : strlen($value);
+        if ($length < 4 || $length > 512) {
+            return false;
+        }
+
+        return preg_match('/^[\*\x{FF0A}\x{2022}\x{25CF}]+$/u', $value) === 1;
+    }
+
+    private static function isStoredMaskedSensitiveValue(string $storedValue): bool
+    {
+        $storedValue = trim($storedValue);
+        if ($storedValue === '') {
+            return false;
+        }
+
+        $plain = $storedValue;
+        if (strpos($storedValue, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+            $plain = trim((string) cfmod_decrypt_sensitive(substr($storedValue, strlen('enc::'))));
+        }
+
+        return self::isMaskedSensitivePlaceholder($plain);
     }
 
     private static function persistModuleSetting(string $key, string $value): void
