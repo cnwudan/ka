@@ -1984,6 +1984,26 @@ function domain_hub_config() {
                 "Default" => "no",
                 "Description" => "开启后，WHMCS Cron 会直接执行队列任务。建议保持关闭，并通过 CLI worker（worker.php）独立运行队列，避免 Cron 被长任务阻塞。",
             ],
+            "job_running_timeout_minutes" => [
+                "FriendlyName" => "任务运行超时回收（分钟）",
+                "Type" => "text",
+                "Size" => "4",
+                "Default" => "120",
+                "Description" => "running 状态任务超过该时间且无心跳将被回收重试，建议 30-1440。",
+            ],
+            "queue_heartbeat_interval_seconds" => [
+                "FriendlyName" => "队列任务心跳间隔（秒）",
+                "Type" => "text",
+                "Size" => "4",
+                "Default" => "20",
+                "Description" => "长任务执行期间写入 heartbeat 的间隔，建议 5-60 秒。",
+            ],
+            "transfer_clone_full_zone" => [
+                "FriendlyName" => "平台迁移启用全 Zone 克隆",
+                "Type" => "yesno",
+                "Default" => "yes",
+                "Description" => "开启后，迁移会在本地子域同步之外追加源平台全 Zone 记录克隆与校验。",
+            ],
             // VPN/代理检测配置
             "enable_vpn_detection" => [
                 "FriendlyName" => "启用VPN/代理检测",
@@ -2233,12 +2253,23 @@ function domain_hub_upgrade($vars) {
                 $table->string('status', 20)->default('pending');
                 $table->integer('attempts')->default(0);
                 $table->dateTime('next_run_at')->nullable();
+                $table->dateTime('started_at')->nullable();
+                $table->dateTime('heartbeat_at')->nullable();
+                $table->dateTime('finished_at')->nullable();
+                $table->integer('duration_seconds')->nullable();
+                $table->string('lease_token', 64)->nullable();
+                $table->string('worker_id', 64)->nullable();
+                $table->boolean('cancel_requested')->default(false);
+                $table->dateTime('cancel_requested_at')->nullable();
                 $table->text('last_error')->nullable();
+                $table->longText('stats_json')->nullable();
                 $table->timestamps();
                 $table->index('status');
                 $table->index('type');
                 $table->index('priority');
                 $table->index('next_run_at');
+                $table->index('heartbeat_at');
+                $table->index('lease_token');
             },
             'mod_cloudflare_sync_results' => function($table) {
                 $table->increments('id');
@@ -2283,6 +2314,57 @@ function domain_hub_upgrade($vars) {
         foreach ($tables_to_check as $table_name => $table_definition) {
             if (!Capsule::schema()->hasTable($table_name)) {
                 Capsule::schema()->create($table_name, $table_definition);
+            }
+        }
+
+        if (Capsule::schema()->hasTable('mod_cloudflare_jobs')) {
+            try {
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'started_at')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->dateTime('started_at')->nullable()->after('next_run_at');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'heartbeat_at')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->dateTime('heartbeat_at')->nullable()->after('started_at');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'finished_at')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->dateTime('finished_at')->nullable()->after('heartbeat_at');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'duration_seconds')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->integer('duration_seconds')->nullable()->after('finished_at');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'lease_token')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->string('lease_token', 64)->nullable()->after('duration_seconds');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'worker_id')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->string('worker_id', 64)->nullable()->after('lease_token');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->boolean('cancel_requested')->default(false)->after('worker_id');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested_at')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->dateTime('cancel_requested_at')->nullable()->after('cancel_requested');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'stats_json')) {
+                    Capsule::schema()->table('mod_cloudflare_jobs', function ($table) {
+                        $table->longText('stats_json')->nullable()->after('last_error');
+                    });
+                }
+            } catch (\Throwable $ignored) {
             }
         }
 

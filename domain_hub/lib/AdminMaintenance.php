@@ -63,6 +63,75 @@ if (!function_exists('cfmod_admin_provider_not_found')) {
     }
 }
 
+if (!function_exists('cfmod_admin_normalize_delete_result')) {
+    function cfmod_admin_normalize_delete_result($result): array
+    {
+        if (!is_array($result)) {
+            return [
+                'success' => false,
+                'deleted_count' => 0,
+                'failed_count' => 1,
+                'failed_items' => [['error' => 'invalid_delete_response']],
+            ];
+        }
+        $failedItems = [];
+        if (isset($result['failed_items']) && is_array($result['failed_items'])) {
+            $failedItems = $result['failed_items'];
+        }
+        $failedCount = intval($result['failed_count'] ?? count($failedItems));
+        if ($failedCount < 0) {
+            $failedCount = 0;
+        }
+        $success = !empty($result['success']);
+        if ($failedCount > 0) {
+            $success = false;
+        }
+        return [
+            'success' => $success,
+            'deleted_count' => max(0, intval($result['deleted_count'] ?? 0)),
+            'failed_count' => $failedCount,
+            'failed_items' => $failedItems,
+        ];
+    }
+}
+
+if (!function_exists('cfmod_admin_verify_subdomain_remote_empty')) {
+    function cfmod_admin_verify_subdomain_remote_empty($cf, string $zoneId, string $subdomainName): bool
+    {
+        if (!$cf || !method_exists($cf, 'getDnsRecords')) {
+            return false;
+        }
+
+        $target = strtolower(rtrim($subdomainName, '.'));
+        if ($target === '') {
+            return false;
+        }
+
+        $full = $cf->getDnsRecords($zoneId, null, ['per_page' => 2000]);
+        if ($full['success'] ?? false) {
+            foreach (($full['result'] ?? []) as $remoteRecord) {
+                $name = strtolower(rtrim((string) ($remoteRecord['name'] ?? ''), '.'));
+                if ($name === $target || (strlen($name) > strlen($target) && substr($name, - (strlen($target) + 1)) === ('.' . $target))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        $partial = $cf->getDnsRecords($zoneId, $subdomainName, ['per_page' => 1000]);
+        if (!($partial['success'] ?? false)) {
+            return false;
+        }
+        foreach (($partial['result'] ?? []) as $remoteRecord) {
+            $name = strtolower(rtrim((string) ($remoteRecord['name'] ?? ''), '.'));
+            if ($name === $target || (strlen($name) > strlen($target) && substr($name, - (strlen($target) + 1)) === ('.' . $target))) {
+                return false;
+            }
+        }
+        return true;
+    }
+}
+
 if (!function_exists('cfmod_admin_deep_delete_subdomain')) {
     function cfmod_admin_deep_delete_subdomain($cf, $record, string $errorMessage = '当前子域绑定的 DNS 供应商不可用，请联系管理员'): int
     {
@@ -99,8 +168,9 @@ if (!function_exists('cfmod_admin_deep_delete_subdomain')) {
             if (!is_array($res)) {
                 return;
             }
-            if ($res['success'] ?? false) {
-                $deletedCount = max($deletedCount, intval($res['deleted_count'] ?? 0));
+            $normalized = cfmod_admin_normalize_delete_result($res);
+            if ($normalized['success']) {
+                $deletedCount = max($deletedCount, intval($normalized['deleted_count'] ?? 0));
                 $remoteSuccess = true;
                 return;
             }
@@ -108,7 +178,14 @@ if (!function_exists('cfmod_admin_deep_delete_subdomain')) {
                 $remoteNotFound = true;
                 return;
             }
-            $lastRemoteError = cfmod_admin_provider_error_text($res);
+            $detail = cfmod_admin_provider_error_text($res);
+            if ($detail === '' && !empty($normalized['failed_items'])) {
+                $encoded = json_encode(array_slice($normalized['failed_items'], 0, 3), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+                if (is_string($encoded) && $encoded !== '') {
+                    $detail = $encoded;
+                }
+            }
+            $lastRemoteError = $detail !== '' ? $detail : 'partial_delete_failed';
         };
 
         try {
@@ -150,6 +227,18 @@ if (!function_exists('cfmod_admin_deep_delete_subdomain')) {
                 throw new \RuntimeException($errorMessage . '：' . $detail);
             }
             throw new \RuntimeException($errorMessage);
+        }
+
+        if (!$remoteNotFound) {
+            $verifiedEmpty = false;
+            try {
+                $verifiedEmpty = cfmod_admin_verify_subdomain_remote_empty($cf, $zoneId, $subdomainName);
+            } catch (\Throwable $e) {
+                $verifiedEmpty = false;
+            }
+            if (!$verifiedEmpty) {
+                throw new \RuntimeException('远端记录删除结果无法确认，已阻止本地清理以避免数据不一致');
+            }
         }
 
         Capsule::table('mod_cloudflare_dns_records')->where('subdomain_id', $record->id)->delete();
