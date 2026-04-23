@@ -19,6 +19,61 @@ if (!function_exists('cfmod_should_run_inline_queue')) {
     }
 }
 
+if (!function_exists('cfmod_has_active_job_of_type')) {
+    function cfmod_has_active_job_of_type(string $type): bool {
+        if ($type === '') {
+            return false;
+        }
+        try {
+            return Capsule::table('mod_cloudflare_jobs')
+                ->where('type', $type)
+                ->whereIn('status', ['pending', 'running'])
+                ->exists();
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+}
+
+if (!function_exists('cfmod_should_enqueue_periodic_job')) {
+    function cfmod_should_enqueue_periodic_job(string $type, int $intervalSeconds): bool {
+        if ($type === '') {
+            return false;
+        }
+        if (cfmod_has_active_job_of_type($type)) {
+            return false;
+        }
+
+        $intervalSeconds = max(0, $intervalSeconds);
+
+        try {
+            $lastFinished = Capsule::table('mod_cloudflare_jobs')
+                ->where('type', $type)
+                ->whereIn('status', ['failed', 'done', 'cancelled'])
+                ->orderBy('id', 'desc')
+                ->first();
+        } catch (\Throwable $e) {
+            return false;
+        }
+
+        if (!$lastFinished) {
+            return true;
+        }
+
+        $lastTime = $lastFinished->updated_at ?? $lastFinished->created_at;
+        if (!$lastTime) {
+            return true;
+        }
+
+        $lastTs = strtotime((string) $lastTime);
+        if ($lastTs === false) {
+            return true;
+        }
+
+        return $lastTs <= (time() - $intervalSeconds);
+    }
+}
+
 // Auto sync via WHMCS cron
 add_hook('AfterCronJob', 1, function($vars) {
     try {
@@ -152,23 +207,7 @@ add_hook('AfterCronJob', 1, function($vars) {
         }
         
         // 检查是否需要创建风险事件清理任务（优化查询）
-        $lastCleanup = Capsule::table('mod_cloudflare_jobs')
-            ->where('type','cleanup_risk_events')
-            ->whereIn('status', ['failed','done','cancelled'])
-            ->orderBy('id','desc')
-            ->first();
-        
-        $shouldCleanup = false;
-        if (!$lastCleanup) { 
-            $shouldCleanup = true; 
-        } else {
-            $lastTime = $lastCleanup->updated_at ?? $lastCleanup->created_at;
-            // 每24小时清理一次
-            if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) {
-                $shouldCleanup = true;
-            }
-        }
-        if ($shouldCleanup) {
+        if (cfmod_should_enqueue_periodic_job('cleanup_risk_events', 24 * 60 * 60)) {
             Capsule::table('mod_cloudflare_jobs')->insert([
                 'type' => 'cleanup_risk_events',
                 'payload_json' => json_encode(['auto' => true], JSON_UNESCAPED_UNICODE),
@@ -183,157 +222,82 @@ add_hook('AfterCronJob', 1, function($vars) {
 
         // 检查是否需要创建 API 日志清理任务（每日一次）
         $apiRetention = intval($settings['api_logs_retention_days'] ?? 30);
-        if ($apiRetention > 0) {
-            $lastApiCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type','cleanup_api_logs')
-                ->whereIn('status', ['failed','done','cancelled'])
-                ->orderBy('id','desc')
-                ->first();
-            $shouldApiCleanup = false;
-            if (!$lastApiCleanup) { $shouldApiCleanup = true; }
-            else {
-                $lastTime = $lastApiCleanup->updated_at ?? $lastApiCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) { $shouldApiCleanup = true; }
-            }
-            if ($shouldApiCleanup) {
-                Capsule::table('mod_cloudflare_jobs')->insert([
-                    'type' => 'cleanup_api_logs',
-                    'payload_json' => json_encode([
-                        'retention_days' => $apiRetention,
-                        'auto' => true
-                    ], JSON_UNESCAPED_UNICODE),
-                    'priority' => 5,
-                    'status' => 'pending',
-                    'attempts' => 0,
-                    'next_run_at' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ]);
-            }
+        if ($apiRetention > 0 && cfmod_should_enqueue_periodic_job('cleanup_api_logs', 24 * 60 * 60)) {
+            Capsule::table('mod_cloudflare_jobs')->insert([
+                'type' => 'cleanup_api_logs',
+                'payload_json' => json_encode([
+                    'retention_days' => $apiRetention,
+                    'auto' => true
+                ], JSON_UNESCAPED_UNICODE),
+                'priority' => 5,
+                'status' => 'pending',
+                'attempts' => 0,
+                'next_run_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now
+            ]);
         }
 
         $generalRetention = intval($settings['general_logs_retention_days'] ?? 0);
-        if ($generalRetention > 0) {
-            $lastGeneralCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type', 'cleanup_general_logs')
-                ->whereIn('status', ['failed','done','cancelled'])
-                ->orderBy('id','desc')
-                ->first();
-            $shouldGeneralCleanup = false;
-            if (!$lastGeneralCleanup) {
-                $shouldGeneralCleanup = true;
-            } else {
-                $lastTime = $lastGeneralCleanup->updated_at ?? $lastGeneralCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) {
-                    $shouldGeneralCleanup = true;
-                }
-            }
-            if ($shouldGeneralCleanup) {
-                Capsule::table('mod_cloudflare_jobs')->insert([
-                    'type' => 'cleanup_general_logs',
-                    'payload_json' => json_encode([
-                        'retention_days' => $generalRetention,
-                        'batch_limit' => 2000,
-                        'auto' => true,
-                    ], JSON_UNESCAPED_UNICODE),
-                    'priority' => 5,
-                    'status' => 'pending',
-                    'attempts' => 0,
-                    'next_run_at' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ]);
-            }
+        if ($generalRetention > 0 && cfmod_should_enqueue_periodic_job('cleanup_general_logs', 24 * 60 * 60)) {
+            Capsule::table('mod_cloudflare_jobs')->insert([
+                'type' => 'cleanup_general_logs',
+                'payload_json' => json_encode([
+                    'retention_days' => $generalRetention,
+                    'batch_limit' => 2000,
+                    'auto' => true,
+                ], JSON_UNESCAPED_UNICODE),
+                'priority' => 5,
+                'status' => 'pending',
+                'attempts' => 0,
+                'next_run_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now
+            ]);
         }
 
         $digRetention = intval($settings['dig_logs_retention_days'] ?? 30);
         $digLogMode = strtolower(trim((string) ($settings['dig_log_mode'] ?? 'meta')));
-        if ($digLogMode !== 'off' && $digRetention > 0) {
-            $lastDigCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type', 'cleanup_dig_logs')
-                ->whereIn('status', ['failed', 'done', 'cancelled'])
-                ->orderBy('id', 'desc')
-                ->first();
-            $shouldDigCleanup = false;
-            if (!$lastDigCleanup) {
-                $shouldDigCleanup = true;
-            } else {
-                $lastTime = $lastDigCleanup->updated_at ?? $lastDigCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) {
-                    $shouldDigCleanup = true;
-                }
-            }
-            if ($shouldDigCleanup) {
-                Capsule::table('mod_cloudflare_jobs')->insert([
-                    'type' => 'cleanup_dig_logs',
-                    'payload_json' => json_encode([
-                        'retention_days' => $digRetention,
-                        'batch_limit' => 2000,
-                        'auto' => true,
-                    ], JSON_UNESCAPED_UNICODE),
-                    'priority' => 5,
-                    'status' => 'pending',
-                    'attempts' => 0,
-                    'next_run_at' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ]);
-            }
+        if ($digLogMode !== 'off' && $digRetention > 0 && cfmod_should_enqueue_periodic_job('cleanup_dig_logs', 24 * 60 * 60)) {
+            Capsule::table('mod_cloudflare_jobs')->insert([
+                'type' => 'cleanup_dig_logs',
+                'payload_json' => json_encode([
+                    'retention_days' => $digRetention,
+                    'batch_limit' => 2000,
+                    'auto' => true,
+                ], JSON_UNESCAPED_UNICODE),
+                'priority' => 5,
+                'status' => 'pending',
+                'attempts' => 0,
+                'next_run_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now
+            ]);
         }
 
         $syncRetention = intval($settings['sync_logs_retention_days'] ?? 0);
-        if ($syncRetention > 0) {
-            $lastSyncCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type', 'cleanup_sync_logs')
-                ->whereIn('status', ['failed','done','cancelled'])
-                ->orderBy('id','desc')
-                ->first();
-            $shouldSyncCleanup = false;
-            if (!$lastSyncCleanup) {
-                $shouldSyncCleanup = true;
-            } else {
-                $lastTime = $lastSyncCleanup->updated_at ?? $lastSyncCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - 24 * 60 * 60) {
-                    $shouldSyncCleanup = true;
-                }
-            }
-            if ($shouldSyncCleanup) {
-                Capsule::table('mod_cloudflare_jobs')->insert([
-                    'type' => 'cleanup_sync_logs',
-                    'payload_json' => json_encode([
-                        'retention_days' => $syncRetention,
-                        'batch_limit' => 2000,
-                        'auto' => true,
-                    ], JSON_UNESCAPED_UNICODE),
-                    'priority' => 6,
-                    'status' => 'pending',
-                    'attempts' => 0,
-                    'next_run_at' => null,
-                    'created_at' => $now,
-                    'updated_at' => $now
-                ]);
-            }
+        if ($syncRetention > 0 && cfmod_should_enqueue_periodic_job('cleanup_sync_logs', 24 * 60 * 60)) {
+            Capsule::table('mod_cloudflare_jobs')->insert([
+                'type' => 'cleanup_sync_logs',
+                'payload_json' => json_encode([
+                    'retention_days' => $syncRetention,
+                    'batch_limit' => 2000,
+                    'auto' => true,
+                ], JSON_UNESCAPED_UNICODE),
+                'priority' => 6,
+                'status' => 'pending',
+                'attempts' => 0,
+                'next_run_at' => null,
+                'created_at' => $now,
+                'updated_at' => $now
+            ]);
         }
 
         $giftEnabledValue = strtolower(trim((string)($settings['enable_domain_gift'] ?? '0')));
         $giftEnabled = in_array($giftEnabledValue, ['1','on','yes','true','enabled'], true);
         if ($giftEnabled) {
-            $lastGiftCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type', 'cleanup_domain_gifts')
-                ->whereIn('status', ['failed','done','cancelled'])
-                ->orderBy('id','desc')
-                ->first();
-            $giftInterval = 60; // minutes
-            $shouldGiftCleanup = false;
-            if (!$lastGiftCleanup) {
-                $shouldGiftCleanup = true;
-            } else {
-                $lastTime = $lastGiftCleanup->updated_at ?? $lastGiftCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - $giftInterval * 60) {
-                    $shouldGiftCleanup = true;
-                }
-            }
-            if ($shouldGiftCleanup) {
+            $giftIntervalSeconds = 60 * 60;
+            if (cfmod_should_enqueue_periodic_job('cleanup_domain_gifts', $giftIntervalSeconds)) {
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'cleanup_domain_gifts',
                     'payload_json' => json_encode([
@@ -370,23 +334,7 @@ add_hook('AfterCronJob', 1, function($vars) {
             }
             $cleanupIntervalSeconds = $cleanupIntervalHours * 3600;
 
-            $lastExpiredCleanup = Capsule::table('mod_cloudflare_jobs')
-                ->where('type', 'cleanup_expired_subdomains')
-                ->whereIn('status', ['failed','done','cancelled'])
-                ->orderBy('id', 'desc')
-                ->first();
-
-            $shouldExpiredCleanup = false;
-            if (!$lastExpiredCleanup) {
-                $shouldExpiredCleanup = true;
-            } else {
-                $lastTime = $lastExpiredCleanup->updated_at ?? $lastExpiredCleanup->created_at;
-                if (!$lastTime || strtotime($lastTime) <= time() - $cleanupIntervalSeconds) {
-                    $shouldExpiredCleanup = true;
-                }
-            }
-
-            if ($shouldExpiredCleanup) {
+            if (cfmod_should_enqueue_periodic_job('cleanup_expired_subdomains', $cleanupIntervalSeconds)) {
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'cleanup_expired_subdomains',
                     'payload_json' => json_encode([
