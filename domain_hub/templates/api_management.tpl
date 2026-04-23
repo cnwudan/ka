@@ -45,7 +45,7 @@ if (!empty($apiKeyIds)) {
     }
 }
 
-$apiDailySeriesDays = 15;
+$apiDailySeriesDays = 7;
 $apiDailyCallStats = [];
 $apiToday = new \DateTimeImmutable('today');
 for ($offset = $apiDailySeriesDays - 1; $offset >= 0; $offset--) {
@@ -55,6 +55,8 @@ for ($offset = $apiDailySeriesDays - 1; $offset >= 0; $offset--) {
         'date' => $dayKey,
         'label' => $day->format('m-d'),
         'count' => 0,
+        'success_count' => 0,
+        'success_rate' => 100.0,
     ];
 }
 if (!empty($apiKeyIds)) {
@@ -63,7 +65,8 @@ if (!empty($apiKeyIds)) {
         $dailyCallRows = \WHMCS\Database\Capsule::table('mod_cloudflare_api_logs')
             ->select(
                 \WHMCS\Database\Capsule::raw('DATE(created_at) as day'),
-                \WHMCS\Database\Capsule::raw('COUNT(*) as total_calls')
+                \WHMCS\Database\Capsule::raw('COUNT(*) as total_calls'),
+                \WHMCS\Database\Capsule::raw('SUM(CASE WHEN response_code < 400 THEN 1 ELSE 0 END) as success_calls')
             )
             ->whereIn('api_key_id', $apiKeyIds)
             ->where('created_at', '>=', $startAt)
@@ -76,7 +79,13 @@ if (!empty($apiKeyIds)) {
             if ($dayKey === '' || !isset($apiDailyCallStats[$dayKey])) {
                 continue;
             }
-            $apiDailyCallStats[$dayKey]['count'] = intval($dailyCallRow->total_calls ?? 0);
+            $totalCalls = intval($dailyCallRow->total_calls ?? 0);
+            $successCalls = intval($dailyCallRow->success_calls ?? 0);
+            $successRate = $totalCalls > 0 ? round(($successCalls / $totalCalls) * 100, 1) : 100.0;
+
+            $apiDailyCallStats[$dayKey]['count'] = $totalCalls;
+            $apiDailyCallStats[$dayKey]['success_count'] = $successCalls;
+            $apiDailyCallStats[$dayKey]['success_rate'] = $successRate;
         }
     } catch (\Throwable $e) {
     }
@@ -91,6 +100,9 @@ $apiDailyTrendPayload = [
     }, $apiDailyCallStats)),
     'values' => array_values(array_map(static function (array $row): int {
         return intval($row['count'] ?? 0);
+    }, $apiDailyCallStats)),
+    'successRates' => array_values(array_map(static function (array $row): float {
+        return round((float) ($row['success_rate'] ?? 100), 1);
     }, $apiDailyCallStats)),
 ];
 
@@ -133,9 +145,16 @@ $cfApiText = static function (string $key, string $default, array $params = [], 
     return cfclient_lang($key, $default, $params, $escape);
 };
 $apiLocaleIsChinese = strtolower((string) ($currentClientLanguage ?? 'english')) === 'chinese';
-$apiTrendTitleDefault = $apiLocaleIsChinese ? '近 15 天每日总调用次数' : 'Total Daily Calls (Last 15 Days)';
-$apiTrendHintDefault = $apiLocaleIsChinese ? '将鼠标悬停在折线点上可查看明细' : 'Hover over points to see details';
-$apiTrendCallsUnit = $apiLocaleIsChinese ? '次调用' : 'calls';
+$apiTrendTitleDefault = $apiLocaleIsChinese
+    ? sprintf('近 %d 天每日总调用次数', $apiDailySeriesDays)
+    : sprintf('Total Daily Calls (Last %d Days)', $apiDailySeriesDays);
+$apiTrendHintDefault = $apiLocaleIsChinese
+    ? '将鼠标悬停在折线点上可查看明细；成功率低于 90% 会显示红色预警点。'
+    : 'Hover over points to see details. Red points indicate success rate below 90%.';
+$apiTrendCountLabel = $apiLocaleIsChinese ? '调用次数' : 'Calls';
+$apiTrendCountUnit = $apiLocaleIsChinese ? '次' : '';
+$apiTrendSuccessLabel = $apiLocaleIsChinese ? '成功率' : 'Success Rate';
+$apiTrendSeparator = $apiLocaleIsChinese ? '：' : ': ';
 ?>
 
 <div class="card mt-4" id="api-management-card">
@@ -619,7 +638,10 @@ function deleteApiKey(keyId) {
 }
 
 const apiUsageTrendPayload = <?php echo json_encode($apiDailyTrendPayload, CFMOD_SAFE_JSON_FLAGS); ?>;
-const apiUsageTrendCallsUnit = <?php echo json_encode($apiTrendCallsUnit, CFMOD_SAFE_JSON_FLAGS); ?>;
+const apiUsageTrendCountLabel = <?php echo json_encode($apiTrendCountLabel, CFMOD_SAFE_JSON_FLAGS); ?>;
+const apiUsageTrendCountUnit = <?php echo json_encode($apiTrendCountUnit, CFMOD_SAFE_JSON_FLAGS); ?>;
+const apiUsageTrendSuccessLabel = <?php echo json_encode($apiTrendSuccessLabel, CFMOD_SAFE_JSON_FLAGS); ?>;
+const apiUsageTrendSeparator = <?php echo json_encode($apiTrendSeparator, CFMOD_SAFE_JSON_FLAGS); ?>;
 
 function renderApiUsageTrendChart() {
     const canvas = document.getElementById('apiUsageTrendCanvas');
@@ -634,6 +656,9 @@ function renderApiUsageTrendChart() {
     const values = Array.isArray(apiUsageTrendPayload.values)
         ? apiUsageTrendPayload.values.map(function(item){ return Number(item) || 0; })
         : [];
+    const successRates = Array.isArray(apiUsageTrendPayload.successRates)
+        ? apiUsageTrendPayload.successRates.map(function(item){ return Number(item) || 100; })
+        : values.map(function(){ return 100; });
 
     const formatAxisValue = function(value) {
         if (value >= 1000) {
@@ -717,7 +742,13 @@ function renderApiUsageTrendChart() {
             const x = len > 1 ? (padding.left + stepX * i) : (padding.left + plotWidth / 2);
             const ratio = maxValue > 0 ? values[i] / maxValue : 0;
             const y = padding.top + plotHeight * (1 - ratio);
-            points.push({ x: x, y: y, value: values[i], date: dates[i] || labels[i] || '' });
+            points.push({
+                x: x,
+                y: y,
+                value: values[i],
+                date: dates[i] || labels[i] || '',
+                successRate: Number(successRates[i] ?? 100)
+            });
         }
 
         if (points.length > 1) {
@@ -732,9 +763,10 @@ function renderApiUsageTrendChart() {
         }
 
         points.forEach(function(point) {
+            const warningPoint = Number(point.value || 0) > 0 && Number(point.successRate || 0) < 90;
             ctx.beginPath();
-            ctx.fillStyle = '#ffffff';
-            ctx.strokeStyle = '#0d6efd';
+            ctx.fillStyle = warningPoint ? '#fff5f5' : '#ffffff';
+            ctx.strokeStyle = warningPoint ? '#dc3545' : '#0d6efd';
             ctx.lineWidth = 2;
             ctx.arc(point.x, point.y, 3.5, 0, Math.PI * 2);
             ctx.fill();
@@ -763,7 +795,11 @@ function renderApiUsageTrendChart() {
         if (!tooltip || !point) {
             return;
         }
-        tooltip.textContent = point.date + ': ' + formatTooltipValue(point.value) + ' ' + apiUsageTrendCallsUnit;
+        const countSuffix = apiUsageTrendCountUnit ? (' ' + apiUsageTrendCountUnit) : '';
+        const successRateText = (Number(point.successRate) || 0).toFixed(1) + '%';
+        tooltip.innerHTML = point.date + '<br>'
+            + apiUsageTrendCountLabel + apiUsageTrendSeparator + formatTooltipValue(point.value) + countSuffix + '<br>'
+            + apiUsageTrendSuccessLabel + apiUsageTrendSeparator + successRateText;
         tooltip.style.opacity = '1';
         tooltip.style.visibility = 'visible';
 
@@ -908,7 +944,9 @@ document.addEventListener('DOMContentLoaded', function () {
     font-size: 12px;
     border-radius: 6px;
     padding: 6px 8px;
-    white-space: nowrap;
+    white-space: normal;
+    line-height: 1.45;
+    min-width: 136px;
     transition: opacity 0.15s ease;
     z-index: 6;
 }
