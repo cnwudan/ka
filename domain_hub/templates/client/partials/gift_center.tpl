@@ -14,7 +14,7 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
                     <h5 class="card-title mb-1">
                         <i class="fas fa-exchange-alt text-primary me-2"></i><?php echo $giftText('cfclient.gift_center.title', '域名转赠工作台', 'Domain Transfer Workbench'); ?>
                     </h5>
-                    <div class="text-muted small"><?php echo $giftText('cfclient.gift_center.desc', '从“弹窗”升级为常驻工作台：发起、接收与历史管理一页完成。', 'Upgrade from modal to persistent workspace: initiate, accept, and manage transfer history in one place.'); ?></div>
+                    <div class="text-muted small"><?php echo $giftText('cfclient.gift_center.desc', '为保障域名安全，新注册域名需满 7 天后方可发起转赠操作。', 'To protect domain security, newly registered domains must be at least 7 days old before transfer can be initiated.'); ?></div>
                 </div>
                 <div class="gift-workbench-tip badge rounded-pill px-3 py-2">
                     <i class="fas fa-clock me-1"></i>
@@ -224,13 +224,13 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
     #giftWorkbench .gift-domain-item.is-locked {
         opacity: 1;
         cursor: not-allowed;
-        border-color: #f7c8c8;
-        background: #fff5f5;
+        border-color: #f4d49b;
+        background: #fff9ed;
     }
 
     #giftWorkbench .gift-domain-item.is-locked:hover {
-        border-color: #f7c8c8;
-        background: #fff5f5;
+        border-color: #f4d49b;
+        background: #fff9ed;
     }
 
     #giftWorkbench .gift-domain-item .form-check-input {
@@ -254,7 +254,7 @@ $giftTtlHours = max(1, intval($domainGiftTtlHours ?? 24));
         margin-left: 0.45rem;
         font-size: 0.75rem;
         font-weight: 700;
-        color: #dc2626;
+        color: #d97706;
     }
 
     #giftWorkbench .gift-code-value {
