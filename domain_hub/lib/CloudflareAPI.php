@@ -18,6 +18,8 @@ class CloudflareAPI {
     private $access_key_secret;
     private $endpoint = 'https://alidns.aliyuncs.com/';
     private $version = '2015-01-09';
+    private $rateLimitPerMinute = 0;
+    private $lastRequestAtMicro = 0.0;
 
     public function __construct($email, $api_key){
         $this->access_key_id = trim((string)$email);
@@ -46,6 +48,7 @@ class CloudflareAPI {
     }
 
     private function performRpcRequest(string $action, array $params = []) : array {
+        $this->applyRequestRateLimit();
         $sysParams = [
             'Format' => 'JSON',
             'Version' => $this->version,
@@ -125,6 +128,30 @@ class CloudflareAPI {
     private function retryDelayMicros(int $attempt): int {
         $delayMs = self::RETRY_BASE_DELAY_MS * max(1, $attempt);
         return min(1500, $delayMs) * 1000;
+    }
+
+    private function applyRequestRateLimit(): void {
+        $limit = intval($this->rateLimitPerMinute);
+        if ($limit <= 0) {
+            return;
+        }
+        $minIntervalMicro = (int) floor((60 * 1000000) / max(1, $limit));
+        if ($minIntervalMicro <= 0) {
+            return;
+        }
+        $nowMicro = microtime(true);
+        if ($this->lastRequestAtMicro > 0) {
+            $elapsed = (int) floor(($nowMicro - $this->lastRequestAtMicro) * 1000000);
+            if ($elapsed < $minIntervalMicro) {
+                usleep($minIntervalMicro - $elapsed);
+                $nowMicro = microtime(true);
+            }
+        }
+        $this->lastRequestAtMicro = $nowMicro;
+    }
+
+    public function setRequestRateLimit(int $ratePerMinute): void {
+        $this->rateLimitPerMinute = max(0, $ratePerMinute);
     }
 
     private function splitNameToRR(string $fullName, string $domainName): string {
@@ -240,32 +267,83 @@ class CloudflareAPI {
 
     // 删除指定域名的所有记录（谨慎使用）
     public function deleteDomainRecords($zone_id, $domain_name){
-        $records = $this->getDomainRecords($zone_id, $domain_name);
-        $deleted_count = 0;
-        foreach($records as $record){
-            $res = $this->rpcRequest('DeleteDomainRecord', [ 'RecordId' => $record['id'] ]);
-            if($res['success'] ?? false){ $deleted_count++; }
+        $recordsRes = $this->getDnsRecords($zone_id, $domain_name, ['per_page' => 500]);
+        if (!($recordsRes['success'] ?? false)) {
+            return ['success' => false, 'errors' => $recordsRes['errors'] ?? ['list failed']];
         }
-        return ['success' => true, 'deleted_count' => $deleted_count];
+        $records = $recordsRes['result'] ?? [];
+        $deletedCount = 0;
+        $failed = [];
+        foreach($records as $record){
+            $rid = $record['id'] ?? null;
+            if (!$rid) {
+                continue;
+            }
+            $res = $this->rpcRequest('DeleteDomainRecord', [ 'RecordId' => $rid ]);
+            if($res['success'] ?? false){
+                $deletedCount++;
+            } else {
+                $failed[] = [
+                    'record_id' => $rid,
+                    'name' => $record['name'] ?? null,
+                    'type' => $record['type'] ?? null,
+                    'error' => $this->mapAliErrorToSuggestion($res) ?: ($res['Message'] ?? 'delete failed'),
+                ];
+            }
+        }
+
+        return [
+            'success' => empty($failed),
+            'requested_count' => count($records),
+            'deleted_count' => $deletedCount,
+            'failed_count' => count($failed),
+            'failed_items' => $failed,
+        ];
     }
 
     // 深度删除：删除等于 subdomain_root 以及其所有子级（*.subdomain_root）的记录
     public function deleteDomainRecordsDeep($zone_id, $subdomain_root){
-        $list = $this->getDnsRecords($zone_id, null, ['per_page' => 1000]);
-        if (!($list['success'] ?? false)) { return ['success' => false, 'errors' => $list['errors'] ?? ['list failed']]; }
+        $list = $this->getDnsRecords($zone_id, null, ['per_page' => 500]);
+        if (!($list['success'] ?? false)) {
+            return ['success' => false, 'errors' => $list['errors'] ?? ['list failed']];
+        }
         $target = strtolower(rtrim($subdomain_root, '.'));
-        $deleted = 0; $errors = [];
+        $candidates = [];
         foreach (($list['result'] ?? []) as $r) {
             $name = strtolower(rtrim((string)($r['name'] ?? ''), '.'));
-            if ($name === $target || $this->endsWith($name, '.' . $target)) {
-                $rid = $r['id'] ?? null;
-                if ($rid) {
-                    $res = $this->rpcRequest('DeleteDomainRecord', [ 'RecordId' => $rid ]);
-                    if ($res['success'] ?? false) { $deleted++; }
-                }
+            if ($target !== '' && ($name === $target || $this->endsWith($name, '.' . $target))) {
+                $candidates[] = $r;
             }
         }
-        return ['success' => true, 'deleted_count' => $deleted, 'note' => 'deep'];
+
+        $deletedCount = 0;
+        $failed = [];
+        foreach ($candidates as $record) {
+            $rid = $record['id'] ?? null;
+            if (!$rid) {
+                continue;
+            }
+            $res = $this->rpcRequest('DeleteDomainRecord', [ 'RecordId' => $rid ]);
+            if ($res['success'] ?? false) {
+                $deletedCount++;
+            } else {
+                $failed[] = [
+                    'record_id' => $rid,
+                    'name' => $record['name'] ?? null,
+                    'type' => $record['type'] ?? null,
+                    'error' => $this->mapAliErrorToSuggestion($res) ?: ($res['Message'] ?? 'delete failed'),
+                ];
+            }
+        }
+
+        return [
+            'success' => empty($failed),
+            'requested_count' => count($candidates),
+            'deleted_count' => $deletedCount,
+            'failed_count' => count($failed),
+            'failed_items' => $failed,
+            'note' => 'deep',
+        ];
     }
 
     public function getDnsRecords($zone_id, $name=null, $params = []){

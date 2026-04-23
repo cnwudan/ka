@@ -97,6 +97,115 @@ function cfmod_job_metrics_supported(): bool {
     return $supported;
 }
 
+function cfmod_job_control_columns(): array {
+    static $columns = null;
+    if ($columns !== null) {
+        return $columns;
+    }
+    $columns = [
+        'lease_token' => false,
+        'worker_id' => false,
+        'heartbeat_at' => false,
+        'cancel_requested' => false,
+        'cancel_requested_at' => false,
+    ];
+    try {
+        if (Capsule::schema()->hasTable('mod_cloudflare_jobs')) {
+            foreach (array_keys($columns) as $col) {
+                $columns[$col] = Capsule::schema()->hasColumn('mod_cloudflare_jobs', $col);
+            }
+        }
+    } catch (\Throwable $e) {
+    }
+    return $columns;
+}
+
+function cfmod_job_worker_id(): string {
+    static $workerId = null;
+    if ($workerId !== null) {
+        return $workerId;
+    }
+    $host = function_exists('gethostname') ? (string) gethostname() : 'worker';
+    $seed = $host . '|' . microtime(true) . '|' . mt_rand();
+    $workerId = substr($host, 0, 20) . '-' . substr(sha1($seed), 0, 12);
+    return $workerId;
+}
+
+function cfmod_job_new_lease_token(): string {
+    try {
+        return bin2hex(random_bytes(16));
+    } catch (\Throwable $e) {
+        return substr(sha1((string) microtime(true) . '|' . mt_rand()), 0, 32);
+    }
+}
+
+function cfmod_worker_set_active_job_context(?array $context): void {
+    if ($context === null) {
+        unset($GLOBALS['cfmod_worker_active_job_context']);
+        return;
+    }
+    $GLOBALS['cfmod_worker_active_job_context'] = $context;
+}
+
+function cfmod_worker_get_active_job_context(): ?array {
+    $ctx = $GLOBALS['cfmod_worker_active_job_context'] ?? null;
+    return is_array($ctx) ? $ctx : null;
+}
+
+function cfmod_worker_touch_progress(bool $force = false): void {
+    $ctx = cfmod_worker_get_active_job_context();
+    if (!$ctx || empty($ctx['job_id'])) {
+        return;
+    }
+
+    $nowTs = time();
+    $nextAt = intval($ctx['next_touch_at'] ?? 0);
+    if (!$force && $nextAt > $nowTs) {
+        return;
+    }
+
+    $jobId = intval($ctx['job_id']);
+    if ($jobId <= 0) {
+        return;
+    }
+
+    $columns = cfmod_job_control_columns();
+    $now = date('Y-m-d H:i:s');
+    $updateData = ['updated_at' => $now];
+    if (!empty($columns['heartbeat_at'])) {
+        $updateData['heartbeat_at'] = $now;
+    }
+
+    $query = Capsule::table('mod_cloudflare_jobs')
+        ->where('id', $jobId)
+        ->where('status', 'running');
+    if (!empty($columns['lease_token']) && !empty($ctx['lease_token'])) {
+        $query->where('lease_token', (string) $ctx['lease_token']);
+    }
+    $updated = $query->update($updateData);
+    if ($updated <= 0) {
+        throw new \RuntimeException('__job_lease_lost__');
+    }
+
+    if (!empty($columns['cancel_requested'])) {
+        $stateQuery = Capsule::table('mod_cloudflare_jobs')->where('id', $jobId);
+        if (!empty($columns['lease_token']) && !empty($ctx['lease_token'])) {
+            $stateQuery->where('lease_token', (string) $ctx['lease_token']);
+        }
+        $state = $stateQuery->first();
+        if (!$state || strtolower((string) ($state->status ?? '')) !== 'running') {
+            throw new \RuntimeException('__job_lease_lost__');
+        }
+        if (intval($state->cancel_requested ?? 0) === 1) {
+            throw new \RuntimeException('__job_cancelled__');
+        }
+    }
+
+    $interval = max(5, min(120, intval($ctx['heartbeat_interval'] ?? 20)));
+    $ctx['next_touch_at'] = $nowTs + $interval;
+    $GLOBALS['cfmod_worker_active_job_context'] = $ctx;
+}
+
 function cfmod_build_stats_summary(array $stats): string {
     if (empty($stats)) {
         return 'OK';
@@ -472,11 +581,20 @@ function cfmod_recover_stalled_running_jobs(array $settings = []): int
     $now = date('Y-m-d H:i:s');
     $cutoff = date('Y-m-d H:i:s', time() - $timeoutMinutes * 60);
     $metricsSupported = cfmod_job_metrics_supported();
+    $columns = cfmod_job_control_columns();
 
     try {
-        $stalledJobs = Capsule::table('mod_cloudflare_jobs')
-            ->where('status', 'running')
-            ->where('updated_at', '<=', $cutoff)
+        $stalledQuery = Capsule::table('mod_cloudflare_jobs')
+            ->where('status', 'running');
+        if (!empty($columns['heartbeat_at'])) {
+            $stalledQuery->where(function ($q) use ($cutoff) {
+                $q->whereNull('heartbeat_at')->where('updated_at', '<=', $cutoff)
+                  ->orWhere('heartbeat_at', '<=', $cutoff);
+            });
+        } else {
+            $stalledQuery->where('updated_at', '<=', $cutoff);
+        }
+        $stalledJobs = $stalledQuery
             ->orderBy('id', 'asc')
             ->limit(200)
             ->get();
@@ -491,30 +609,50 @@ function cfmod_recover_stalled_running_jobs(array $settings = []): int
             if ($attempts <= 0) {
                 $attempts = 1;
             }
-            $toFailed = $attempts >= 5;
-            $reason = 'Recovered stalled running job after ' . $timeoutMinutes . ' minutes';
+            $cancelRequested = !empty($columns['cancel_requested']) && intval($job->cancel_requested ?? 0) === 1;
+            $toFailed = !$cancelRequested && $attempts >= 5;
+            $reason = $cancelRequested
+                ? ('Recovered stalled running job as cancelled after ' . $timeoutMinutes . ' minutes')
+                : ('Recovered stalled running job after ' . $timeoutMinutes . ' minutes');
             $prevError = trim((string) ($job->last_error ?? ''));
             $combinedError = $prevError !== '' ? ($prevError . ' | ' . $reason) : $reason;
 
+            $nextStatus = $cancelRequested ? 'cancelled' : ($toFailed ? 'failed' : 'pending');
             $updateData = [
-                'status' => $toFailed ? 'failed' : 'pending',
-                'next_run_at' => $toFailed ? null : $now,
+                'status' => $nextStatus,
+                'next_run_at' => ($nextStatus === 'pending') ? $now : null,
                 'updated_at' => $now,
                 'last_error' => substr($combinedError, 0, 1000),
             ];
 
+            if (!empty($columns['lease_token'])) {
+                $updateData['lease_token'] = null;
+            }
+            if (!empty($columns['worker_id'])) {
+                $updateData['worker_id'] = null;
+            }
+            if (!empty($columns['heartbeat_at'])) {
+                $updateData['heartbeat_at'] = null;
+            }
+            if (!empty($columns['cancel_requested'])) {
+                $updateData['cancel_requested'] = 0;
+            }
+            if (!empty($columns['cancel_requested_at'])) {
+                $updateData['cancel_requested_at'] = null;
+            }
+
             if ($metricsSupported) {
-                if ($toFailed) {
+                if ($nextStatus === 'pending') {
+                    $updateData['started_at'] = null;
+                    $updateData['finished_at'] = null;
+                    $updateData['duration_seconds'] = null;
+                    $updateData['stats_json'] = null;
+                } else {
                     $updateData['finished_at'] = $now;
                     if (!empty($job->started_at)) {
                         $duration = time() - strtotime((string) $job->started_at);
                         $updateData['duration_seconds'] = max(0, intval($duration));
                     }
-                } else {
-                    $updateData['started_at'] = null;
-                    $updateData['finished_at'] = null;
-                    $updateData['duration_seconds'] = null;
-                    $updateData['stats_json'] = null;
                 }
             }
 
@@ -546,24 +684,30 @@ function run_cf_queue_once(int $maxJobs = 3): void {
 
     $now = date('Y-m-d H:i:s');
     $metricsSupported = cfmod_job_metrics_supported();
-    $jobs = Capsule::table('mod_cloudflare_jobs')
+    $controlColumns = cfmod_job_control_columns();
+    $jobsQuery = Capsule::table('mod_cloudflare_jobs')
         ->where('status', 'pending')
         ->where(function($q) use ($now) { $q->whereNull('next_run_at')->orWhere('next_run_at', '<=', $now); })
         ->orderBy('priority', 'asc')
         ->orderBy('attempts', 'asc')
         ->orderBy('id', 'asc')
-        ->limit($maxJobs)
-        ->get();
+        ->limit($maxJobs);
+    if (!empty($controlColumns['cancel_requested'])) {
+        $jobsQuery->where(function($q) {
+            $q->whereNull('cancel_requested')->orWhere('cancel_requested', 0);
+        });
+    }
+    $jobs = $jobsQuery->get();
 
     foreach ($jobs as $job) {
         $jobStartMicro = microtime(true);
         $jobStartAt = date('Y-m-d H:i:s');
         $stats = [];
+        $leaseToken = !empty($controlColumns['lease_token']) ? cfmod_job_new_lease_token() : null;
         try {
-            // 原子抢占：仅当任务仍为 pending 时才能抢占
             $claimData = [
                 'status' => 'running',
-                'attempts' => $job->attempts + 1,
+                'attempts' => intval($job->attempts ?? 0) + 1,
                 'updated_at' => $jobStartAt,
             ];
             if ($metricsSupported) {
@@ -572,11 +716,44 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 $claimData['duration_seconds'] = null;
                 $claimData['stats_json'] = null;
             }
-            $claimed = Capsule::table('mod_cloudflare_jobs')
+            if (!empty($controlColumns['lease_token'])) {
+                $claimData['lease_token'] = $leaseToken;
+            }
+            if (!empty($controlColumns['worker_id'])) {
+                $claimData['worker_id'] = cfmod_job_worker_id();
+            }
+            if (!empty($controlColumns['heartbeat_at'])) {
+                $claimData['heartbeat_at'] = $jobStartAt;
+            }
+            if (!empty($controlColumns['cancel_requested'])) {
+                $claimData['cancel_requested'] = 0;
+            }
+            if (!empty($controlColumns['cancel_requested_at'])) {
+                $claimData['cancel_requested_at'] = null;
+            }
+
+            $claimQuery = Capsule::table('mod_cloudflare_jobs')
                 ->where('id', $job->id)
-                ->where('status', 'pending')
-                ->update($claimData);
-            if ($claimed === 0) { continue; }
+                ->where('status', 'pending');
+            if (!empty($controlColumns['cancel_requested'])) {
+                $claimQuery->where(function($q) {
+                    $q->whereNull('cancel_requested')->orWhere('cancel_requested', 0);
+                });
+            }
+            $claimed = $claimQuery->update($claimData);
+            if ($claimed === 0) {
+                continue;
+            }
+
+            $heartbeatInterval = intval($settings['queue_heartbeat_interval_seconds'] ?? 20);
+            $heartbeatInterval = max(5, min(120, $heartbeatInterval));
+            cfmod_worker_set_active_job_context([
+                'job_id' => intval($job->id),
+                'lease_token' => $leaseToken,
+                'heartbeat_interval' => $heartbeatInterval,
+                'next_touch_at' => 0,
+            ]);
+            cfmod_worker_touch_progress(true);
 
             $payload = json_decode($job->payload_json ?? '{}', true) ?: [];
             $type = $job->type;
@@ -646,7 +823,7 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                     throw new \RuntimeException('Unknown job type: ' . $type);
             }
 
-
+            cfmod_worker_touch_progress(true);
             $summary = cfmod_build_stats_summary($stats);
             $finishedAt = date('Y-m-d H:i:s');
             $durationSeconds = (int) max(0, round(microtime(true) - $jobStartMicro));
@@ -662,26 +839,109 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 $updateData['duration_seconds'] = $durationSeconds;
                 $updateData['stats_json'] = !empty($stats) ? json_encode($stats, JSON_UNESCAPED_UNICODE) : null;
             }
-            Capsule::table('mod_cloudflare_jobs')->where('id', $job->id)->update($updateData);
+            if (!empty($controlColumns['lease_token'])) {
+                $updateData['lease_token'] = null;
+            }
+            if (!empty($controlColumns['worker_id'])) {
+                $updateData['worker_id'] = null;
+            }
+            if (!empty($controlColumns['heartbeat_at'])) {
+                $updateData['heartbeat_at'] = null;
+            }
+            if (!empty($controlColumns['cancel_requested'])) {
+                $updateData['cancel_requested'] = 0;
+            }
+            if (!empty($controlColumns['cancel_requested_at'])) {
+                $updateData['cancel_requested_at'] = null;
+            }
+
+            $doneQuery = Capsule::table('mod_cloudflare_jobs')
+                ->where('id', $job->id)
+                ->where('status', 'running');
+            if (!empty($controlColumns['lease_token']) && !empty($leaseToken)) {
+                $doneQuery->where('lease_token', $leaseToken);
+            }
+            $doneQuery->update($updateData);
         } catch (\Throwable $e) {
             $durationSeconds = (int) max(0, round(microtime(true) - $jobStartMicro));
-            $attempts = ($job->attempts ?? 0) + 1;
-            $backoffMinutes = min(60, pow(2, min(6, $attempts - 1))); // 1,2,4,8,16,32,64->cap 60
-            $nextRunAt = ($attempts >= 5) ? null : date('Y-m-d H:i:s', time() + $backoffMinutes * 60);
-            $updateData = [
-                'status' => ($attempts >= 5 ? 'failed' : 'pending'),
-                'next_run_at' => $nextRunAt,
-                'last_error' => substr($e->getMessage(), 0, 1000),
-                'updated_at' => date('Y-m-d H:i:s'),
-                'attempts' => $attempts,
-            ];
-            if ($metricsSupported) {
-                $updateData['finished_at'] = date('Y-m-d H:i:s');
-                $updateData['duration_seconds'] = $durationSeconds;
-                $updateData['stats_json'] = null;
+            $message = trim((string) $e->getMessage());
+            $finishedAt = date('Y-m-d H:i:s');
+
+            if ($message === '__job_lease_lost__') {
+                // another worker recovered/reclaimed the job, do not override state
+            } else {
+                $failQuery = Capsule::table('mod_cloudflare_jobs')
+                    ->where('id', $job->id)
+                    ->where('status', 'running');
+                if (!empty($controlColumns['lease_token']) && !empty($leaseToken)) {
+                    $failQuery->where('lease_token', $leaseToken);
+                }
+
+                if ($message === '__job_cancelled__') {
+                    $updateData = [
+                        'status' => 'cancelled',
+                        'next_run_at' => null,
+                        'updated_at' => $finishedAt,
+                        'last_error' => 'cancel_requested',
+                    ];
+                    if ($metricsSupported) {
+                        $updateData['finished_at'] = $finishedAt;
+                        $updateData['duration_seconds'] = $durationSeconds;
+                        $updateData['stats_json'] = !empty($stats) ? json_encode($stats, JSON_UNESCAPED_UNICODE) : null;
+                    }
+                    if (!empty($controlColumns['lease_token'])) {
+                        $updateData['lease_token'] = null;
+                    }
+                    if (!empty($controlColumns['worker_id'])) {
+                        $updateData['worker_id'] = null;
+                    }
+                    if (!empty($controlColumns['heartbeat_at'])) {
+                        $updateData['heartbeat_at'] = null;
+                    }
+                    if (!empty($controlColumns['cancel_requested'])) {
+                        $updateData['cancel_requested'] = 0;
+                    }
+                    if (!empty($controlColumns['cancel_requested_at'])) {
+                        $updateData['cancel_requested_at'] = null;
+                    }
+                    $failQuery->update($updateData);
+                } else {
+                    $attempts = intval($job->attempts ?? 0) + 1;
+                    $backoffMinutes = min(60, pow(2, min(6, $attempts - 1)));
+                    $nextRunAt = ($attempts >= 5) ? null : date('Y-m-d H:i:s', time() + $backoffMinutes * 60);
+                    $updateData = [
+                        'status' => ($attempts >= 5 ? 'failed' : 'pending'),
+                        'next_run_at' => $nextRunAt,
+                        'last_error' => substr($message !== '' ? $message : 'unknown job error', 0, 1000),
+                        'updated_at' => $finishedAt,
+                        'attempts' => $attempts,
+                    ];
+                    if ($metricsSupported) {
+                        $updateData['finished_at'] = $finishedAt;
+                        $updateData['duration_seconds'] = $durationSeconds;
+                        $updateData['stats_json'] = null;
+                    }
+                    if (!empty($controlColumns['lease_token'])) {
+                        $updateData['lease_token'] = null;
+                    }
+                    if (!empty($controlColumns['worker_id'])) {
+                        $updateData['worker_id'] = null;
+                    }
+                    if (!empty($controlColumns['heartbeat_at'])) {
+                        $updateData['heartbeat_at'] = null;
+                    }
+                    if (!empty($controlColumns['cancel_requested'])) {
+                        $updateData['cancel_requested'] = 0;
+                    }
+                    if (!empty($controlColumns['cancel_requested_at'])) {
+                        $updateData['cancel_requested_at'] = null;
+                    }
+                    $failQuery->update($updateData);
+                    cfmod_report_exception('job_' . ($job->type ?? 'unknown'), $e);
+                }
             }
-            Capsule::table('mod_cloudflare_jobs')->where('id', $job->id)->update($updateData);
-            cfmod_report_exception('job_' . ($job->type ?? 'unknown'), $e);
+        } finally {
+            cfmod_worker_set_active_job_context(null);
         }
     }
 }
@@ -774,6 +1034,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
     $providerClients = [];
     $groupedSubs = [];
     foreach ($subs as $s) {
+        cfmod_worker_touch_progress();
         $stats['processed_subdomains']++;
         $providerId = cfmod_worker_resolve_provider_account_id_for_subdomain($s, $settings);
         $groupKey = $providerId ?: 0;
@@ -796,6 +1057,7 @@ function cfmod_job_calibrate_all($job, array $payload): array {
         $zoneCache = [];
 
         foreach ($groupSubs as $s) {
+            cfmod_worker_touch_progress();
             $zoneId = $s->cloudflare_zone_id ?: ($s->rootdomain ?? null);
             if (!$zoneId) {
                 $stats['warnings'][] = 'missing_zone:' . $s->id;
@@ -871,6 +1133,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
     $remoteIndex = cfmod_worker_build_remote_index_for_subdomain($cf, $zoneId, $sub, $locals, $zoneCache, $stats);
 
     foreach ($locals as $lr) {
+        cfmod_worker_touch_progress();
         $normalizedTtl = cfmod_normalize_ttl($lr->ttl ?? 600);
         if (!isset($lr->ttl) || intval($lr->ttl) !== $normalizedTtl) {
             Capsule::table('mod_cloudflare_dns_records')
@@ -950,6 +1213,7 @@ function cfmod_calibrate_subdomain(int $jobId, string $mode, $cf, $sub, array &$
     }
 
     foreach ($remoteIndex as $n => $typeToList) {
+        cfmod_worker_touch_progress();
         if (!($n === $nameSub || cf_str_ends_with($n, '.' . $nameSub))) {
             continue;
         }
@@ -1577,6 +1841,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
     $providerClients = [];
     $now = date('Y-m-d H:i:s');
     foreach ($batch as $s) {
+        cfmod_worker_touch_progress();
         try {
             $stats['processed_subdomains']++;
             $oldFull = strtolower($s->subdomain);
@@ -1703,6 +1968,7 @@ function cfmod_job_replace_root($job, array $payload = []): array {
                 $fresh = $targetCf->getDnsRecords($toZone, $newFull, ['per_page' => 1000]);
                 if (($fresh['success'] ?? false)) {
                     foreach (($fresh['result'] ?? []) as $fr) {
+                        cfmod_worker_touch_progress();
                         $name = strtolower($fr['name'] ?? '');
                         $type = strtoupper($fr['type'] ?? '');
                         $content = (string)($fr['content'] ?? '');
@@ -1810,6 +2076,22 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     $autoResume = !empty($payload['auto_resume']);
     $resumeStatus = isset($payload['resume_status']) ? (string)$payload['resume_status'] : null;
     $targetZone = trim((string)($payload['target_zone_identifier'] ?? ''));
+    $cloneSettingRaw = strtolower(trim((string) ($settings['transfer_clone_full_zone'] ?? '1')));
+    $cloneFullZone = array_key_exists('clone_full_zone', $payload)
+        ? !empty($payload['clone_full_zone'])
+        : in_array($cloneSettingRaw, ['1', 'yes', 'true', 'on'], true);
+    $sourceProviderId = intval($payload['source_provider_id'] ?? 0);
+    if ($sourceProviderId <= 0) {
+        try {
+            $rootRow = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [$rootdomain])
+                ->first();
+            if ($rootRow && !empty($rootRow->provider_account_id)) {
+                $sourceProviderId = intval($rootRow->provider_account_id);
+            }
+        } catch (\Throwable $ignored) {
+        }
+    }
     $now = date('Y-m-d H:i:s');
 
     $targetContext = cfmod_make_provider_client($targetProviderId, $rootdomain, null, $settings, true);
@@ -1827,6 +2109,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     $stats = [
         'rootdomain' => $rootdomain,
         'target_provider_id' => $targetProviderId,
+        'source_provider_id' => $sourceProviderId,
         'batch_size' => $batchSize,
         'cursor_start' => $cursor,
         'processed_subdomains' => 0,
@@ -1834,8 +2117,13 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         'records_updated_on_cf' => 0,
         'records_exists_on_cf' => 0,
         'records_deleted_on_cf' => 0,
+        'records_failed_on_cf' => 0,
         'records_updated_local' => 0,
         'records_imported_local' => 0,
+        'clone_full_zone' => $cloneFullZone ? 1 : 0,
+        'full_zone_created' => 0,
+        'full_zone_exists' => 0,
+        'full_zone_failed' => 0,
         'warnings' => [],
     ];
 
@@ -1889,6 +2177,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     $providerClients = [];
 
     foreach ($batch as $s) {
+        cfmod_worker_touch_progress();
         try {
             $sid = intval($s->id ?? 0);
             if ($sid <= 0) {
@@ -1901,11 +2190,11 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 continue;
             }
 
-            $sourceProviderId = cfmod_worker_resolve_provider_account_id_for_subdomain($s, $settings);
+            $subSourceProviderId = cfmod_worker_resolve_provider_account_id_for_subdomain($s, $settings);
             $sourceContext = null;
             $sourceCf = null;
-            if ($sourceProviderId !== null) {
-                $sourceContext = cfmod_worker_acquire_provider_client_cached($sourceProviderId, $settings, $providerClients, $stats, 'transfer_root_source');
+            if ($subSourceProviderId !== null) {
+                $sourceContext = cfmod_worker_acquire_provider_client_cached($subSourceProviderId, $settings, $providerClients, $stats, 'transfer_root_source');
                 if ($sourceContext) {
                     $sourceCf = $sourceContext['client'] ?? null;
                 }
@@ -1972,6 +2261,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
             }
 
             foreach ($records as $rec) {
+                cfmod_worker_touch_progress();
                 $name = $rec['name'] ?: $subdomainName;
                 $type = $rec['type'] ?: 'A';
                 $ttl = intval($rec['ttl'] ?? 600);
@@ -1990,8 +2280,10 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                         continue;
                     }
                     $stats['warnings'][] = 'create_failed:' . $sid;
+                    $stats['records_failed_on_cf']++;
                 } catch (\Throwable $e) {
                     $stats['warnings'][] = 'write_failed:' . $sid;
+                    $stats['records_failed_on_cf']++;
                     cfmod_report_exception('transfer_root_provider_write', $e);
                 }
             }
@@ -2001,6 +2293,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 $fresh = $targetCf->getDnsRecords($targetZone, $subdomainName, ['per_page' => 1000]);
                 if (($fresh['success'] ?? false)) {
                     foreach (($fresh['result'] ?? []) as $fr) {
+                        cfmod_worker_touch_progress();
                         $name = strtolower($fr['name'] ?? '');
                         $type = strtoupper($fr['type'] ?? '');
                         $content = (string) ($fr['content'] ?? '');
@@ -2027,11 +2320,12 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 }
             } catch (\Throwable $e) {
                 $stats['warnings'][] = 'refresh_local_failed:' . $sid;
+                $stats['records_failed_on_cf']++;
                 cfmod_report_exception('transfer_root_provider_refresh_local', $e);
             }
 
             if ($deleteOld) {
-                if ($sourceProviderId && $sourceProviderId !== $targetProviderId && $sourceCf) {
+                if ($subSourceProviderId && $subSourceProviderId !== $targetProviderId && $sourceCf) {
                     try {
                         $sourceZone = $s->cloudflare_zone_id ?: $rootdomain;
                         $deleted = $sourceCf->deleteDomainRecordsDeep($sourceZone, $subdomainName);
@@ -2042,7 +2336,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                         $stats['warnings'][] = 'delete_old_failed:' . $sid;
                         cfmod_report_exception('transfer_root_provider_delete_old', $e);
                     }
-                } elseif ($sourceProviderId === $targetProviderId) {
+                } elseif ($subSourceProviderId === $targetProviderId) {
                     $stats['warnings'][] = 'skip_delete_same_provider:' . $sid;
                 } else {
                     $stats['warnings'][] = 'delete_source_missing:' . $sid;
@@ -2063,7 +2357,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 cloudflare_subdomain_log('job_transfer_root_provider_progress', [
                     'rootdomain' => $rootdomain,
                     'subdomain' => $subdomainName,
-                    'source_provider_id' => $sourceProviderId,
+                    'source_provider_id' => $subSourceProviderId,
                     'target_provider_id' => $targetProviderId,
                 ], intval($s->userid ?? 0), $sid);
             }
@@ -2085,6 +2379,8 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 $nextPayload = $payload;
                 $nextPayload['cursor_id'] = $lastId;
                 $nextPayload['target_zone_identifier'] = $targetZone;
+                $nextPayload['source_provider_id'] = $sourceProviderId;
+                $nextPayload['clone_full_zone'] = $cloneFullZone ? 1 : 0;
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'transfer_root_provider',
                     'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
@@ -2102,27 +2398,66 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         }
     } else {
         $stats['has_more'] = false;
-        try {
-            $update = [
-                'provider_account_id' => $targetProviderId,
-                'cloudflare_zone_id' => $targetZone,
-                'updated_at' => $now,
-            ];
-            if ($autoResume && $resumeStatus !== null && $resumeStatus !== '') {
-                $update['status'] = $resumeStatus;
+        $canFinalizeSwitch = true;
+
+        if ($cloneFullZone) {
+            if ($sourceProviderId > 0 && $sourceProviderId !== $targetProviderId) {
+                $sourceContext = cfmod_worker_acquire_provider_client_cached($sourceProviderId, $settings, $providerClients, $stats, 'transfer_full_zone_source');
+                if ($sourceContext && !empty($sourceContext['client'])) {
+                    $sourceCfForZone = $sourceContext['client'];
+                    $cloneOk = cfmod_worker_transfer_clone_full_zone_records($sourceCfForZone, $rootdomain, $targetCf, $targetZone, $stats);
+                    if (!$cloneOk) {
+                        $canFinalizeSwitch = false;
+                    }
+                } else {
+                    $stats['warnings'][] = 'full_zone_source_unavailable';
+                    $canFinalizeSwitch = false;
+                }
+            } elseif ($sourceProviderId === $targetProviderId && $sourceProviderId > 0) {
+                $stats['warnings'][] = 'full_zone_skip_same_provider';
+            } else {
+                $stats['warnings'][] = 'full_zone_source_unknown';
+                $canFinalizeSwitch = false;
             }
-            Capsule::table('mod_cloudflare_rootdomains')
-                ->whereRaw('LOWER(domain) = ?', [$rootdomain])
-                ->update($update);
-        } catch (\Throwable $e) {
-            $stats['warnings'][] = 'root_update_failed';
-            cfmod_report_exception('transfer_root_provider_finalize', $e);
         }
+
+        if (intval($stats['records_failed_on_cf'] ?? 0) > 0) {
+            $canFinalizeSwitch = false;
+        }
+        if (intval($stats['full_zone_failed'] ?? 0) > 0) {
+            $canFinalizeSwitch = false;
+        }
+
+        if ($canFinalizeSwitch) {
+            try {
+                $update = [
+                    'provider_account_id' => $targetProviderId,
+                    'cloudflare_zone_id' => $targetZone,
+                    'updated_at' => $now,
+                ];
+                if ($autoResume && $resumeStatus !== null && $resumeStatus !== '') {
+                    $update['status'] = $resumeStatus;
+                }
+                Capsule::table('mod_cloudflare_rootdomains')
+                    ->whereRaw('LOWER(domain) = ?', [$rootdomain])
+                    ->update($update);
+            } catch (\Throwable $e) {
+                $stats['warnings'][] = 'root_update_failed';
+                cfmod_report_exception('transfer_root_provider_finalize', $e);
+            }
+        } else {
+            $stats['warnings'][] = 'switch_skipped_due_to_errors';
+        }
+
         if (function_exists('cloudflare_subdomain_log')) {
             cloudflare_subdomain_log('job_transfer_root_provider_done', [
                 'rootdomain' => $rootdomain,
+                'source_provider_id' => $sourceProviderId,
                 'target_provider_id' => $targetProviderId,
                 'processed_subdomains' => $stats['processed_subdomains'],
+                'records_failed_on_cf' => $stats['records_failed_on_cf'] ?? 0,
+                'full_zone_failed' => $stats['full_zone_failed'] ?? 0,
+                'switched' => $canFinalizeSwitch ? 1 : 0,
             ]);
         }
     }
@@ -2132,6 +2467,116 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     }
 
     return $stats;
+}
+
+function cfmod_worker_dns_record_identity_key(array $record): ?string {
+    $normalized = cfmod_worker_transfer_normalize_record($record, (string) ($record['name'] ?? ''));
+    if ($normalized === null) {
+        return null;
+    }
+
+    $type = strtoupper((string) ($normalized['type'] ?? ''));
+    if ($type === 'SOA') {
+        return null;
+    }
+
+    $name = strtolower((string) ($normalized['name'] ?? ''));
+    $content = strtolower(trim((string) ($normalized['content'] ?? '')));
+    $priority = $normalized['priority'] ?? null;
+
+    if ($type === 'MX') {
+        $mx = cfmod_worker_transfer_mx_parts($normalized);
+        $content = strtolower(trim((string) ($mx['content'] ?? '')));
+        $priority = $mx['priority'] ?? $priority;
+    }
+
+    return $name . '|' . $type . '|' . $content . '|' . ($priority === null ? '' : (string) intval($priority));
+}
+
+function cfmod_worker_transfer_fetch_zone_records($providerClient, string $zoneId, array &$stats, string $context): array {
+    if (!is_object($providerClient) || !method_exists($providerClient, 'getDnsRecords')) {
+        $stats['warnings'][] = $context . '_provider_invalid';
+        return [];
+    }
+
+    try {
+        $res = $providerClient->getDnsRecords($zoneId, null, ['per_page' => 1000]);
+    } catch (\Throwable $e) {
+        $stats['warnings'][] = $context . '_fetch_exception';
+        cfmod_report_exception('transfer_full_zone_' . $context, $e);
+        return [];
+    }
+
+    if (!($res['success'] ?? false)) {
+        $stats['warnings'][] = $context . '_fetch_failed';
+        return [];
+    }
+
+    return is_array($res['result'] ?? null) ? $res['result'] : [];
+}
+
+function cfmod_worker_transfer_clone_full_zone_records($sourceCf, string $sourceZone, $targetCf, string $targetZone, array &$stats): bool {
+    $sourceRecords = cfmod_worker_transfer_fetch_zone_records($sourceCf, $sourceZone, $stats, 'source_full_zone');
+    if (empty($sourceRecords)) {
+        return true;
+    }
+
+    $targetRecords = cfmod_worker_transfer_fetch_zone_records($targetCf, $targetZone, $stats, 'target_full_zone');
+    $targetIdentity = [];
+    foreach ($targetRecords as $existingRecord) {
+        if (!is_array($existingRecord)) {
+            continue;
+        }
+        $idKey = cfmod_worker_dns_record_identity_key($existingRecord);
+        if ($idKey !== null && $idKey !== '') {
+            $targetIdentity[$idKey] = true;
+        }
+    }
+
+    foreach ($sourceRecords as $sourceRecord) {
+        cfmod_worker_touch_progress();
+        if (!is_array($sourceRecord)) {
+            continue;
+        }
+        $identityKey = cfmod_worker_dns_record_identity_key($sourceRecord);
+        if ($identityKey === null || $identityKey === '') {
+            continue;
+        }
+        if (isset($targetIdentity[$identityKey])) {
+            $stats['full_zone_exists'] = ($stats['full_zone_exists'] ?? 0) + 1;
+            continue;
+        }
+
+        $normalized = cfmod_worker_transfer_normalize_record($sourceRecord, (string) ($sourceRecord['name'] ?? ''));
+        if ($normalized === null) {
+            continue;
+        }
+        $ttl = max(60, intval($normalized['ttl'] ?? 600));
+
+        try {
+            $created = cfmod_worker_transfer_create_on_target($targetCf, $targetZone, $normalized['name'], $normalized['type'], $normalized, $ttl);
+            if ($created['success'] ?? false) {
+                $stats['full_zone_created'] = ($stats['full_zone_created'] ?? 0) + 1;
+                $targetIdentity[$identityKey] = true;
+                continue;
+            }
+
+            $existsRes = $targetCf->getDnsRecords($targetZone, $normalized['name'], ['type' => $normalized['type'], 'per_page' => 1000]);
+            if (($existsRes['success'] ?? false) && cfmod_worker_transfer_remote_record_exists($existsRes['result'] ?? [], $normalized)) {
+                $stats['full_zone_exists'] = ($stats['full_zone_exists'] ?? 0) + 1;
+                $targetIdentity[$identityKey] = true;
+                continue;
+            }
+            $stats['full_zone_failed'] = ($stats['full_zone_failed'] ?? 0) + 1;
+            $stats['warnings'][] = 'full_zone_create_failed:' . $normalized['name'] . ':' . $normalized['type'];
+        } catch (\Throwable $e) {
+            $stats['full_zone_failed'] = ($stats['full_zone_failed'] ?? 0) + 1;
+            $stats['warnings'][] = 'full_zone_write_exception';
+            cfmod_report_exception('transfer_full_zone_write', $e);
+        }
+    }
+
+    return intval($stats['full_zone_failed'] ?? 0) === 0;
 }
 
 function cfmod_worker_transfer_normalize_record(array $record, string $defaultName): ?array {
@@ -2574,6 +3019,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
     $providerClients = [];
     $groupedSubs = [];
     foreach ($subs as $s) {
+        cfmod_worker_touch_progress();
         $stats['processed_subdomains']++;
         $providerId = cfmod_worker_resolve_provider_account_id_for_subdomain($s, $settings);
         $groupKey = $providerId ?: 0;
@@ -2596,6 +3042,7 @@ function cfmod_job_reconcile_all($job, array $payload = []): array {
         $zoneCache = [];
 
         foreach ($groupSubs as $s) {
+            cfmod_worker_touch_progress();
             try {
                 $zone = $s->cloudflare_zone_id ?: $s->rootdomain;
                 $name = strtolower($s->subdomain);
@@ -3282,6 +3729,7 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
         $lastScannedId = $cursor;
 
         foreach ($records as $record) {
+            cfmod_worker_touch_progress();
             $recordId = intval($record->id ?? 0);
             if ($recordId <= 0) {
                 $stats['warnings'][] = 'invalid_record_id';
@@ -3310,14 +3758,34 @@ function cfmod_job_cleanup_expired_subdomains($job, array $payload = []): array 
                             ? $cf->deleteDomainRecordsDeep($zoneId, $subdomainName)
                             : $cf->deleteDomainRecords($zoneId, $subdomainName);
                         $deleteSuccess = (bool)($result['success'] ?? false);
+                        if ($deleteSuccess && intval($result['failed_count'] ?? 0) > 0) {
+                            $deleteSuccess = false;
+                            $apiError = $result['failed_items'] ?? 'partial_delete_failed';
+                        }
                         if (!$deleteSuccess && $deepDelete) {
                             $fallback = $cf->deleteDomainRecords($zoneId, $subdomainName);
                             $deleteSuccess = (bool)($fallback['success'] ?? false);
+                            if ($deleteSuccess && intval($fallback['failed_count'] ?? 0) > 0) {
+                                $deleteSuccess = false;
+                                $apiError = $fallback['failed_items'] ?? 'partial_delete_failed';
+                            }
                             if (!$deleteSuccess) {
                                 $apiError = $fallback['errors'] ?? ($fallback['Message'] ?? 'unknown_error');
                             }
                         } elseif (!$deleteSuccess) {
                             $apiError = $result['errors'] ?? ($result['Message'] ?? 'unknown_error');
+                        }
+                        if ($deleteSuccess && function_exists('cfmod_admin_verify_subdomain_remote_empty')) {
+                            try {
+                                if (!cfmod_admin_verify_subdomain_remote_empty($cf, (string) $zoneId, (string) $subdomainName)) {
+                                    $deleteSuccess = false;
+                                    $apiError = 'remote_verify_failed';
+                                }
+                            } catch (\Throwable $verifyException) {
+                                $deleteSuccess = false;
+                                $apiError = 'remote_verify_exception';
+                                cfmod_report_exception('cleanup_expired_subdomains_verify', $verifyException);
+                            }
                         }
                     } else {
                         $deleteSuccess = true;

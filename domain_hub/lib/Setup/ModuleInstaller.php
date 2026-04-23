@@ -530,16 +530,27 @@ class CfModuleInstaller
                         $table->string('status', 20)->default('pending');
                         $table->integer('attempts')->default(0);
                         $table->dateTime('next_run_at')->nullable();
+                        $table->dateTime('started_at')->nullable();
+                        $table->dateTime('heartbeat_at')->nullable();
+                        $table->dateTime('finished_at')->nullable();
+                        $table->integer('duration_seconds')->nullable();
+                        $table->string('lease_token', 64)->nullable();
+                        $table->string('worker_id', 64)->nullable();
+                        $table->boolean('cancel_requested')->default(false);
+                        $table->dateTime('cancel_requested_at')->nullable();
                         $table->text('last_error')->nullable();
+                        $table->longText('stats_json')->nullable();
                         $table->timestamps();
                         $table->index('status');
                         $table->index('type');
                         $table->index('priority');
                         $table->index('next_run_at');
+                        $table->index('heartbeat_at');
+                        $table->index('lease_token');
                     });
                 }
         
-                // 队列表新增指标字段
+                // 队列表新增控制与指标字段
                 try {
                     if (Capsule::schema()->hasTable('mod_cloudflare_jobs')) {
                         if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'started_at')) {
@@ -547,14 +558,39 @@ class CfModuleInstaller
                                 $table->dateTime('started_at')->nullable()->after('next_run_at');
                             });
                         }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'heartbeat_at')) {
+                            Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
+                                $table->dateTime('heartbeat_at')->nullable()->after('started_at');
+                            });
+                        }
                         if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'finished_at')) {
                             Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
-                                $table->dateTime('finished_at')->nullable()->after('started_at');
+                                $table->dateTime('finished_at')->nullable()->after('heartbeat_at');
                             });
                         }
                         if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'duration_seconds')) {
                             Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
                                 $table->integer('duration_seconds')->nullable()->after('finished_at');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'lease_token')) {
+                            Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
+                                $table->string('lease_token', 64)->nullable()->after('duration_seconds');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'worker_id')) {
+                            Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
+                                $table->string('worker_id', 64)->nullable()->after('lease_token');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested')) {
+                            Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
+                                $table->boolean('cancel_requested')->default(false)->after('worker_id');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested_at')) {
+                            Capsule::schema()->table('mod_cloudflare_jobs', function($table) {
+                                $table->dateTime('cancel_requested_at')->nullable()->after('cancel_requested');
                             });
                         }
                         if (!Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'stats_json')) {

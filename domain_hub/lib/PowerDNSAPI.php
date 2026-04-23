@@ -20,6 +20,8 @@ class PowerDNSAPI
     private $supportsRrsetFilter = null;
     private $zoneDetailCache = [];
     private $zoneRrsetIndex = [];
+    private $rateLimitPerMinute = 0;
+    private $lastRequestAtMicro = 0.0;
 
     /**
      * @param string $api_url PowerDNS API base URL (e.g., http://localhost:8081/api/v1)
@@ -56,6 +58,7 @@ class PowerDNSAPI
 
     private function performRequest(string $method, string $endpoint, ?array $data = null): array
     {
+        $this->applyRequestRateLimit();
         $url = $this->api_url . $endpoint;
 
         $ch = curl_init();
@@ -151,6 +154,32 @@ class PowerDNSAPI
     {
         $delayMs = self::RETRY_BASE_DELAY_MS * max(1, $attempt);
         return min(1500, $delayMs) * 1000;
+    }
+
+    private function applyRequestRateLimit(): void
+    {
+        $limit = intval($this->rateLimitPerMinute);
+        if ($limit <= 0) {
+            return;
+        }
+        $minIntervalMicro = (int) floor((60 * 1000000) / max(1, $limit));
+        if ($minIntervalMicro <= 0) {
+            return;
+        }
+        $nowMicro = microtime(true);
+        if ($this->lastRequestAtMicro > 0) {
+            $elapsed = (int) floor(($nowMicro - $this->lastRequestAtMicro) * 1000000);
+            if ($elapsed < $minIntervalMicro) {
+                usleep($minIntervalMicro - $elapsed);
+                $nowMicro = microtime(true);
+            }
+        }
+        $this->lastRequestAtMicro = $nowMicro;
+    }
+
+    public function setRequestRateLimit(int $ratePerMinute): void
+    {
+        $this->rateLimitPerMinute = max(0, $ratePerMinute);
     }
 
     private function buildQueryString(array $queryParams): string
@@ -1006,12 +1035,10 @@ class PowerDNSAPI
         $target = $this->normalizeRecordName($subdomainRoot);
         $targetNoDot = $this->stripTrailingDot($target);
 
-        // Prefer search API to avoid full zone fetch
-        $searchLimit = 2000;
-        $allRecords = $this->searchZoneRrsets($zoneName, $targetNoDot, null, $searchLimit, false, true);
+        // Reliability-first: always load full zone rrsets to avoid truncated search-data results
+        $allRecords = $this->requestZoneDetail($zoneName, [], true);
         if (!($allRecords['success'] ?? false)) {
-            // Fallback to legacy full zone fetch when search-data is unavailable
-            $allRecords = $this->getDnsRecords($zoneId);
+            $allRecords = $this->getDnsRecords($zoneId, null, ['per_page' => 1000]);
             if (!($allRecords['success'] ?? false)) {
                 return ['success' => false, 'errors' => $allRecords['errors'] ?? ['query failed']];
             }

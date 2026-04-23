@@ -10,6 +10,8 @@ class DNSPodIntlAPI {
     private $service = 'dnspod';
     private $version = '2021-03-23';
     private $region = 'ap-hongkong';
+    private $rateLimitPerMinute = 0;
+    private $lastRequestAtMicro = 0.0;
 
     public function __construct($secretId, $secretKey)
     {
@@ -34,6 +36,7 @@ class DNSPodIntlAPI {
 
     private function performTc3Request(string $action, array $payload): array
     {
+        $this->applyRequestRateLimit();
         $timestamp = time();
         $date = gmdate('Y-m-d', $timestamp);
         $payloadJson = json_encode($payload, JSON_UNESCAPED_UNICODE);
@@ -136,6 +139,32 @@ class DNSPodIntlAPI {
         return min(1500, $delayMs) * 1000;
     }
 
+    private function applyRequestRateLimit(): void
+    {
+        $limit = intval($this->rateLimitPerMinute);
+        if ($limit <= 0) {
+            return;
+        }
+        $minIntervalMicro = (int) floor((60 * 1000000) / max(1, $limit));
+        if ($minIntervalMicro <= 0) {
+            return;
+        }
+        $nowMicro = microtime(true);
+        if ($this->lastRequestAtMicro > 0) {
+            $elapsed = (int) floor(($nowMicro - $this->lastRequestAtMicro) * 1000000);
+            if ($elapsed < $minIntervalMicro) {
+                usleep($minIntervalMicro - $elapsed);
+                $nowMicro = microtime(true);
+            }
+        }
+        $this->lastRequestAtMicro = $nowMicro;
+    }
+
+    public function setRequestRateLimit(int $ratePerMinute): void
+    {
+        $this->rateLimitPerMinute = max(0, $ratePerMinute);
+    }
+
     private function normalizeTtl($ttl): int
     {
         $value = intval($ttl);
@@ -224,28 +253,60 @@ class DNSPodIntlAPI {
 
     public function getDnsRecords($zone_id, $name = null, $params = [])
     {
-        $payload = [
+        $limit = intval($params['per_page'] ?? 1000);
+        $limit = max(50, min(3000, $limit));
+        $offset = isset($params['offset']) ? max(0, intval($params['offset'])) : 0;
+        $maxLoops = max(1, min(1000, intval($params['max_pages'] ?? 300)));
+
+        $payloadBase = [
             'Domain' => $zone_id,
-            'Limit' => min(100, max(20, intval($params['per_page'] ?? 100))),
-            'Offset' => 0,
+            'Limit' => $limit,
         ];
         if ($name) {
             $rr = $this->splitSubDomain($name, $zone_id);
             if ($rr !== '@') {
-                $payload['Subdomain'] = $rr;
+                $payloadBase['Subdomain'] = $rr;
             }
         }
         if (!empty($params['type'])) {
-            $payload['RecordType'] = strtoupper($params['type']);
+            $payloadBase['RecordType'] = strtoupper($params['type']);
         }
-        $res = $this->tc3Request('DescribeRecordList', $payload);
-        if (!($res['success'] ?? false)) {
-            return $res;
-        }
+
         $records = [];
-        foreach (($res['Response']['RecordList'] ?? []) as $record) {
-            $records[] = $this->mapRecord($record, $zone_id);
-        }
+        $loops = 0;
+        $total = null;
+        do {
+            $loops++;
+            $payload = $payloadBase;
+            $payload['Offset'] = $offset;
+            $res = $this->tc3Request('DescribeRecordList', $payload);
+            if (!($res['success'] ?? false)) {
+                return $res;
+            }
+            $batch = $res['Response']['RecordList'] ?? [];
+            foreach ($batch as $record) {
+                $records[] = $this->mapRecord($record, $zone_id);
+            }
+
+            if ($total === null) {
+                $totalRaw = $res['Response']['RecordCountInfo']['TotalCount']
+                    ?? $res['Response']['RecordCountInfo']['ListCount']
+                    ?? null;
+                if ($totalRaw !== null && is_numeric($totalRaw)) {
+                    $total = max(0, intval($totalRaw));
+                }
+            }
+
+            $count = count($batch);
+            $offset += $count;
+            if ($count < $limit) {
+                break;
+            }
+            if ($total !== null && $offset >= $total) {
+                break;
+            }
+        } while ($loops < $maxLoops);
+
         return ['success' => true, 'result' => $records];
     }
 
@@ -386,38 +447,70 @@ class DNSPodIntlAPI {
 
     public function deleteDomainRecords($zone_id, $domain_name)
     {
-        $records = $this->getDnsRecords($zone_id, $domain_name);
+        $records = $this->getDnsRecords($zone_id, $domain_name, ['per_page' => 3000]);
         if (!($records['success'] ?? false)) {
             return $records;
         }
         $deleted = 0;
+        $failed = [];
         foreach (($records['result'] ?? []) as $record) {
             $res = $this->deleteSubdomain($zone_id, $record['id']);
             if ($res['success'] ?? false) {
                 $deleted++;
+            } else {
+                $failed[] = [
+                    'record_id' => $record['id'] ?? null,
+                    'name' => $record['name'] ?? null,
+                    'type' => $record['type'] ?? null,
+                    'error' => $res['errors'] ?? 'delete failed',
+                ];
             }
         }
-        return ['success' => true, 'deleted_count' => $deleted];
+        return [
+            'success' => empty($failed),
+            'requested_count' => count($records['result'] ?? []),
+            'deleted_count' => $deleted,
+            'failed_count' => count($failed),
+            'failed_items' => $failed,
+        ];
     }
 
     public function deleteDomainRecordsDeep($zone_id, $subdomain_root)
     {
-        $records = $this->getDnsRecords($zone_id, null);
+        $records = $this->getDnsRecords($zone_id, null, ['per_page' => 3000]);
         if (!($records['success'] ?? false)) {
             return $records;
         }
         $target = strtolower(rtrim($subdomain_root, '.'));
-        $deleted = 0;
+        $candidates = [];
         foreach (($records['result'] ?? []) as $record) {
             $name = strtolower(rtrim((string) ($record['name'] ?? ''), '.'));
-            if ($name === $target || ($target !== '' && substr($name, -strlen($target)) === $target)) {
-                $res = $this->deleteSubdomain($zone_id, $record['id']);
-                if ($res['success'] ?? false) {
-                    $deleted++;
-                }
+            if ($target !== '' && ($name === $target || (strlen($name) > strlen($target) && substr($name, - (strlen($target) + 1)) === ('.' . $target)))) {
+                $candidates[] = $record;
             }
         }
-        return ['success' => true, 'deleted_count' => $deleted];
+        $deleted = 0;
+        $failed = [];
+        foreach ($candidates as $record) {
+            $res = $this->deleteSubdomain($zone_id, $record['id']);
+            if ($res['success'] ?? false) {
+                $deleted++;
+            } else {
+                $failed[] = [
+                    'record_id' => $record['id'] ?? null,
+                    'name' => $record['name'] ?? null,
+                    'type' => $record['type'] ?? null,
+                    'error' => $res['errors'] ?? 'delete failed',
+                ];
+            }
+        }
+        return [
+            'success' => empty($failed),
+            'requested_count' => count($candidates),
+            'deleted_count' => $deleted,
+            'failed_count' => count($failed),
+            'failed_items' => $failed,
+        ];
     }
 
     public function getDnsRecord($zone_id, $record_id)

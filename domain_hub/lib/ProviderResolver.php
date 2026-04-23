@@ -493,6 +493,10 @@ if (!function_exists('cfmod_make_provider_client')) {
                     $client = new CloudflareAPI($accessKeyId, $accessKeySecret);
                     break;
             }
+            $rateLimit = max(0, intval($account['rate_limit'] ?? 0));
+            if ($rateLimit > 0 && is_object($client) && method_exists($client, 'setRequestRateLimit')) {
+                $client->setRequestRateLimit($rateLimit);
+            }
         } catch (\Throwable $e) {
             return null;
         }

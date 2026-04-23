@@ -1179,11 +1179,51 @@ class CfAdminActionService
         }
 
         try {
-            Capsule::table('mod_cloudflare_jobs')->where('id', $jobId)->update([
-                'status' => 'cancelled',
-                'updated_at' => date('Y-m-d H:i:s'),
-            ]);
-            self::flashSuccess('已取消作业 #' . $jobId);
+            $job = Capsule::table('mod_cloudflare_jobs')->where('id', $jobId)->first();
+            if (!$job) {
+                self::flashError('作业不存在');
+                self::redirect(self::HASH_JOBS);
+            }
+
+            $now = date('Y-m-d H:i:s');
+            $status = strtolower((string) ($job->status ?? ''));
+            $hasCancelRequested = false;
+            try {
+                $hasCancelRequested = Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested');
+            } catch (\Throwable $ignored) {
+                $hasCancelRequested = false;
+            }
+
+            if ($status === 'running' && $hasCancelRequested) {
+                $update = [
+                    'cancel_requested' => 1,
+                    'updated_at' => $now,
+                ];
+                try {
+                    if (Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested_at')) {
+                        $update['cancel_requested_at'] = $now;
+                    }
+                } catch (\Throwable $ignored) {
+                }
+                Capsule::table('mod_cloudflare_jobs')->where('id', $jobId)->update($update);
+                self::flashSuccess('已请求取消运行中的作业 #' . $jobId . '，将在下一次心跳时停止');
+            } else {
+                $update = [
+                    'status' => 'cancelled',
+                    'updated_at' => $now,
+                ];
+                if ($hasCancelRequested) {
+                    $update['cancel_requested'] = 1;
+                    try {
+                        if (Capsule::schema()->hasColumn('mod_cloudflare_jobs', 'cancel_requested_at')) {
+                            $update['cancel_requested_at'] = $now;
+                        }
+                    } catch (\Throwable $ignored) {
+                    }
+                }
+                Capsule::table('mod_cloudflare_jobs')->where('id', $jobId)->update($update);
+                self::flashSuccess('已取消作业 #' . $jobId);
+            }
         } catch (Exception $e) {
             self::flashError('取消失败: ' . $e->getMessage());
         }
