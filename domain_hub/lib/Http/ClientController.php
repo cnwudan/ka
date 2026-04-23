@@ -706,50 +706,6 @@ class CfClientController
                                 exit;
                             }
 
-                            // 获取API密钥详情
-                            if ($action === 'ajax_get_api_key_details') {
-                                try {
-                                    $keyId = intval($_GET['key_id'] ?? 0);
-
-                                    $key = Capsule::table('mod_cloudflare_api_keys')
-                                        ->where('id', $keyId)
-                                        ->where('userid', $userId)
-                                        ->first();
-
-                                    if (!$key) {
-                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.not_found', 'API密钥不存在')]);
-                                        exit;
-                                    }
-
-                                    $usage = null;
-                                    try {
-                                        $usage = Capsule::table('mod_cloudflare_api_logs')
-                                            ->select(Capsule::raw('COUNT(*) as request_count'), Capsule::raw('MAX(created_at) as last_used_at'))
-                                            ->where('api_key_id', $key->id)
-                                            ->first();
-                                    } catch (\Throwable $e) {
-                                        $usage = null;
-                                    }
-
-                                    echo json_encode([
-                                        'success' => true,
-                                        'key' => [
-                                            'id' => $key->id,
-                                            'key_name' => $key->key_name,
-                                            'api_key' => $key->api_key,
-                                            'status' => $key->status,
-                                            'ip_whitelist' => $key->ip_whitelist,
-                                            'request_count' => intval($usage->request_count ?? $key->request_count),
-                                            'last_used_at' => ($usage->last_used_at ?? null) ?: $key->last_used_at,
-                                            'created_at' => $key->created_at
-                                        ]
-                                    ]);
-                                } catch (\Exception $e) {
-                                    $errorText = cfmod_format_provider_error($e->getMessage(), self::actionText('cfclient.ajax.api.get_failed', '获取失败，请稍后再试。'));
-                                    echo json_encode(['success' => false, 'error' => $errorText]);
-                                }
-                                exit;
-                            }
 
                             // 修改API密钥名称
                             if ($action === 'ajax_update_api_key_name') {
@@ -1850,7 +1806,6 @@ class CfClientController
 
         return [
             'createApiKey' => $base . '&action=ajax_create_api_key',
-            'getApiKey' => $base . '&action=ajax_get_api_key_details',
             'updateApiKeyName' => $base . '&action=ajax_update_api_key_name',
             'regenerateApiKey' => $base . '&action=ajax_regenerate_api_key',
             'deleteApiKey' => $base . '&action=ajax_delete_api_key',
@@ -1893,7 +1848,7 @@ class CfClientController
         if (in_array($action, ['ajax_redeem_quota_code', 'ajax_initiate_domain_gift', 'ajax_accept_domain_gift', 'ajax_cancel_domain_gift'], true)) {
             return CfRateLimiter::SCOPE_QUOTA_GIFT;
         }
-        if (in_array($action, ['ajax_get_api_key_details', 'ajax_list_quota_redeems', 'ajax_list_domain_gifts'], true)) {
+        if (in_array($action, ['ajax_list_quota_redeems', 'ajax_list_domain_gifts'], true)) {
             return null;
         }
         if (strpos($action, 'ajax_') === 0) {
