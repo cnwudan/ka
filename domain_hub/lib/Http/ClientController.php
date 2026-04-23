@@ -551,7 +551,11 @@ class CfClientController
     private function handleAction(int $userId, $client, array $globals): array
     {
                 // AJAX处理：API密钥管理
-                            $action = $_GET['action'] ?? $_POST['action'] ?? '';
+                            $action = (string) ($_GET['action'] ?? $_POST['action'] ?? '');
+                            $ajaxAction = (string) ($_GET['ajax_action'] ?? $_POST['ajax_action'] ?? '');
+                            if (($action === '' || strtolower($action) === 'addon') && strpos($ajaxAction, 'ajax_') === 0) {
+                                $action = $ajaxAction;
+                            }
 
                             try {
                                 self::enforceAjaxRateLimit($action, $userId);
@@ -742,6 +746,73 @@ class CfClientController
                                     ]);
                                 } catch (\Exception $e) {
                                     $errorText = cfmod_format_provider_error($e->getMessage(), self::actionText('cfclient.ajax.api.get_failed', '获取失败，请稍后再试。'));
+                                    echo json_encode(['success' => false, 'error' => $errorText]);
+                                }
+                                exit;
+                            }
+
+                            // 修改API密钥名称
+                            if ($action === 'ajax_update_api_key_name') {
+                                try {
+                                    $hdr = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+                                    if (!empty($_SESSION['cfmod_csrf']) && (!hash_equals($_SESSION['cfmod_csrf'], (string) $hdr))) {
+                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.csrf_failed', '安全校验失败：请刷新页面后重试。')]);
+                                        exit;
+                                    }
+
+                                    $rawInput = file_get_contents('php://input');
+                                    $data = json_decode($rawInput, true);
+                                    if (!is_array($data)) {
+                                        $data = [];
+                                    }
+
+                                    $keyId = intval($data['key_id'] ?? 0);
+                                    $keyName = trim((string) ($data['key_name'] ?? ''));
+
+                                    if ($keyId <= 0) {
+                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.invalid_key_id', '无效的密钥ID')]);
+                                        exit;
+                                    }
+                                    if ($keyName === '') {
+                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.name_required', '密钥名称不能为空')]);
+                                        exit;
+                                    }
+
+                                    if (function_exists('mb_strlen')) {
+                                        if (mb_strlen($keyName, 'UTF-8') > 100) {
+                                            echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.name_too_long', '密钥名称不能超过100个字符')]);
+                                            exit;
+                                        }
+                                    } elseif (strlen($keyName) > 100) {
+                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.name_too_long', '密钥名称不能超过100个字符')]);
+                                        exit;
+                                    }
+
+                                    $key = Capsule::table('mod_cloudflare_api_keys')
+                                        ->where('id', $keyId)
+                                        ->where('userid', $userId)
+                                        ->first();
+
+                                    if (!$key) {
+                                        echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.api.not_found', 'API密钥不存在')]);
+                                        exit;
+                                    }
+
+                                    Capsule::table('mod_cloudflare_api_keys')
+                                        ->where('id', $keyId)
+                                        ->where('userid', $userId)
+                                        ->update([
+                                            'key_name' => $keyName,
+                                            'updated_at' => date('Y-m-d H:i:s')
+                                        ]);
+
+                                    echo json_encode([
+                                        'success' => true,
+                                        'key_id' => $keyId,
+                                        'key_name' => $keyName,
+                                    ]);
+                                } catch (\Throwable $e) {
+                                    $errorText = cfmod_format_provider_error($e->getMessage(), self::actionText('cfclient.ajax.api.update_name_failed', '修改名称失败，请稍后再试。'));
                                     echo json_encode(['success' => false, 'error' => $errorText]);
                                 }
                                 exit;
@@ -1780,6 +1851,7 @@ class CfClientController
         return [
             'createApiKey' => $base . '&action=ajax_create_api_key',
             'getApiKey' => $base . '&action=ajax_get_api_key_details',
+            'updateApiKeyName' => $base . '&action=ajax_update_api_key_name',
             'regenerateApiKey' => $base . '&action=ajax_regenerate_api_key',
             'deleteApiKey' => $base . '&action=ajax_delete_api_key',
             'domainGift' => [
@@ -1815,7 +1887,7 @@ class CfClientController
         if ($action === '') {
             return null;
         }
-        if (in_array($action, ['ajax_create_api_key', 'ajax_regenerate_api_key', 'ajax_delete_api_key'], true)) {
+        if (in_array($action, ['ajax_create_api_key', 'ajax_update_api_key_name', 'ajax_regenerate_api_key', 'ajax_delete_api_key'], true)) {
             return CfRateLimiter::SCOPE_API_KEY;
         }
         if (in_array($action, ['ajax_redeem_quota_code', 'ajax_initiate_domain_gift', 'ajax_accept_domain_gift', 'ajax_cancel_domain_gift'], true)) {

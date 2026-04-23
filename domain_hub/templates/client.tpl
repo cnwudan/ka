@@ -597,12 +597,192 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             transition: none !important;
         }
         
-        /* 域名知识小贴士中的重要提示样式 */
-        #dnsTimeoutWarning {
-            opacity: 1 !important;
-            display: block !important;
-            visibility: visible !important;
-            transition: none !important;
+        .cf-help-center {
+            max-width: 100%;
+        }
+
+        .cf-help-search-wrap {
+            max-width: 720px;
+        }
+
+        .cf-help-search-wrap .position-relative {
+            position: relative;
+        }
+
+        .cf-help-search-input {
+            border-radius: 999px;
+            border: 1px solid #dce1e8;
+            height: 46px;
+            padding-left: 42px;
+            background: #fff;
+        }
+
+        .cf-help-search-input:focus {
+            border-color: #4f6ef7;
+            box-shadow: 0 0 0 0.2rem rgba(79, 110, 247, 0.14);
+        }
+
+        .cf-help-search-icon {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #8f98a3;
+            z-index: 2;
+        }
+
+        .cf-help-knowledge-card,
+        .cf-help-support-card {
+            border: 1px solid #e6e9ef;
+            border-radius: 14px;
+            background: #fff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.04);
+        }
+
+        .cf-help-knowledge-card {
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cf-help-knowledge-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: #2f67ff;
+        }
+
+        .cf-help-banner {
+            border: 1px solid #dce7ff;
+            background: #f6f9ff;
+            color: #244fb5;
+            border-radius: 10px;
+            padding: 0.65rem 0.8rem;
+            font-size: 0.93rem;
+            font-weight: 500;
+        }
+
+        .cf-help-accordion .accordion-item {
+            border: 1px solid #e9edf3;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 0.7rem;
+        }
+
+        .cf-help-accordion .accordion-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .cf-help-accordion .accordion-button {
+            background: #fff;
+            box-shadow: none;
+            color: #202939;
+            font-weight: 600;
+            padding: 0.78rem 1rem;
+        }
+
+        .cf-help-accordion .accordion-button:not(.collapsed) {
+            background: #f8fbff;
+            color: #1f4fb7;
+        }
+
+        .cf-help-accordion-icon {
+            width: 26px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            color: #4d6ce2;
+            margin-right: 0.4rem;
+        }
+
+        .cf-help-list {
+            list-style: none;
+            padding-left: 0;
+            margin: 0;
+        }
+
+        .cf-help-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            margin-bottom: 0.55rem;
+            color: #3b4352;
+            line-height: 1.55;
+            font-size: 0.92rem;
+        }
+
+        .cf-help-item:last-child {
+            margin-bottom: 0;
+        }
+
+        .cf-help-item-icon {
+            color: #9aa4b2;
+            font-size: 0.52rem;
+            margin-top: 0.52rem;
+            flex-shrink: 0;
+        }
+
+        .cf-help-search-empty {
+            margin-top: 0.85rem;
+            border: 1px dashed #d4dbe6;
+            background: #f8fafd;
+            border-radius: 8px;
+            padding: 0.7rem;
+            font-size: 0.9rem;
+            color: #6b7280;
+        }
+
+        .cf-help-support-entry {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            border: 1px solid #e5e7eb;
+            border-radius: 12px;
+            background: #f7f8fa;
+            min-height: 158px;
+            padding: 1rem 0.9rem;
+            color: #273244;
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .cf-help-support-icon {
+            font-size: 2rem;
+            line-height: 1;
+            color: #5d6b7f;
+            margin-bottom: 0.6rem;
+        }
+
+        .cf-help-support-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 0.35rem;
+        }
+
+        .cf-help-support-desc {
+            font-size: 0.78rem;
+            color: #7a8697;
+            line-height: 1.35;
+        }
+
+        .cf-help-support-entry:hover,
+        .cf-help-support-entry:focus {
+            background: #2f67ff;
+            border-color: #2f67ff;
+            color: #fff;
+            transform: translateY(-2px);
+            box-shadow: 0 10px 18px rgba(47, 103, 255, 0.25);
+        }
+
+        .cf-help-support-entry:hover .cf-help-support-icon,
+        .cf-help-support-entry:hover .cf-help-support-desc,
+        .cf-help-support-entry:focus .cf-help-support-icon,
+        .cf-help-support-entry:focus .cf-help-support-desc {
+            color: rgba(255, 255, 255, 0.92);
         }
 
         .ns-inputs-container {
@@ -756,6 +936,20 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
             border-radius: 12px;
             background: #fff;
             margin-bottom: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .cf-help-search-wrap {
+                max-width: 100%;
+            }
+
+            .cf-help-support-entry {
+                min-height: 132px;
+            }
+
+            .cf-help-support-icon {
+                font-size: 1.75rem;
+            }
         }
 
         @media (max-width: 992px) {
