@@ -83,6 +83,7 @@ class CfSettingsRepository
 
         $settings = $this->normalizeInviteRegistrationGithubSecret($settings);
         $settings = $this->normalizeTelegramGroupBotToken($settings);
+        $settings = $this->normalizeRenewalNoticeTelegramBotToken($settings);
         $settings = $this->normalizeInviteRegistrationTelegramBotToken($settings);
         $settings = $this->normalizeHelpAiGeminiApiKey($settings);
         $settings = $this->normalizeHelpAiOpenrouterApiKey($settings);
@@ -106,6 +107,11 @@ class CfSettingsRepository
     private function normalizeInviteRegistrationTelegramBotToken(array $settings): array
     {
         return $this->normalizeSensitiveSetting($settings, 'invite_registration_telegram_bot_token');
+    }
+
+    private function normalizeRenewalNoticeTelegramBotToken(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'renewal_notice_telegram_bot_token');
     }
 
     private function normalizeHelpAiGeminiApiKey(array $settings): array
@@ -322,6 +328,11 @@ class CfSettingsRepository
             'telegram_group_bot_token' => '',
             'telegram_group_reward_amount' => '1',
             'telegram_reward_auth_max_age_seconds' => '86400',
+            'renewal_notice_telegram_enabled' => '0',
+            'renewal_notice_telegram_bot_username' => '',
+            'renewal_notice_telegram_bot_token' => '',
+            'renewal_notice_telegram_days' => '30,10',
+            'renewal_notice_telegram_auth_max_age_seconds' => '86400',
             'job_running_timeout_minutes' => '120',
             'queue_heartbeat_interval_seconds' => '20',
             'transfer_clone_full_zone' => '1',

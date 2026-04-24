@@ -534,6 +534,84 @@ class CfClientActionService
         }
 
 
+        if ($_POST['action'] === 'update_expiry_telegram_reminder') {
+            try {
+                if (!class_exists('CfTelegramExpiryReminderService')) {
+                    throw new \RuntimeException('service_missing');
+                }
+
+                $enableReminder = isset($_POST['expiry_telegram_reminder_enabled'])
+                    && (string) $_POST['expiry_telegram_reminder_enabled'] === '1';
+                $authPayload = [
+                    'id' => trim((string) ($_POST['telegram_auth_id'] ?? $_POST['telegram_id'] ?? '')),
+                    'username' => trim((string) ($_POST['telegram_auth_username'] ?? $_POST['telegram_username'] ?? '')),
+                    'first_name' => trim((string) ($_POST['telegram_auth_first_name'] ?? '')),
+                    'last_name' => trim((string) ($_POST['telegram_auth_last_name'] ?? '')),
+                    'photo_url' => trim((string) ($_POST['telegram_auth_photo_url'] ?? '')),
+                    'auth_date' => trim((string) ($_POST['telegram_auth_date'] ?? '')),
+                    'hash' => trim((string) ($_POST['telegram_auth_hash'] ?? '')),
+                ];
+
+                $state = CfTelegramExpiryReminderService::updateUserSubscription(
+                    intval($userid ?? 0),
+                    $module_settings,
+                    $enableReminder,
+                    $authPayload
+                );
+
+                if (!empty($state['subscribed'])) {
+                    $msg = self::actionTextByLanguage(
+                        'expiry_telegram_reminder.enabled',
+                        'Telegram 到期提醒已开启。',
+                        'Telegram expiry reminders are now enabled.'
+                    );
+                } else {
+                    $msg = self::actionTextByLanguage(
+                        'expiry_telegram_reminder.disabled',
+                        'Telegram 到期提醒已关闭。',
+                        'Telegram expiry reminders have been disabled.'
+                    );
+                }
+                $msg_type = 'success';
+            } catch (CfTelegramExpiryReminderException $e) {
+                $reason = $e->getReason();
+                if ($reason === 'feature_disabled') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.feature_disabled', '管理员暂未启用 Telegram 到期提醒。', 'Telegram expiry reminders are currently disabled by the administrator.');
+                    $msg_type = 'warning';
+                } elseif ($reason === 'auth_required') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.auth_required', '请先完成 Telegram 授权绑定后再开启提醒。', 'Please complete Telegram authorization before enabling reminders.');
+                    $msg_type = 'warning';
+                } elseif ($reason === 'auth_invalid') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.auth_invalid', 'Telegram 授权信息无效，请重新授权后再试。', 'Telegram authorization data is invalid. Please authorize again.');
+                    $msg_type = 'danger';
+                } elseif ($reason === 'auth_expired') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.auth_expired', 'Telegram 授权已过期，请重新授权后再试。', 'Telegram authorization has expired. Please authorize again.');
+                    $msg_type = 'danger';
+                } elseif ($reason === 'telegram_used') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.telegram_used', '该 Telegram 账号已被其他用户绑定，请使用自己的账号。', 'This Telegram account has already been bound by another user. Please use your own Telegram account.');
+                    $msg_type = 'danger';
+                } elseif ($reason === 'invalid_bot_token') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.invalid_config', '管理员尚未完成 Telegram Bot 配置，请稍后再试。', 'The Telegram bot settings are incomplete. Please try again later.');
+                    $msg_type = 'warning';
+                } elseif ($reason === 'invalid_user') {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.invalid_user', '未找到登录用户，请刷新页面后重试。', 'No logged-in user was found. Please refresh and try again.');
+                    $msg_type = 'danger';
+                } else {
+                    $msg = self::actionTextByLanguage('expiry_telegram_reminder.error', '设置失败：%s', 'Update failed: %s', [$e->getMessage()]);
+                    $msg_type = 'danger';
+                }
+            } catch (\Throwable $e) {
+                $msg = self::actionTextByLanguage('expiry_telegram_reminder.error', '设置失败：%s', 'Update failed: %s', [$e->getMessage()]);
+                $msg_type = 'danger';
+            }
+            return [
+                'msg' => $msg,
+                'msg_type' => $msg_type,
+                'registerError' => $registerError,
+            ];
+        }
+
+
         if ($_POST['action'] === 'request_ssl_certificate') {
             try {
                 if (!class_exists('CfSslCertificateService')) {
@@ -2885,7 +2963,7 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
     private static function resolveClientRateLimitScope(string $action): ?string
     {
         static $dnsActions = ['create_dns', 'update_dns', 'delete_dns_record', 'toggle_cdn', 'toggle_record_cdn', 'delete_subdomain'];
-        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'submit_partner_application'];
+        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'update_expiry_telegram_reminder', 'submit_partner_application'];
         if ($action === 'register') {
             return CfRateLimiter::SCOPE_REGISTER;
         }

@@ -3448,30 +3448,106 @@ class CfAdminActionService
 
     private static function handleSaveRenewalNoticeSettings(): void
     {
+        $settings = self::moduleSettings();
+
         $enabled = isset($_POST['renewal_notice_enabled']) && $_POST['renewal_notice_enabled'] === '1';
-        $template = trim((string)($_POST['renewal_notice_template'] ?? ''));
+        $template = trim((string) ($_POST['renewal_notice_template'] ?? ''));
         $day1 = intval($_POST['renewal_notice_days_primary'] ?? 0);
         $day2 = intval($_POST['renewal_notice_days_secondary'] ?? 0);
+
+        $telegramEnabled = isset($_POST['renewal_notice_telegram_enabled']) && $_POST['renewal_notice_telegram_enabled'] === '1';
+        $telegramBotUsername = ltrim(trim((string) ($_POST['renewal_notice_telegram_bot_username']
+            ?? ($settings['renewal_notice_telegram_bot_username'] ?? ''))), '@');
+
+        $postedTelegramBotToken = trim((string) ($_POST['renewal_notice_telegram_bot_token'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedTelegramBotToken)) {
+            $postedTelegramBotToken = '';
+        }
+
+        $existingTelegramBotToken = trim((string) ($settings['renewal_notice_telegram_bot_token'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingTelegramBotToken)) {
+            $existingTelegramBotToken = '';
+        } elseif (strpos($existingTelegramBotToken, 'enc::') === 0) {
+            $existingTelegramBotToken = trim((string) cfmod_decrypt_sensitive(substr($existingTelegramBotToken, strlen('enc::'))));
+        }
+
+        $telegramBotToken = $postedTelegramBotToken !== '' ? $postedTelegramBotToken : $existingTelegramBotToken;
+
+        $telegramDaysInput = trim((string) ($_POST['renewal_notice_telegram_days']
+            ?? ($settings['renewal_notice_telegram_days'] ?? '30,10')));
+        $telegramAuthMaxAgeInput = intval($_POST['renewal_notice_telegram_auth_max_age_seconds']
+            ?? ($settings['renewal_notice_telegram_auth_max_age_seconds'] ?? 86400));
+        $telegramAuthMaxAge = max(60, min(604800, $telegramAuthMaxAgeInput));
 
         if ($enabled && $template === '') {
             self::flashError('请先填写邮件模板名称。');
             self::redirect(self::HASH_RUNTIME);
         }
 
+        if ($telegramEnabled) {
+            if (!class_exists('CfTelegramExpiryReminderService')) {
+                self::flashError('Telegram 到期提醒服务未加载，请检查模块文件。');
+                self::redirect(self::HASH_RUNTIME);
+            }
+
+            $telegramDays = CfTelegramExpiryReminderService::parseConfiguredDays([
+                'renewal_notice_telegram_days' => $telegramDaysInput,
+            ]);
+
+            if ($telegramBotUsername === '') {
+                self::flashError('请先填写 Telegram Bot 用户名。');
+                self::redirect(self::HASH_RUNTIME);
+            }
+
+            if (!CfTelegramExpiryReminderService::validateBotToken($telegramBotToken)) {
+                self::flashError('Telegram Bot Token 格式不正确，请检查后重试。');
+                self::redirect(self::HASH_RUNTIME);
+            }
+
+            if (empty($telegramDays)) {
+                self::flashError('请至少配置一个有效的 Telegram 提醒天数（如 30,10）。');
+                self::redirect(self::HASH_RUNTIME);
+            }
+
+            $telegramDaysInput = CfTelegramExpiryReminderService::formatDaysCsv($telegramDays);
+        }
+
         try {
             CfRenewalNoticeService::ensureTable();
+            if (class_exists('CfTelegramExpiryReminderService')) {
+                CfTelegramExpiryReminderService::ensureTables();
+            }
+
+            $telegramTokenStored = '';
+            if ($telegramBotToken !== '') {
+                $encryptedTelegramToken = cfmod_encrypt_sensitive($telegramBotToken);
+                if ($encryptedTelegramToken !== null && $encryptedTelegramToken !== '') {
+                    $telegramTokenStored = 'enc::' . $encryptedTelegramToken;
+                }
+            }
+
             self::persistModuleSettings([
                 'renewal_notice_enabled' => $enabled ? '1' : '0',
                 'renewal_notice_template' => $template,
-                'renewal_notice_days_primary' => (string)max(0, $day1),
-                'renewal_notice_days_secondary' => (string)max(0, $day2),
+                'renewal_notice_days_primary' => (string) max(0, $day1),
+                'renewal_notice_days_secondary' => (string) max(0, $day2),
+                'renewal_notice_telegram_enabled' => $telegramEnabled ? '1' : '0',
+                'renewal_notice_telegram_bot_username' => $telegramBotUsername,
+                'renewal_notice_telegram_bot_token' => $telegramTokenStored,
+                'renewal_notice_telegram_days' => $telegramDaysInput,
+                'renewal_notice_telegram_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
             ]);
+
             if (function_exists('cloudflare_subdomain_log')) {
                 cloudflare_subdomain_log('admin_save_renewal_notice', [
                     'enabled' => $enabled ? 1 : 0,
                     'template' => $template,
                     'days_primary' => max(0, $day1),
                     'days_secondary' => max(0, $day2),
+                    'telegram_enabled' => $telegramEnabled ? 1 : 0,
+                    'telegram_bot_username' => $telegramBotUsername,
+                    'telegram_days' => $telegramDaysInput,
+                    'telegram_auth_max_age' => $telegramAuthMaxAge,
                 ]);
             }
             self::flashSuccess('到期提醒设置已保存');

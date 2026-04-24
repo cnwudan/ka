@@ -438,6 +438,45 @@ add_hook('AfterCronJob', 1, function($vars) {
                     ]);
                 }
             }
+
+            if (class_exists('CfTelegramExpiryReminderService')) {
+                $tgNoticeEnabled = CfTelegramExpiryReminderService::isEnabled($settings);
+                $tgNoticeConfigured = CfTelegramExpiryReminderService::isConfigured($settings);
+                $tgNoticeDays = CfTelegramExpiryReminderService::parseConfiguredDays($settings);
+                if ($tgNoticeEnabled && $tgNoticeConfigured && !empty($tgNoticeDays)) {
+                    $tgNoticeIntervalHours = 24;
+                    $lastTgNoticeJob = Capsule::table('mod_cloudflare_jobs')
+                        ->where('type', 'send_expiry_telegram_notices')
+                        ->orderBy('id', 'desc')
+                        ->first();
+                    $shouldTgNotice = false;
+                    if (!$lastTgNoticeJob) {
+                        $shouldTgNotice = true;
+                    } elseif (in_array($lastTgNoticeJob->status, ['failed', 'done', 'cancelled'], true)) {
+                        $lastTgTime = $lastTgNoticeJob->updated_at ?? $lastTgNoticeJob->created_at;
+                        if (!$lastTgTime || strtotime($lastTgTime) <= time() - $tgNoticeIntervalHours * 3600) {
+                            $shouldTgNotice = true;
+                        }
+                    }
+
+                    if ($shouldTgNotice) {
+                        Capsule::table('mod_cloudflare_jobs')->insert([
+                            'type' => 'send_expiry_telegram_notices',
+                            'payload_json' => json_encode([
+                                'days' => $tgNoticeDays,
+                                'batch_size' => 100,
+                                'auto' => true,
+                            ], JSON_UNESCAPED_UNICODE),
+                            'priority' => 19,
+                            'status' => 'pending',
+                            'attempts' => 0,
+                            'next_run_at' => null,
+                            'created_at' => $now,
+                            'updated_at' => $now,
+                        ]);
+                    }
+                }
+            }
         }
     } catch (\Throwable $e) {
         cfmod_report_exception('after_cron_job', $e);

@@ -18,6 +18,22 @@ $dnsUnlockPurchaseEnabled = !empty($dnsUnlockPurchaseEnabled);
 $dnsUnlockPurchasePrice = isset($dnsUnlockPurchasePrice) ? (float) $dnsUnlockPurchasePrice : 0.0;
 $dnsUnlockPriceDisplay = number_format($dnsUnlockPurchasePrice, 2, '.', '');
 $dnsUnlockShareAllowed = !empty($dnsUnlockShareAllowed);
+
+$expiryTelegramReminderFeatureEnabled = !empty($expiryTelegramReminderFeatureEnabled);
+$expiryTelegramReminderConfigured = !empty($expiryTelegramReminderConfigured);
+$expiryTelegramReminderSubscribed = !empty($expiryTelegramReminderSubscribed);
+$expiryTelegramReminderTelegramBound = !empty($expiryTelegramReminderTelegramBound);
+$expiryTelegramReminderTelegramUserId = (int) ($expiryTelegramReminderTelegramUserId ?? 0);
+$expiryTelegramReminderTelegramUsername = trim((string) ($expiryTelegramReminderTelegramUsername ?? ''));
+$expiryTelegramReminderBotUsername = trim((string) ($expiryTelegramReminderBotUsername ?? ''));
+$expiryTelegramReminderDaysCsv = trim((string) ($expiryTelegramReminderDaysCsv ?? ''));
+if ($expiryTelegramReminderDaysCsv === '' && is_array($expiryTelegramReminderDays ?? null)) {
+    $expiryTelegramReminderDaysCsv = implode(',', array_map('intval', $expiryTelegramReminderDays));
+}
+$expiryTelegramReminderDisplayName = $expiryTelegramReminderTelegramUsername !== ''
+    ? '@' . ltrim($expiryTelegramReminderTelegramUsername, '@')
+    : ($expiryTelegramReminderTelegramUserId > 0 ? ('ID: ' . $expiryTelegramReminderTelegramUserId) : '');
+
 $dnsRecordTypes = [
     'A' => $modalText('cfclient.modals.dns.type.a', 'A记录 (IPv4地址)'),
     'AAAA' => $modalText('cfclient.modals.dns.type.aaaa', 'AAAA记录 (IPv6地址)'),
@@ -948,6 +964,155 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 <?php endif; ?>
 
+<?php endif; ?>
+
+<?php if ($expiryTelegramReminderFeatureEnabled): ?>
+<div class="modal fade" id="expiryTelegramReminderModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fab fa-telegram-plane text-info me-1"></i> <?php echo $modalText('cfclient.expiry_telegram.modal.title', 'Telegram 到期提醒'); ?></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <form method="post" id="expiryTelegramReminderForm">
+                <div class="modal-body">
+                    <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
+                    <input type="hidden" name="action" value="update_expiry_telegram_reminder">
+                    <input type="hidden" name="telegram_auth_id" id="expiryTelegramAuthId" value="">
+                    <input type="hidden" name="telegram_auth_username" id="expiryTelegramAuthUsername" value="">
+                    <input type="hidden" name="telegram_auth_first_name" id="expiryTelegramAuthFirstName" value="">
+                    <input type="hidden" name="telegram_auth_last_name" id="expiryTelegramAuthLastName" value="">
+                    <input type="hidden" name="telegram_auth_photo_url" id="expiryTelegramAuthPhotoUrl" value="">
+                    <input type="hidden" name="telegram_auth_date" id="expiryTelegramAuthDate" value="">
+                    <input type="hidden" name="telegram_auth_hash" id="expiryTelegramAuthHash" value="">
+
+                    <div class="alert alert-light border small mb-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        <?php echo $modalText('cfclient.expiry_telegram.modal.days', '提醒天数：%s（到期前自动发送）', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label small text-muted" for="expiryTelegramReminderAccount"><?php echo $modalText('cfclient.expiry_telegram.modal.account', '当前绑定账号'); ?></label>
+                        <input type="text" class="form-control" id="expiryTelegramReminderAccount" value="<?php echo htmlspecialchars($expiryTelegramReminderDisplayName !== '' ? $expiryTelegramReminderDisplayName : $modalText('cfclient.expiry_telegram.modal.no_account', '尚未绑定', [], false), ENT_QUOTES); ?>" readonly>
+                    </div>
+
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" id="expiry_telegram_reminder_enabled" name="expiry_telegram_reminder_enabled" value="1" <?php echo $expiryTelegramReminderSubscribed ? 'checked' : ''; ?>>
+                        <label class="form-check-label" for="expiry_telegram_reminder_enabled"><?php echo $modalText('cfclient.expiry_telegram.modal.enable', '开启 Telegram 到期提醒'); ?></label>
+                    </div>
+
+                    <div class="small text-muted mb-2" id="expiryTelegramReminderAuthStatus">
+                        <?php if ($expiryTelegramReminderTelegramBound): ?>
+                            <?php echo $modalText('cfclient.expiry_telegram.modal.bound_hint', '已绑定 Telegram：%s，可直接保存或重新授权。', [$expiryTelegramReminderDisplayName !== '' ? $expiryTelegramReminderDisplayName : '-']); ?>
+                        <?php else: ?>
+                            <?php echo $modalText('cfclient.expiry_telegram.modal.auth_hint', '请先完成 Telegram 授权后再开启提醒。'); ?>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php if ($expiryTelegramReminderConfigured && $expiryTelegramReminderBotUsername !== ''): ?>
+                        <div class="telegram-login-widget-wrap d-flex justify-content-center mb-2">
+                            <script async src="https://telegram.org/js/telegram-widget.js?22"
+                                data-telegram-login="<?php echo htmlspecialchars($expiryTelegramReminderBotUsername, ENT_QUOTES); ?>"
+                                data-size="large"
+                                data-userpic="false"
+                                data-request-access="write"
+                                data-onauth="cfExpiryTelegramReminderOnAuth(user)">
+                            </script>
+                        </div>
+                        <div class="form-text text-muted"><?php echo $modalText('cfclient.expiry_telegram.modal.domain_hint', '若出现 Bot domain invalid，请在 BotFather 中为该 Bot 配置当前站点域名白名单。'); ?></div>
+                    <?php else: ?>
+                        <div class="alert alert-warning small mb-0">
+                            <?php echo $modalText('cfclient.expiry_telegram.modal.not_configured', '管理员尚未完成 Telegram 提醒配置，暂无法授权。'); ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal"><?php echo $modalText('cfclient.modals.buttons.cancel', '取消'); ?></button>
+                    <button type="submit" class="btn btn-info text-white" id="expiryTelegramReminderSubmitButton">
+                        <i class="fas fa-save me-1"></i><?php echo $modalText('cfclient.expiry_telegram.modal.submit', '保存提醒设置'); ?>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var expiryTelegramAuthRequiredText = <?php echo json_encode($modalText('cfclient.expiry_telegram.modal.auth_required', '开启提醒前请先完成 Telegram 授权。', [], false), CFMOD_SAFE_JSON_FLAGS); ?>;
+    var expiryTelegramBoundTextTemplate = <?php echo json_encode($modalText('cfclient.expiry_telegram.modal.bound_hint', '已绑定 Telegram：%s，可直接保存或重新授权。', ['%s'], false), CFMOD_SAFE_JSON_FLAGS); ?>;
+    var expiryTelegramHasBinding = <?php echo $expiryTelegramReminderTelegramBound ? 'true' : 'false'; ?>;
+
+    function setAuthStatus(text, className) {
+        var status = document.getElementById('expiryTelegramReminderAuthStatus');
+        if (!status) {
+            return;
+        }
+        status.textContent = text;
+        status.classList.remove('text-muted', 'text-success', 'text-danger');
+        status.classList.add(className || 'text-muted');
+    }
+
+    window.cfExpiryTelegramReminderOnAuth = function (user) {
+        if (!user || typeof user !== 'object') {
+            return;
+        }
+        var map = {
+            expiryTelegramAuthId: user.id || '',
+            expiryTelegramAuthUsername: user.username || '',
+            expiryTelegramAuthFirstName: user.first_name || '',
+            expiryTelegramAuthLastName: user.last_name || '',
+            expiryTelegramAuthPhotoUrl: user.photo_url || '',
+            expiryTelegramAuthDate: user.auth_date || '',
+            expiryTelegramAuthHash: user.hash || ''
+        };
+        Object.keys(map).forEach(function (id) {
+            var input = document.getElementById(id);
+            if (input) {
+                input.value = map[id] ? String(map[id]) : '';
+            }
+        });
+
+        var accountInput = document.getElementById('expiryTelegramReminderAccount');
+        var displayName = user.username ? ('@' + String(user.username).replace(/^@+/, '')) : ('ID: ' + String(user.id || ''));
+        if (accountInput) {
+            accountInput.value = displayName;
+        }
+
+        var enableSwitch = document.getElementById('expiry_telegram_reminder_enabled');
+        if (enableSwitch) {
+            enableSwitch.checked = true;
+        }
+
+        expiryTelegramHasBinding = true;
+        setAuthStatus(expiryTelegramBoundTextTemplate.replace('%s', displayName), 'text-success');
+    };
+
+    window.showExpiryTelegramReminderModal = function () {
+        var modal = document.getElementById('expiryTelegramReminderModal');
+        if (!modal || typeof bootstrap === 'undefined') {
+            return;
+        }
+        var bsModal = new bootstrap.Modal(modal);
+        bsModal.show();
+    };
+
+    var form = document.getElementById('expiryTelegramReminderForm');
+    if (form) {
+        form.addEventListener('submit', function (event) {
+            var enableSwitch = document.getElementById('expiry_telegram_reminder_enabled');
+            var authId = document.getElementById('expiryTelegramAuthId');
+            var authHash = document.getElementById('expiryTelegramAuthHash');
+            var authDate = document.getElementById('expiryTelegramAuthDate');
+            var hasNewAuth = !!(authId && authHash && authDate && authId.value && authHash.value && authDate.value);
+            if (enableSwitch && enableSwitch.checked && !hasNewAuth && !expiryTelegramHasBinding) {
+                event.preventDefault();
+                setAuthStatus(expiryTelegramAuthRequiredText, 'text-danger');
+            }
+        });
+    }
+})();
+</script>
 <?php endif; ?>
 
 <!-- 根域名邀请码模态框 -->

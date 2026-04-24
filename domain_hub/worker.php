@@ -798,6 +798,9 @@ function run_cf_queue_once(int $maxJobs = 3): void {
                 case 'send_expiry_notices':
                     $stats = cfmod_job_send_expiry_notices($job, $payload) ?: [];
                     break;
+                case 'send_expiry_telegram_notices':
+                    $stats = cfmod_job_send_expiry_telegram_notices($job, $payload) ?: [];
+                    break;
                 case 'replace_root_domain':
                     $stats = cfmod_job_replace_root($job, $payload) ?: [];
                     break;
@@ -3700,6 +3703,166 @@ function cfmod_job_send_expiry_notices($job, array $payload = []): array {
         $stats['warnings'][] = $e->getMessage();
         $stats['message'] = 'failure:' . substr($e->getMessage(), 0, 60);
         cfmod_report_exception('send_expiry_notices', $e);
+    }
+
+    return $stats;
+}
+
+function cfmod_job_send_expiry_telegram_notices($job, array $payload = []): array {
+    $stats = [
+        'processed' => 0,
+        'sent' => 0,
+        'warnings' => [],
+        'days' => [],
+        'has_more' => false,
+        'rate_limited' => 0,
+    ];
+
+    try {
+        if (!class_exists('CfTelegramExpiryReminderService')) {
+            $stats['message'] = 'telegram_notice_service_missing';
+            return $stats;
+        }
+
+        $settings = cfmod_get_settings();
+        if (!CfTelegramExpiryReminderService::isEnabled($settings)) {
+            $stats['message'] = 'telegram_notice_disabled';
+            return $stats;
+        }
+        if (!CfTelegramExpiryReminderService::isConfigured($settings)) {
+            $stats['warnings'][] = 'telegram_notice_not_configured';
+            $stats['message'] = 'telegram_notice_not_configured';
+            return $stats;
+        }
+
+        $daysList = CfTelegramExpiryReminderService::parseConfiguredDays($settings, $payload['days'] ?? []);
+        if (empty($daysList)) {
+            $stats['message'] = 'no_days_configured';
+            return $stats;
+        }
+
+        CfTelegramExpiryReminderService::ensureTables();
+
+        $batchLimit = intval($payload['batch_size'] ?? 100);
+        $batchLimit = max(10, min(1000, $batchLimit));
+
+        $continuationRound = intval($payload['continuation_round'] ?? 0);
+        if ($continuationRound < 0) {
+            $continuationRound = 0;
+        }
+        $maxContinuationRounds = intval($payload['max_continuation_rounds'] ?? 80);
+        $maxContinuationRounds = max(1, min(500, $maxContinuationRounds));
+
+        $stats['days'] = $daysList;
+        $stats['continuation_round'] = $continuationRound;
+        $stats['max_continuation_rounds'] = $maxContinuationRounds;
+
+        $hasMore = false;
+        $stopCurrentRun = false;
+        $retryAfter = 0;
+
+        foreach ($daysList as $days) {
+            $records = CfTelegramExpiryReminderService::fetchPendingRecords($days, $batchLimit);
+            if (count($records) > $batchLimit) {
+                $hasMore = true;
+                $records = array_slice($records, 0, $batchLimit);
+            }
+
+            foreach ($records as $subdomainRow) {
+                $subdomain = is_array($subdomainRow) ? (object) $subdomainRow : $subdomainRow;
+                $stats['processed']++;
+
+                try {
+                    $result = CfTelegramExpiryReminderService::sendReminderMessage($subdomain, (int) $days, $settings);
+                } catch (CfTelegramExpiryReminderException $sendException) {
+                    if ($sendException->getReason() === 'rate_limited') {
+                        $stopCurrentRun = true;
+                        $hasMore = true;
+                        $stats['rate_limited'] = 1;
+                        $retryAfter = max($retryAfter, $sendException->getRetryAfter());
+                        $stats['warnings'][] = 'rate_limited';
+                        break;
+                    }
+
+                    $stats['warnings'][] = $sendException->getMessage();
+                    continue;
+                }
+
+                if (!empty($result['success'])) {
+                    $stats['sent']++;
+                    CfTelegramExpiryReminderService::markReminderSent($subdomain, (int) $days);
+                    if (function_exists('cloudflare_subdomain_log')) {
+                        cloudflare_subdomain_log('auto_send_expiry_telegram_notice', [
+                            'subdomain' => $subdomain->subdomain ?? '',
+                            'rootdomain' => $subdomain->rootdomain ?? '',
+                            'reminder_key' => CfTelegramExpiryReminderService::reminderKey((int) $days),
+                            'days_left' => (int) $days,
+                        ], intval($subdomain->userid ?? 0), intval($subdomain->id ?? 0));
+                    }
+                } else {
+                    $stats['warnings'][] = $result['message'] ?? 'send_failed';
+                }
+            }
+
+            if ($stopCurrentRun) {
+                break;
+            }
+        }
+
+        $stats['has_more'] = $hasMore;
+        $stats['message'] = 'sent ' . $stats['sent'] . ' telegram notices';
+        if (!empty($stats['rate_limited'])) {
+            $stats['retry_after'] = max(3, $retryAfter > 0 ? $retryAfter : 5);
+            $stats['message'] .= ' (rate limited)';
+        }
+
+        if ($hasMore) {
+            if ($continuationRound >= $maxContinuationRounds) {
+                $stats['warnings'][] = 'continuation_limit_reached';
+                $stats['message'] .= ' (continuation limit reached)';
+            } else {
+                $nextPayload = [
+                    'days' => $daysList,
+                    'batch_size' => $batchLimit,
+                    'auto' => !empty($payload['auto']),
+                    'continuation_round' => $continuationRound + 1,
+                    'max_continuation_rounds' => $maxContinuationRounds,
+                ];
+                $originJobId = intval($payload['origin_job_id'] ?? 0);
+                if ($originJobId <= 0) {
+                    $originJobId = intval($job->id ?? 0);
+                }
+                if ($originJobId > 0) {
+                    $nextPayload['origin_job_id'] = $originJobId;
+                }
+
+                $delaySeconds = 0;
+                if (!empty($stats['rate_limited'])) {
+                    $delaySeconds = max(3, min(300, intval($stats['retry_after'] ?? 5)));
+                }
+
+                $nowTs = time();
+                $now = date('Y-m-d H:i:s', $nowTs);
+                $nextRunAt = $delaySeconds > 0 ? date('Y-m-d H:i:s', $nowTs + $delaySeconds) : null;
+
+                $nextJobId = Capsule::table('mod_cloudflare_jobs')->insertGetId([
+                    'type' => 'send_expiry_telegram_notices',
+                    'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
+                    'priority' => intval($job->priority ?? 19),
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => $nextRunAt,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                $stats['continuation_job_id'] = $nextJobId;
+                $stats['message'] .= ' (continuation queued)';
+            }
+        }
+    } catch (\Throwable $e) {
+        $stats['warnings'][] = $e->getMessage();
+        $stats['message'] = 'failure:' . substr($e->getMessage(), 0, 60);
+        cfmod_report_exception('send_expiry_telegram_notices', $e);
     }
 
     return $stats;

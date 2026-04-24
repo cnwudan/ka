@@ -1401,6 +1401,40 @@ function domain_hub_config() {
                 "Default" => "7",
                 "Description" => "到期前多少天发送第二次提醒，留空或 0 表示不发送。",
             ],
+            "renewal_notice_telegram_enabled" => [
+                "FriendlyName" => "启用 Telegram 到期提醒",
+                "Type" => "yesno",
+                "Default" => "no",
+                "Description" => "开启后，允许用户绑定 Telegram 并接收到期提醒。",
+            ],
+            "renewal_notice_telegram_bot_username" => [
+                "FriendlyName" => "Telegram Bot 用户名",
+                "Type" => "text",
+                "Size" => "30",
+                "Default" => "",
+                "Description" => "例如 your_bot（无需 @ 前缀）。留空时优先复用社群奖励 Bot 配置。",
+            ],
+            "renewal_notice_telegram_bot_token" => [
+                "FriendlyName" => "Telegram Bot Token",
+                "Type" => "password",
+                "Size" => "40",
+                "Default" => "",
+                "Description" => "用于发送到期提醒消息。留空时优先复用社群奖励 Bot Token。",
+            ],
+            "renewal_notice_telegram_days" => [
+                "FriendlyName" => "Telegram 提醒天数",
+                "Type" => "text",
+                "Size" => "10",
+                "Default" => "30,10",
+                "Description" => "支持逗号分隔的 1~2 个提醒天数，例如 30,10。填 0 或留空表示该档位关闭。",
+            ],
+            "renewal_notice_telegram_auth_max_age_seconds" => [
+                "FriendlyName" => "Telegram 授权有效期（秒）",
+                "Type" => "text",
+                "Size" => "8",
+                "Default" => "86400",
+                "Description" => "用户完成 Telegram 授权后，校验数据允许的最大时差，默认 86400 秒。",
+            ],
             // 邀请全局配置
             "invite_bonus_limit_global" => [
                 "FriendlyName" => "邀请加成上限（全局）",

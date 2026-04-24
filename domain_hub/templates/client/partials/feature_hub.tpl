@@ -37,6 +37,21 @@ $telegramGroupHistoryItems = is_array($telegramGroupRewardHistory['items'] ?? nu
 $telegramGroupHistoryPage = max(1, (int) ($telegramGroupRewardHistory['page'] ?? 1));
 $telegramGroupHistoryTotalPages = max(1, (int) ($telegramGroupRewardHistory['totalPages'] ?? 1));
 
+$expiryTelegramReminderFeatureEnabled = !empty($expiryTelegramReminderFeatureEnabled);
+$expiryTelegramReminderConfigured = !empty($expiryTelegramReminderConfigured);
+$expiryTelegramReminderSubscribed = !empty($expiryTelegramReminderSubscribed);
+$expiryTelegramReminderTelegramBound = !empty($expiryTelegramReminderTelegramBound);
+$expiryTelegramReminderTelegramUserId = (int) ($expiryTelegramReminderTelegramUserId ?? 0);
+$expiryTelegramReminderTelegramUsername = trim((string) ($expiryTelegramReminderTelegramUsername ?? ''));
+$expiryTelegramReminderBotUsername = trim((string) ($expiryTelegramReminderBotUsername ?? ''));
+$expiryTelegramReminderDaysCsv = trim((string) ($expiryTelegramReminderDaysCsv ?? ''));
+if ($expiryTelegramReminderDaysCsv === '' && is_array($expiryTelegramReminderDays ?? null)) {
+    $expiryTelegramReminderDaysCsv = implode(',', array_map('intval', $expiryTelegramReminderDays));
+}
+$expiryTelegramReminderDisplayName = $expiryTelegramReminderTelegramUsername !== ''
+    ? '@' . ltrim($expiryTelegramReminderTelegramUsername, '@')
+    : ($expiryTelegramReminderTelegramUserId > 0 ? ('ID: ' . $expiryTelegramReminderTelegramUserId) : '');
+
 $sslRequestEnabled = !empty($sslRequestEnabled);
 $sslRequestDomains = is_array($sslRequestDomains ?? null) ? $sslRequestDomains : [];
 $sslCertificates = is_array($sslCertificates ?? null) ? $sslCertificates : ['items' => [], 'page' => 1, 'totalPages' => 1];
@@ -54,6 +69,7 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
     || $sslRequestEnabled
     || $githubStarRewardEnabled
     || $telegramGroupRewardEnabled
+    || $expiryTelegramReminderFeatureEnabled
     || $digFeatureEnabled;
 ?>
 
@@ -311,6 +327,36 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                                     <?php echo $featureText('cfclient.feature.telegram_group.verify_tip', '领取时会校验该 Telegram 账号是否已加入指定群组。', 'The system verifies whether this Telegram account has joined the configured group.'); ?>
                                 </div>
                             <?php endif; ?>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($expiryTelegramReminderFeatureEnabled): ?>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex flex-column">
+                        <div class="d-flex align-items-center justify-content-between mb-2">
+                            <h6 class="card-title mb-0"><i class="fab fa-telegram-plane text-info me-2"></i><?php echo $featureText('cfclient.feature.expiry_telegram.title', 'Telegram 到期提醒', 'Telegram Expiry Reminder'); ?></h6>
+                            <?php if ($expiryTelegramReminderSubscribed): ?>
+                                <span class="badge bg-success"><?php echo $featureText('cfclient.feature.expiry_telegram.enabled', '已开启', 'Enabled'); ?></span>
+                            <?php else: ?>
+                                <span class="badge bg-secondary"><?php echo $featureText('cfclient.feature.expiry_telegram.disabled', '未开启', 'Disabled'); ?></span>
+                            <?php endif; ?>
+                        </div>
+                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.expiry_telegram.desc', '绑定 Telegram 后可在域名到期前自动收到提醒消息。', 'Bind your Telegram account to receive automatic expiry reminders before domain expiration.'); ?></p>
+                        <p class="small mb-3"><?php echo $featureText('cfclient.feature.expiry_telegram.days', '提醒天数：%s', 'Reminder days: %s', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?></p>
+                        <div class="d-flex flex-column gap-2 mt-auto">
+                            <?php if ($expiryTelegramReminderDisplayName !== ''): ?>
+                                <div class="small text-muted"><?php echo $featureText('cfclient.feature.expiry_telegram.bound', '当前绑定账号：%s', 'Bound account: %s', [$expiryTelegramReminderDisplayName]); ?></div>
+                            <?php endif; ?>
+                            <?php if (!$expiryTelegramReminderConfigured): ?>
+                                <div class="alert alert-warning small mb-0"><?php echo $featureText('cfclient.feature.expiry_telegram.misconfigured', '管理员尚未完成 Telegram 提醒配置，当前仅可关闭已有提醒。', 'Telegram reminder settings are incomplete. You can still disable existing reminders.'); ?></div>
+                            <?php endif; ?>
+                            <button type="button" class="btn btn-outline-info" onclick="showExpiryTelegramReminderModal()">
+                                <i class="fas fa-bell me-1"></i><?php echo $featureText('cfclient.feature.expiry_telegram.button', '管理 Telegram 提醒', 'Manage Telegram Reminder'); ?>
+                            </button>
                         </div>
                     </div>
                 </div>
