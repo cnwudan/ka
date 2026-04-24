@@ -970,7 +970,7 @@ class CfClientViewModelBuilder
             $params['return'] = $returnToken;
         }
 
-        $script = 'clientarea.php';
+        $script = 'index.php';
         if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript')) {
             $script = CfClientController::preferredClientEntryScript();
         }
@@ -1022,7 +1022,7 @@ class CfClientViewModelBuilder
         if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery')) {
             return CfClientController::preferredClientBaseQuery($moduleSlug);
         }
-        return ['action' => 'addon', 'module' => $moduleSlug];
+        return ['m' => $moduleSlug];
     }
 
     private static function ensureLanguageBaseParams(array $params, string $moduleSlug): array

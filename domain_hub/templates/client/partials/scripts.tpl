@@ -8,8 +8,8 @@
             'domainGiftEnabled' => !empty($domainGiftEnabled),
             'quotaRedeemEnabled' => !empty($quotaRedeemEnabled),
             'moduleSlug' => $moduleSlug,
-            'clientEntryScript' => $cfClientEntryScript ?? 'clientarea.php',
-            'clientBaseQuery' => $cfClientBaseEntryQuery ?? ['action' => 'addon', 'module' => $moduleSlug],
+            'clientEntryScript' => $cfClientEntryScript ?? 'index.php',
+            'clientBaseQuery' => $cfClientBaseEntryQuery ?? ['m' => $moduleSlug],
             'moduleActionParam' => 'module_action',
         ], CFMOD_SAFE_JSON_FLAGS); ?>;
     </script>
@@ -24,10 +24,10 @@
 
         function cfClientResolveRouteConfig() {
             var cfg = window.CF_CLIENT_CONFIG || {};
-            var script = (typeof cfg.clientEntryScript === 'string' && cfg.clientEntryScript !== '') ? cfg.clientEntryScript : 'clientarea.php';
+            var script = (typeof cfg.clientEntryScript === 'string' && cfg.clientEntryScript !== '') ? cfg.clientEntryScript : 'index.php';
             var baseQuery = (cfg.clientBaseQuery && Object(cfg.clientBaseQuery) === cfg.clientBaseQuery)
                 ? cfg.clientBaseQuery
-                : { action: 'addon', module: (cfg.moduleSlug || 'domain_hub') };
+                : { m: (cfg.moduleSlug || 'domain_hub') };
             var actionParam = (typeof cfg.moduleActionParam === 'string' && cfg.moduleActionParam !== '')
                 ? cfg.moduleActionParam
                 : 'module_action';
