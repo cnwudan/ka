@@ -712,8 +712,8 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                     </div>
                 <?php endif; ?>
 
-                <div class="alert alert-warning">
-                    <i class="fas fa-exclamation-triangle me-1"></i>
+                <div class="border rounded bg-light px-3 py-2 mb-3 small text-muted">
+                    <i class="fas fa-shield-alt text-warning me-1"></i>
                     <?php echo $modalText('cfclient.invite_registration.required_notice', '首次使用前请先完成准入验证。'); ?>
                 </div>
 
@@ -721,14 +721,17 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                 <form method="post" id="inviteRegRequiredForm" class="mb-3">
                     <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
                     <input type="hidden" name="action" value="invite_registration_unlock">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold" for="invite_reg_code_input"><?php echo $modalText('cfclient.invite_registration.input_label', '输入邀请码'); ?></label>
-                        <input type="text" class="form-control form-control-lg text-uppercase" name="invite_reg_code" id="invite_reg_code_input" placeholder="<?php echo $modalText('cfclient.invite_registration.input_placeholder', '例如：ABCD1234EFGH'); ?>" maxlength="20" <?php echo $inviteGateInviteEnabled ? 'required' : ''; ?> autofocus>
-                        <div class="form-text"><?php echo $modalText('cfclient.invite_registration.input_hint', '邀请码不区分大小写，请仔细核对后提交。'); ?></div>
+                    <div class="border rounded bg-white p-3">
+                        <label class="form-label fw-semibold small mb-2" for="invite_reg_code_input"><?php echo $modalText('cfclient.invite_registration.input_label', '输入邀请码'); ?></label>
+                        <div class="input-group">
+                            <span class="input-group-text"><i class="fas fa-ticket-alt text-muted"></i></span>
+                            <input type="text" class="form-control text-uppercase" name="invite_reg_code" id="invite_reg_code_input" placeholder="<?php echo $modalText('cfclient.invite_registration.input_placeholder', '例如：ABCD1234EFGH'); ?>" maxlength="20" <?php echo $inviteGateInviteEnabled ? 'required' : ''; ?> autofocus>
+                            <button type="submit" class="btn btn-primary px-3">
+                                <i class="fas fa-check"></i> <?php echo $modalText('cfclient.invite_registration.submit', '验证邀请码'); ?>
+                            </button>
+                        </div>
+                        <div class="form-text mb-0 mt-2"><?php echo $modalText('cfclient.invite_registration.input_hint', '邀请码不区分大小写，请仔细核对后提交。'); ?></div>
                     </div>
-                    <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-check"></i> <?php echo $modalText('cfclient.invite_registration.submit', '验证邀请码'); ?>
-                    </button>
                 </form>
                 <?php endif; ?>
 
