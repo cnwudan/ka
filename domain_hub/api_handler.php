@@ -319,6 +319,12 @@ function api_handle_subdomain_register(array $data, $keyRow, array $settings): a
         return [$code, $result];
     }
 
+    if ($sub[0] === '-' || substr($sub, -1) === '-') {
+        $code = 400;
+        $result = ['error' => 'prefix invalid format'];
+        return [$code, $result];
+    }
+
     if ($subLen < $prefixMinLen || $subLen > $prefixMaxLen) {
         $code = 400;
         $result = [
@@ -695,7 +701,8 @@ function api_handle_subdomain_renew(array $data, $keyRow, array $settings): arra
 
 
 function api_resolve_dns_record_identifier(array $data): array {
-    $recordIdentifierRaw = $data['record_id'] ?? ($data['id'] ?? null);
+    $hasRecordIdentifier = array_key_exists('record_id', $data);
+    $recordIdentifierRaw = $hasRecordIdentifier ? $data['record_id'] : ($data['id'] ?? null);
     $recordIdentifier = null;
     if ($recordIdentifierRaw !== null && !is_array($recordIdentifierRaw)) {
         $recordIdentifier = trim((string) $recordIdentifierRaw);
@@ -704,17 +711,24 @@ function api_resolve_dns_record_identifier(array $data): array {
         }
     }
     $localId = intval($data['id'] ?? 0);
-    return [$recordIdentifier, $localId];
+    return [$recordIdentifier, $localId, $hasRecordIdentifier];
 }
 
-function api_find_dns_record_by_identifier(?string $recordIdentifier, int $localId = 0) {
+function api_find_dns_record_by_identifier(?string $recordIdentifier, int $localId = 0, bool $preferProviderRecordId = false) {
     $rec = null;
     if ($recordIdentifier !== null) {
-        if (ctype_digit($recordIdentifier)) {
-            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
-        }
-        if (!$rec) {
+        if ($preferProviderRecordId) {
             $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
+            if (!$rec && ctype_digit($recordIdentifier)) {
+                $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
+            }
+        } else {
+            if (ctype_digit($recordIdentifier)) {
+                $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
+            }
+            if (!$rec) {
+                $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
+            }
         }
     }
     if (!$rec && $localId > 0) {
@@ -1198,7 +1212,9 @@ function api_auth(){
     if (!password_verify((string)$apiSecret, (string)$row->api_secret)) { return [false, 'Invalid API secret']; }
     // IP whitelist
     $ipwl = trim((string)($row->ip_whitelist ?? ''));
-    if ($ipwl !== ''){
+    $authSettings = api_load_settings();
+    $ipWhitelistEnabled = api_setting_enabled($authSettings['api_enable_ip_whitelist'] ?? '1');
+    if ($ipWhitelistEnabled && $ipwl !== ''){
         $ips = array_filter(array_map('trim', preg_split('/[,\n\r]+/', $ipwl)));
         if (!in_array(api_client_ip(), $ips, true)) {
             return [false, 'IP not allowed'];
@@ -1767,14 +1783,15 @@ function handleApiRequest(){
             $quota = api_get_user_quota($keyRow->userid, $settings);
             if ($quota) {
                 $used = intval($quota->used_count ?? 0);
-                $base = intval($quota->max_count ?? 0);
-                $bonus = intval($quota->invite_bonus_count ?? 0);
+                $total = intval($quota->max_count ?? 0);
+                $bonus = max(0, intval($quota->invite_bonus_count ?? 0));
+                $base = max(0, $total - $bonus);
             } else {
                 $used = 0;
                 $base = intval($settings['max_subdomain_per_user'] ?? 0);
                 $bonus = 0;
+                $total = $base;
             }
-            $total = $base;
             $available = max(0, $total - $used);
             $result = [
                 'success' => true,
@@ -1873,17 +1890,25 @@ function handleApiRequest(){
                 }
                 $hasMore = $subsCollection->count() > $perPage;
                 $subsLimited = $hasMore ? $subsCollection->slice(0, $perPage)->values() : $subsCollection->values();
+                $selectedFieldSet = array_fill_keys($selectFields, true);
                 $rows = [];
                 foreach ($subsLimited as $s) {
-                    $rows[] = [
-                        'id' => $s->id,
-                        'subdomain' => $s->subdomain,
-                        'rootdomain' => $s->rootdomain,
-                        'full_domain' => $s->subdomain,
-                        'status' => $s->status,
-                        'created_at' => $s->created_at,
-                        'updated_at' => $s->updated_at
-                    ];
+                    $row = [];
+                    foreach ($selectFields as $field) {
+                        if ($field === 'id') {
+                            $row['id'] = intval($s->id ?? 0);
+                        } elseif ($field === 'never_expires') {
+                            $row['never_expires'] = intval($s->never_expires ?? 0);
+                        } elseif ($field === 'provider_account_id') {
+                            $row['provider_account_id'] = isset($s->provider_account_id) ? intval($s->provider_account_id) : null;
+                        } else {
+                            $row[$field] = $s->{$field} ?? null;
+                        }
+                    }
+                    if (isset($selectedFieldSet['subdomain'])) {
+                        $row['full_domain'] = $s->subdomain ?? null;
+                    }
+                    $rows[] = $row;
                 }
                 $meta = [
                     'page' => $page,
@@ -2082,23 +2107,18 @@ function handleApiRequest(){
                     }
                 }
             } elseif ($action === 'delete' && in_array($method, ['POST', 'DELETE'])) {
-                $apiDnsDeleteRecId = $data['record_id'] ?? ($data['id'] ?? null);
+                list($recordIdentifier, $localId, $hasProviderRecordIdentifier) = api_resolve_dns_record_identifier($data);
                 $apiDnsDeleteSid = 0;
                 $apiDnsDeleteRoot = '';
-                if ($apiDnsDeleteRecId !== null) {
+                if ($recordIdentifier !== null || $localId > 0) {
                     try {
-                        $apiDnsDeleteRec = null;
-                        if (is_numeric($apiDnsDeleteRecId)) {
-                            $apiDnsDeleteRec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($apiDnsDeleteRecId))->first();
-                        }
-                        if (!$apiDnsDeleteRec) {
-                            $apiDnsDeleteRec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', (string)$apiDnsDeleteRecId)->first();
-                        }
+                        $apiDnsDeleteRec = api_find_dns_record_by_identifier($recordIdentifier, $localId, $hasProviderRecordIdentifier);
                         if ($apiDnsDeleteRec) {
                             $apiDnsDeleteSid = intval($apiDnsDeleteRec->subdomain_id ?? 0);
                             $apiDnsDeleteRoot = api_get_subdomain_rootdomain($apiDnsDeleteSid);
                         }
-                    } catch (\Throwable $e) {}
+                    } catch (\Throwable $e) {
+                    }
                 }
                 if (api_setting_enabled($settings['maintenance_mode'] ?? '0')) {
                     $code = 503;
@@ -2115,27 +2135,7 @@ function handleApiRequest(){
                     } catch (CfRateLimitExceededException $e) {
                         api_emit_scope_rate_limit_error($e);
                     }
-                    $recordIdentifierRaw = $data['record_id'] ?? null;
-                    $recordIdentifier = null;
-                    if ($recordIdentifierRaw !== null && !is_array($recordIdentifierRaw)) {
-                        $recordIdentifier = trim((string) $recordIdentifierRaw);
-                        if ($recordIdentifier === '') {
-                            $recordIdentifier = null;
-                        }
-                    }
-                    $localId = intval($data['id'] ?? 0);
-                    $rec = null;
-                    if ($recordIdentifier !== null) {
-                        if (ctype_digit($recordIdentifier)) {
-                            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
-                        }
-                        if (!$rec) {
-                            $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
-                        }
-                    }
-                    if (!$rec && $localId > 0) {
-                        $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', $localId)->first();
-                    }
+                    $rec = api_find_dns_record_by_identifier($recordIdentifier, $localId, $hasProviderRecordIdentifier);
                     if (!$rec) {
                         $code = 404;
                         $result = ['error' => 'record not found'];
@@ -2216,11 +2216,11 @@ function handleApiRequest(){
                     }
                 }
             } elseif ($action === 'update' && in_array($method, ['POST', 'PUT', 'PATCH'])) {
-                list($recordIdentifier, $localId) = api_resolve_dns_record_identifier($data);
+                list($recordIdentifier, $localId, $hasProviderRecordIdentifier) = api_resolve_dns_record_identifier($data);
                 $apiDnsUpdateRoot = '';
                 if ($recordIdentifier !== null || $localId > 0) {
                     try {
-                        $apiDnsUpdateRec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
+                        $apiDnsUpdateRec = api_find_dns_record_by_identifier($recordIdentifier, $localId, $hasProviderRecordIdentifier);
                         if ($apiDnsUpdateRec) {
                             $apiDnsUpdateSid = intval($apiDnsUpdateRec->subdomain_id ?? 0);
                             $apiDnsUpdateRoot = api_get_subdomain_rootdomain($apiDnsUpdateSid);
@@ -2249,7 +2249,7 @@ function handleApiRequest(){
                         $code = 400;
                         $result = ['error' => 'record_id required'];
                     } else {
-                        $rec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
+                        $rec = api_find_dns_record_by_identifier($recordIdentifier, $localId, $hasProviderRecordIdentifier);
                         if (!$rec) {
                             $code = 404;
                             $result = ['error' => 'record not found'];
@@ -2416,20 +2416,61 @@ function handleApiRequest(){
                     api_emit_scope_rate_limit_error($e);
                 }
                 $keyName = trim((string)($data['key_name'] ?? ''));
+                $ipWhitelistEnabled = api_setting_enabled($settings['api_enable_ip_whitelist'] ?? '0');
+                $ipWhitelistInput = trim((string)($data['ip_whitelist'] ?? ''));
+                $ipWhitelist = '';
 
                 if ($keyName === '') {
                     $code = 400;
                     $result = ['error' => 'key_name required'];
                 } else {
+                    $keyNameLength = function_exists('mb_strlen') ? mb_strlen($keyName, 'UTF-8') : strlen($keyName);
+                    if ($keyNameLength > 100) {
+                        $code = 400;
+                        $result = ['error' => 'key_name too long'];
+                    }
+                }
+
+                if ($code === 200 && $ipWhitelistEnabled && $ipWhitelistInput !== '') {
+                    $ipCandidates = array_filter(array_map('trim', preg_split('/[,\n\r]+/', $ipWhitelistInput)), static function ($value) {
+                        return $value !== '';
+                    });
+                    $normalizedIps = [];
+                    foreach ($ipCandidates as $ipCandidate) {
+                        if (filter_var($ipCandidate, FILTER_VALIDATE_IP) === false) {
+                            $code = 400;
+                            $result = ['error' => 'ip_whitelist invalid'];
+                            break;
+                        }
+                        $normalizedIps[] = $ipCandidate;
+                    }
+                    if ($code === 200) {
+                        $ipWhitelist = implode(',', array_values(array_unique($normalizedIps)));
+                    }
+                }
+
+                if ($code === 200) {
                     try {
                         $existingCount = Capsule::table('mod_cloudflare_api_keys')
                             ->where('userid', $keyRow->userid)
                             ->count();
-                        $maxKeys = intval($settings['api_keys_per_user'] ?? 3);
-                        if ($existingCount >= $maxKeys) {
+                        $maxKeys = max(0, intval($settings['api_keys_per_user'] ?? 3));
+                        if ($maxKeys > 0 && $existingCount >= $maxKeys) {
                             $code = 403;
                             $result = ['error' => 'key limit exceeded'];
                         } else {
+                            $requireQuota = max(0, intval($settings['api_require_quota'] ?? 0));
+                            if ($requireQuota > 0) {
+                                $quotaRow = api_get_user_quota(intval($keyRow->userid ?? 0), $settings);
+                                $quotaTotal = intval($quotaRow->max_count ?? intval($settings['max_subdomain_per_user'] ?? 0));
+                                if ($quotaTotal < $requireQuota) {
+                                    $code = 403;
+                                    $result = ['error' => 'quota insufficient'];
+                                }
+                            }
+                        }
+
+                        if ($code === 200) {
                             $apiKey = 'cfsd_' . bin2hex(random_bytes(16));
                             $apiSecret = bin2hex(random_bytes(32));
                             $hashedSecret = password_hash($apiSecret, PASSWORD_DEFAULT);
@@ -2441,6 +2482,8 @@ function handleApiRequest(){
                                 'api_key' => $apiKey,
                                 'api_secret' => $hashedSecret,
                                 'status' => 'active',
+                                'ip_whitelist' => $ipWhitelist,
+                                'permissions' => json_encode(['subdomains' => true, 'dns_records' => true], JSON_UNESCAPED_UNICODE),
                                 'rate_limit' => $rateLimit,
                                 'request_count' => 0,
                                 'created_at' => $now,
@@ -2451,7 +2494,8 @@ function handleApiRequest(){
                                 'message' => 'API key created successfully',
                                 'api_key' => $apiKey,
                                 'api_secret' => $apiSecret,
-                                'rate_limit' => $rateLimit
+                                'rate_limit' => $rateLimit,
+                                'warning' => 'Please save the api_secret, it will not be shown again'
                             ];
                         }
                     } catch (\Throwable $e) {
@@ -2516,7 +2560,7 @@ function handleApiRequest(){
                                 'api_secret' => $hashedSecret,
                                 'updated_at' => date('Y-m-d H:i:s')
                             ]);
-                        $result = ['success' => true, 'message' => 'API key regenerated successfully', 'api_secret' => $apiSecret];
+                        $result = ['success' => true, 'message' => 'API key regenerated successfully', 'api_key' => $keyRowReg->api_key, 'api_secret' => $apiSecret, 'warning' => 'Please save the api_secret, it will not be shown again'];
                     }
                 } catch (\Throwable $e) {
                     $code = 500;
