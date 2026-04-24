@@ -698,13 +698,54 @@ $inviteGateTelegramBotUsername = trim((string) ($inviteRegistrationTelegramBotUs
 $inviteGateTelegramAuthMaxAge = max(60, intval($inviteRegistrationTelegramAuthMaxAge ?? 86400));
 $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegistrationGateFlash : null;
 ?>
+<style>
+#inviteRegistrationRequiredModal .invite-reg-required-inner {
+    max-width: 560px;
+    margin: 0 auto;
+}
+#inviteRegistrationRequiredModal .invite-reg-github-card {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    padding: 16px;
+    border-radius: 8px;
+}
+#inviteRegistrationRequiredModal .invite-reg-github-btn {
+    background: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    color: #111827;
+}
+#inviteRegistrationRequiredModal .invite-reg-github-btn:hover,
+#inviteRegistrationRequiredModal .invite-reg-github-btn:focus,
+#inviteRegistrationRequiredModal .invite-reg-github-btn:active {
+    background: #F9FAFB;
+    color: #111827;
+    border-color: #E5E7EB;
+}
+#inviteRegistrationRequiredModal .invite-reg-or-divider {
+    margin: 24px 0;
+    display: flex;
+    align-items: center;
+    color: #9CA3AF;
+    font-size: 0.875rem;
+}
+#inviteRegistrationRequiredModal .invite-reg-or-divider::before,
+#inviteRegistrationRequiredModal .invite-reg-or-divider::after {
+    content: '';
+    flex: 1;
+    border-bottom: 1px solid #E5E7EB;
+}
+#inviteRegistrationRequiredModal .invite-reg-or-divider > span {
+    padding: 0 12px;
+}
+</style>
 <div class="modal fade" id="inviteRegistrationRequiredModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-dialog-centered" style="max-width:560px;">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title"><i class="fas fa-lock me-2"></i> <?php echo $modalText('cfclient.invite_registration.required_title', '准入验证'); ?></h5>
             </div>
             <div class="modal-body">
+                <div class="invite-reg-required-inner">
                 <?php if ($inviteGateFlash && !empty($inviteGateFlash['message'])): ?>
                     <div class="alert alert-<?php echo htmlspecialchars($inviteGateFlash['type'] ?? 'danger', ENT_QUOTES); ?>">
                         <i class="fas fa-exclamation-circle me-1"></i>
@@ -736,14 +777,14 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                 <?php endif; ?>
 
                 <?php if ($inviteGateInviteEnabled && ($inviteGateGithubEnabled || $inviteGateTelegramEnabled)): ?>
-                    <div class="text-center text-muted my-2">—— <?php echo $modalText('cfclient.invite_registration.or', '或'); ?> ——</div>
+                    <div class="invite-reg-or-divider"><span><?php echo $modalText('cfclient.invite_registration.or', '或'); ?></span></div>
                 <?php endif; ?>
 
                 <?php if ($inviteGateGithubEnabled): ?>
-                    <div class="border rounded bg-light p-3 mb-3">
+                    <div class="invite-reg-github-card mb-3">
                         <?php if ($inviteGateGithubConfigured && $inviteGateGithubAuthUrl !== ''): ?>
-                            <a href="<?php echo htmlspecialchars($inviteGateGithubAuthUrl, ENT_QUOTES); ?>" class="btn btn-dark w-100 d-flex align-items-center justify-content-center gap-2 py-3 px-3 fw-semibold shadow-sm mb-2">
-                                <svg aria-hidden="true" height="22" viewBox="0 0 16 16" width="22" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
+                            <a href="<?php echo htmlspecialchars($inviteGateGithubAuthUrl, ENT_QUOTES); ?>" class="btn invite-reg-github-btn w-100 d-flex align-items-center justify-content-center gap-2 py-2 px-3 mb-2">
+                                <svg aria-hidden="true" height="20" viewBox="0 0 16 16" width="20" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8a8 8 0 0 0 5.47 7.59c.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8 8 0 0 0 16 8c0-4.42-3.58-8-8-8Z"></path></svg>
                                 <span><?php echo $modalText('cfclient.invite_registration.github.button', '使用 GitHub 快捷认证'); ?></span>
                             </a>
                             <?php if ($inviteGateGithubMinMonths > 0): ?>
@@ -762,7 +803,7 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                 <?php endif; ?>
 
                 <?php if ($inviteGateGithubEnabled && $inviteGateTelegramEnabled): ?>
-                    <div class="text-center text-muted my-2">—— <?php echo $modalText('cfclient.invite_registration.or', '或'); ?> ——</div>
+                    <div class="invite-reg-or-divider"><span><?php echo $modalText('cfclient.invite_registration.or', '或'); ?></span></div>
                 <?php endif; ?>
 
                 <?php if ($inviteGateTelegramEnabled): ?>
@@ -806,6 +847,7 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                 <a href="clientarea.php" class="btn btn-outline-secondary w-100">
                     <i class="fas fa-home"></i> <?php echo $modalText('cfclient.invite_registration.back_to_portal', '返回客户中心'); ?>
                 </a>
+                </div>
             </div>
         </div>
     </div>
