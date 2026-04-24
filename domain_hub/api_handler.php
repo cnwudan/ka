@@ -695,7 +695,7 @@ function api_handle_subdomain_renew(array $data, $keyRow, array $settings): arra
 
 
 function api_resolve_dns_record_identifier(array $data): array {
-    $recordIdentifierRaw = $data['record_id'] ?? ($data['id'] ?? null);
+    $recordIdentifierRaw = $data['record_id'] ?? null;
     $recordIdentifier = null;
     if ($recordIdentifierRaw !== null && !is_array($recordIdentifierRaw)) {
         $recordIdentifier = trim((string) $recordIdentifierRaw);
@@ -709,18 +709,29 @@ function api_resolve_dns_record_identifier(array $data): array {
 
 function api_find_dns_record_by_identifier(?string $recordIdentifier, int $localId = 0) {
     $rec = null;
-    if ($recordIdentifier !== null) {
-        if (ctype_digit($recordIdentifier)) {
-            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
-        }
-        if (!$rec) {
-            $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
-        }
-    }
-    if (!$rec && $localId > 0) {
+
+    if ($localId > 0) {
         $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', $localId)->first();
+        if ($rec) {
+            return $rec;
+        }
     }
-    return $rec;
+
+    if ($recordIdentifier !== null) {
+        $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
+        if ($rec) {
+            return $rec;
+        }
+
+        if ($localId <= 0 && ctype_digit($recordIdentifier)) {
+            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
+            if ($rec) {
+                return $rec;
+            }
+        }
+    }
+
+    return null;
 }
 
 function api_resolve_record_name_for_subdomain(string $rawName, string $fullSubdomain): string {
@@ -851,6 +862,49 @@ function api_handle_subdomain_delete(array $data, $keyRow, array $settings): arr
         ->first();
     if (!$sub) {
         return [404, ['error' => 'subdomain not found']];
+    }
+
+    if (!api_setting_enabled($settings['enable_client_domain_delete'] ?? '0')) {
+        return [403, ['error' => 'subdomain self-delete disabled']];
+    }
+
+    $statusLower = strtolower(trim((string)($sub->status ?? '')));
+    if (in_array($statusLower, ['pending_delete', 'pending_remove'], true)) {
+        return [409, ['error' => 'subdomain deletion already pending']];
+    }
+    if ($statusLower === 'deleted') {
+        return [410, ['error' => 'subdomain already deleted']];
+    }
+
+    if (intval($sub->gift_lock_id ?? 0) > 0) {
+        return [403, ['error' => 'subdomain locked by gift transfer']];
+    }
+
+    $isPrivilegedUser = intval($keyRow->userid ?? 0) > 0
+        && function_exists('cf_is_user_privileged')
+        && cf_is_user_privileged(intval($keyRow->userid ?? 0));
+    $privilegedAllowDeleteWithDnsHistory = $isPrivilegedUser
+        && function_exists('cf_is_privileged_feature_enabled')
+        && cf_is_privileged_feature_enabled('allow_delete_with_dns_history', $settings);
+
+    $everHadDns = intval($sub->has_dns_history ?? 0) === 1;
+    if (!$everHadDns) {
+        try {
+            $currentDnsExists = Capsule::table('mod_cloudflare_dns_records')
+                ->where('subdomain_id', $subId)
+                ->exists();
+            if ($currentDnsExists) {
+                $everHadDns = true;
+                if (class_exists('CfSubdomainService')) {
+                    CfSubdomainService::markHasDnsHistory($subId);
+                }
+            }
+        } catch (\Throwable $e) {
+        }
+    }
+
+    if ($everHadDns && !$privilegedAllowDeleteWithDnsHistory) {
+        return [403, ['error' => 'subdomain with dns history cannot be self-deleted']];
     }
 
     $rootdomain = strtolower(trim((string)($sub->rootdomain ?? '')));
@@ -2082,18 +2136,11 @@ function handleApiRequest(){
                     }
                 }
             } elseif ($action === 'delete' && in_array($method, ['POST', 'DELETE'])) {
-                $apiDnsDeleteRecId = $data['record_id'] ?? ($data['id'] ?? null);
-                $apiDnsDeleteSid = 0;
+                list($recordIdentifier, $localId) = api_resolve_dns_record_identifier($data);
                 $apiDnsDeleteRoot = '';
-                if ($apiDnsDeleteRecId !== null) {
+                if ($recordIdentifier !== null || $localId > 0) {
                     try {
-                        $apiDnsDeleteRec = null;
-                        if (is_numeric($apiDnsDeleteRecId)) {
-                            $apiDnsDeleteRec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($apiDnsDeleteRecId))->first();
-                        }
-                        if (!$apiDnsDeleteRec) {
-                            $apiDnsDeleteRec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', (string)$apiDnsDeleteRecId)->first();
-                        }
+                        $apiDnsDeleteRec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
                         if ($apiDnsDeleteRec) {
                             $apiDnsDeleteSid = intval($apiDnsDeleteRec->subdomain_id ?? 0);
                             $apiDnsDeleteRoot = api_get_subdomain_rootdomain($apiDnsDeleteSid);
@@ -2115,27 +2162,7 @@ function handleApiRequest(){
                     } catch (CfRateLimitExceededException $e) {
                         api_emit_scope_rate_limit_error($e);
                     }
-                    $recordIdentifierRaw = $data['record_id'] ?? null;
-                    $recordIdentifier = null;
-                    if ($recordIdentifierRaw !== null && !is_array($recordIdentifierRaw)) {
-                        $recordIdentifier = trim((string) $recordIdentifierRaw);
-                        if ($recordIdentifier === '') {
-                            $recordIdentifier = null;
-                        }
-                    }
-                    $localId = intval($data['id'] ?? 0);
-                    $rec = null;
-                    if ($recordIdentifier !== null) {
-                        if (ctype_digit($recordIdentifier)) {
-                            $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', intval($recordIdentifier))->first();
-                        }
-                        if (!$rec) {
-                            $rec = Capsule::table('mod_cloudflare_dns_records')->where('record_id', $recordIdentifier)->first();
-                        }
-                    }
-                    if (!$rec && $localId > 0) {
-                        $rec = Capsule::table('mod_cloudflare_dns_records')->where('id', $localId)->first();
-                    }
+                    $rec = api_find_dns_record_by_identifier($recordIdentifier, $localId);
                     if (!$rec) {
                         $code = 404;
                         $result = ['error' => 'record not found'];
