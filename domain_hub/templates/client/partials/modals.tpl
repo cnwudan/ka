@@ -762,10 +762,10 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
 
                 <?php if ($inviteGateTelegramEnabled): ?>
                     <?php if ($inviteGateTelegramConfigured && $inviteGateTelegramBotUsername !== ''): ?>
-                        <div class="small text-muted mb-2" id="inviteRegTelegramAuthStatus">
+                        <div class="small text-muted text-center mb-2" id="inviteRegTelegramAuthStatus">
                             <?php echo $modalText('cfclient.invite_registration.telegram.auth_hint', '请点击 Telegram 授权按钮并确认授权，系统将自动完成准入验证。'); ?>
                         </div>
-                        <div class="telegram-login-widget-wrap mb-2">
+                        <div class="telegram-login-widget-wrap d-flex justify-content-center mb-2">
                             <script async src="https://telegram.org/js/telegram-widget.js?22"
                                 data-telegram-login="<?php echo htmlspecialchars($inviteGateTelegramBotUsername, ENT_QUOTES); ?>"
                                 data-size="large"
@@ -807,6 +807,9 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
 </div>
 
 <script>
+var inviteRegTelegramAuthSuccessText = <?php echo json_encode($modalText('cfclient.invite_registration.telegram.auth_success', 'Telegram 授权成功，请点击下方按钮完成准入验证。', [], false), CFMOD_SAFE_JSON_FLAGS); ?>;
+var inviteRegTelegramAuthRequiredText = <?php echo json_encode($modalText('cfclient.invite_registration.telegram.auth_required', '请先完成 Telegram 授权后再提交验证。', [], false), CFMOD_SAFE_JSON_FLAGS); ?>;
+
 window.cfInviteRegistrationTelegramOnAuth = function(user) {
     if (!user || typeof user !== 'object') {
         return;
@@ -832,7 +835,7 @@ window.cfInviteRegistrationTelegramOnAuth = function(user) {
     }
     var status = document.getElementById('inviteRegTelegramAuthStatus');
     if (status) {
-        status.textContent = 'Telegram 授权成功，请点击下方按钮完成准入验证。';
+        status.textContent = inviteRegTelegramAuthSuccessText;
         status.classList.remove('text-muted');
         status.classList.add('text-success');
     }
@@ -855,7 +858,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 event.preventDefault();
                 var status = document.getElementById('inviteRegTelegramAuthStatus');
                 if (status) {
-                    status.textContent = '请先完成 Telegram 授权后再提交验证。';
+                    status.textContent = inviteRegTelegramAuthRequiredText;
                     status.classList.remove('text-muted');
                     status.classList.add('text-danger');
                 }
