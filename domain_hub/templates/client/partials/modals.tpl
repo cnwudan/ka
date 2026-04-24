@@ -692,6 +692,10 @@ $inviteGateGithubConfigured = !empty($inviteRegistrationGithubConfigured);
 $inviteGateGithubAuthUrl = trim((string) ($inviteRegistrationGithubAuthUrl ?? ''));
 $inviteGateGithubMinMonths = max(0, intval($inviteRegistrationGithubMinMonths ?? 0));
 $inviteGateGithubMinRepos = max(0, intval($inviteRegistrationGithubMinRepos ?? 0));
+$inviteGateTelegramEnabled = !empty($inviteRegistrationTelegramEnabled);
+$inviteGateTelegramConfigured = !empty($inviteRegistrationTelegramConfigured);
+$inviteGateTelegramBotUsername = trim((string) ($inviteRegistrationTelegramBotUsername ?? ''));
+$inviteGateTelegramAuthMaxAge = max(60, intval($inviteRegistrationTelegramAuthMaxAge ?? 86400));
 $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegistrationGateFlash : null;
 ?>
 <div class="modal fade" id="inviteRegistrationRequiredModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
@@ -728,7 +732,7 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                 </form>
                 <?php endif; ?>
 
-                <?php if ($inviteGateInviteEnabled && $inviteGateGithubEnabled): ?>
+                <?php if ($inviteGateInviteEnabled && ($inviteGateGithubEnabled || $inviteGateTelegramEnabled)): ?>
                     <div class="text-center text-muted my-2">—— <?php echo $modalText('cfclient.invite_registration.or', '或'); ?> ——</div>
                 <?php endif; ?>
 
@@ -752,6 +756,48 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                     <?php endif; ?>
                 <?php endif; ?>
 
+                <?php if ($inviteGateGithubEnabled && $inviteGateTelegramEnabled): ?>
+                    <div class="text-center text-muted my-2">—— <?php echo $modalText('cfclient.invite_registration.or', '或'); ?> ——</div>
+                <?php endif; ?>
+
+                <?php if ($inviteGateTelegramEnabled): ?>
+                    <?php if ($inviteGateTelegramConfigured && $inviteGateTelegramBotUsername !== ''): ?>
+                        <div class="small text-muted mb-2" id="inviteRegTelegramAuthStatus">
+                            <?php echo $modalText('cfclient.invite_registration.telegram.auth_hint', '请点击 Telegram 授权按钮并确认授权，系统将自动完成准入验证。'); ?>
+                        </div>
+                        <div class="telegram-login-widget-wrap mb-2">
+                            <script async src="https://telegram.org/js/telegram-widget.js?22"
+                                data-telegram-login="<?php echo htmlspecialchars($inviteGateTelegramBotUsername, ENT_QUOTES); ?>"
+                                data-size="large"
+                                data-userpic="false"
+                                data-request-access="write"
+                                data-onauth="cfInviteRegistrationTelegramOnAuth(user)">
+                            </script>
+                        </div>
+                        <form method="post" class="mb-3" id="inviteRegTelegramForm">
+                            <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
+                            <input type="hidden" name="action" value="invite_registration_telegram_unlock">
+                            <input type="hidden" name="telegram_auth_id" id="inviteRegTelegramAuthId" value="">
+                            <input type="hidden" name="telegram_auth_username" id="inviteRegTelegramAuthUsername" value="">
+                            <input type="hidden" name="telegram_auth_first_name" id="inviteRegTelegramAuthFirstName" value="">
+                            <input type="hidden" name="telegram_auth_last_name" id="inviteRegTelegramAuthLastName" value="">
+                            <input type="hidden" name="telegram_auth_photo_url" id="inviteRegTelegramAuthPhotoUrl" value="">
+                            <input type="hidden" name="telegram_auth_date" id="inviteRegTelegramAuthDate" value="">
+                            <input type="hidden" name="telegram_auth_hash" id="inviteRegTelegramAuthHash" value="">
+                            <button type="submit" class="btn btn-primary w-100" id="inviteRegTelegramSubmitButton" disabled>
+                                <i class="fab fa-telegram-plane me-1"></i><?php echo $modalText('cfclient.invite_registration.telegram.submit', '我已授权 Telegram，继续验证'); ?>
+                            </button>
+                            <div class="form-text text-muted mt-2"><?php echo $modalText('cfclient.invite_registration.telegram.ttl_hint', '授权数据最长有效 %s 秒，超时请重新授权。', [$inviteGateTelegramAuthMaxAge]); ?></div>
+                            <div class="form-text text-muted"><?php echo $modalText('cfclient.invite_registration.telegram.domain_hint', '若出现 Bot domain invalid，请在 BotFather 中为该 Bot 配置当前站点域名白名单。'); ?></div>
+                        </form>
+                    <?php else: ?>
+                        <div class="alert alert-secondary mb-3">
+                            <i class="fas fa-info-circle me-1"></i>
+                            <?php echo $modalText('cfclient.invite_registration.telegram.not_configured', '管理员尚未完成 Telegram 准入配置，请联系管理员。'); ?>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+
                 <a href="clientarea.php" class="btn btn-outline-secondary w-100">
                     <i class="fas fa-home"></i> <?php echo $modalText('cfclient.invite_registration.back_to_portal', '返回客户中心'); ?>
                 </a>
@@ -761,11 +807,60 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
 </div>
 
 <script>
+window.cfInviteRegistrationTelegramOnAuth = function(user) {
+    if (!user || typeof user !== 'object') {
+        return;
+    }
+    var map = {
+        inviteRegTelegramAuthId: user.id || '',
+        inviteRegTelegramAuthUsername: user.username || '',
+        inviteRegTelegramAuthFirstName: user.first_name || '',
+        inviteRegTelegramAuthLastName: user.last_name || '',
+        inviteRegTelegramAuthPhotoUrl: user.photo_url || '',
+        inviteRegTelegramAuthDate: user.auth_date || '',
+        inviteRegTelegramAuthHash: user.hash || ''
+    };
+    Object.keys(map).forEach(function(id) {
+        var input = document.getElementById(id);
+        if (input) {
+            input.value = map[id];
+        }
+    });
+    var submitBtn = document.getElementById('inviteRegTelegramSubmitButton');
+    if (submitBtn) {
+        submitBtn.disabled = !(map.inviteRegTelegramAuthId && map.inviteRegTelegramAuthHash && map.inviteRegTelegramAuthDate);
+    }
+    var status = document.getElementById('inviteRegTelegramAuthStatus');
+    if (status) {
+        status.textContent = 'Telegram 授权成功，请点击下方按钮完成准入验证。';
+        status.classList.remove('text-muted');
+        status.classList.add('text-success');
+    }
+};
+
 document.addEventListener('DOMContentLoaded', function() {
     var inviteRegRequiredModal = document.getElementById('inviteRegistrationRequiredModal');
     if (inviteRegRequiredModal) {
         var bsModal = new bootstrap.Modal(inviteRegRequiredModal);
         bsModal.show();
+    }
+
+    var telegramForm = document.getElementById('inviteRegTelegramForm');
+    if (telegramForm) {
+        telegramForm.addEventListener('submit', function(event) {
+            var authId = document.getElementById('inviteRegTelegramAuthId');
+            var authHash = document.getElementById('inviteRegTelegramAuthHash');
+            var authDate = document.getElementById('inviteRegTelegramAuthDate');
+            if (!authId || !authHash || !authDate || !authId.value || !authHash.value || !authDate.value) {
+                event.preventDefault();
+                var status = document.getElementById('inviteRegTelegramAuthStatus');
+                if (status) {
+                    status.textContent = '请先完成 Telegram 授权后再提交验证。';
+                    status.classList.remove('text-muted');
+                    status.classList.add('text-danger');
+                }
+            }
+        });
     }
 });
 </script>

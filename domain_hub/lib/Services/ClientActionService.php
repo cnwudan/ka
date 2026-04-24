@@ -225,6 +225,62 @@ class CfClientActionService
             ];
         }
 
+        // 处理 Telegram 静默准入验证
+        if ($_POST['action'] === 'invite_registration_telegram_unlock') {
+            $inviteRegistrationEnabled = CfInviteRegistrationService::isGateEnabled($module_settings);
+            $telegramOptionEnabled = CfInviteRegistrationService::isTelegramOptionEnabled($module_settings);
+            if (!$inviteRegistrationEnabled) {
+                $msg = self::actionText('invite_registration.disabled', '当前未启用邀请注册功能。');
+                $msg_type = 'warning';
+            } elseif (!$telegramOptionEnabled) {
+                $msg = self::actionText('invite_registration.telegram_option_disabled', '当前准入模式未启用 Telegram 静默验证，或管理员尚未完成 Telegram 配置。');
+                $msg_type = 'warning';
+            } elseif ($userid <= 0) {
+                $msg = self::actionText('invite_registration.invalid_user', '未找到登录信息，请刷新页面后重试。');
+                $msg_type = 'danger';
+            } else {
+                $authPayload = [
+                    'id' => trim((string) ($_POST['telegram_auth_id'] ?? $_POST['telegram_id'] ?? '')),
+                    'username' => trim((string) ($_POST['telegram_auth_username'] ?? $_POST['telegram_username'] ?? '')),
+                    'first_name' => trim((string) ($_POST['telegram_auth_first_name'] ?? '')),
+                    'last_name' => trim((string) ($_POST['telegram_auth_last_name'] ?? '')),
+                    'photo_url' => trim((string) ($_POST['telegram_auth_photo_url'] ?? '')),
+                    'auth_date' => trim((string) ($_POST['telegram_auth_date'] ?? '')),
+                    'hash' => trim((string) ($_POST['telegram_auth_hash'] ?? '')),
+                ];
+
+                try {
+                    CfInviteRegistrationService::unlockByTelegram((int) $userid, $module_settings, $authPayload);
+                    $msg = self::actionText('invite_registration.telegram_success', 'Telegram 准入验证成功，现在可以正常使用。');
+                    $msg_type = 'success';
+                } catch (\InvalidArgumentException $e) {
+                    $reason = trim((string) $e->getMessage());
+                    if ($reason === 'telegram_auth_expired') {
+                        $msg = self::actionText('invite_registration.telegram_auth_expired', 'Telegram 授权已过期，请重新点击 Telegram 按钮授权。');
+                    } elseif ($reason === 'telegram_auth_invalid') {
+                        $msg = self::actionText('invite_registration.telegram_auth_invalid', 'Telegram 授权信息无效，请重新授权后重试。');
+                    } elseif ($reason === 'telegram_used') {
+                        $msg = self::actionText('invite_registration.telegram_used', '该 Telegram 账号已被其他用户绑定，请使用自己的 Telegram 账号。');
+                    } elseif ($reason === 'telegram_invalid_config' || $reason === 'telegram_not_enabled') {
+                        $msg = self::actionText('invite_registration.telegram_invalid_config', '管理员尚未完成 Telegram 准入配置，请稍后再试。');
+                    } elseif ($reason === 'invalid_user') {
+                        $msg = self::actionText('invite_registration.invalid_user', '未找到登录信息，请刷新页面后重试。');
+                    } else {
+                        $msg = self::actionText('invite_registration.telegram_error', 'Telegram 验证失败：%s', [$reason]);
+                    }
+                    $msg_type = 'danger';
+                } catch (\Throwable $e) {
+                    $msg = self::actionText('invite_registration.telegram_error', 'Telegram 验证失败：%s', [$e->getMessage()]);
+                    $msg_type = 'danger';
+                }
+            }
+            return [
+                'msg' => $msg,
+                'msg_type' => $msg_type,
+                'registerError' => $registerError,
+            ];
+        }
+
         // 处理邀请注册解锁
         if ($_POST['action'] === 'invite_registration_unlock') {
             $inviteRegistrationEnabled = CfInviteRegistrationService::isGateEnabled($module_settings);
@@ -233,7 +289,7 @@ class CfClientActionService
                 $msg = self::actionText('invite_registration.disabled', '当前未启用邀请注册功能。');
                 $msg_type = 'warning';
             } elseif (!$inviteOptionEnabled) {
-                $msg = self::actionText('invite_registration.invite_option_disabled', '当前准入模式不支持邀请码验证，请使用 GitHub 认证。');
+                $msg = self::actionText('invite_registration.invite_option_disabled', '当前准入模式不支持邀请码验证，请使用可用的 GitHub / Telegram 认证方式。');
                 $msg_type = 'warning';
             } elseif ($userid <= 0) {
                 $msg = self::actionText('invite_registration.invalid_user', '未找到登录信息，请刷新页面后重试。');

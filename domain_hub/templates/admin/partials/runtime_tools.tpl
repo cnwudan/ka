@@ -109,12 +109,45 @@ $telegramGroupEnabledSetting = in_array($module_settings['enable_telegram_group_
 $telegramGroupLinkSetting = trim((string) ($module_settings['telegram_group_link'] ?? ''));
 $telegramGroupChatIdSetting = trim((string) ($module_settings['telegram_group_chat_id'] ?? ''));
 $telegramGroupBotUsernameSetting = trim((string) ($module_settings['telegram_group_bot_username'] ?? ''));
-$telegramGroupBotTokenSetting = trim((string) ($module_settings['telegram_group_bot_token'] ?? ''));
-if ($telegramGroupBotTokenSetting !== '' && strpos($telegramGroupBotTokenSetting, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
-    $telegramGroupBotTokenSetting = trim((string) cfmod_decrypt_sensitive(substr($telegramGroupBotTokenSetting, strlen('enc::'))));
+$telegramGroupBotTokenStored = trim((string) ($module_settings['telegram_group_bot_token'] ?? ''));
+$telegramGroupBotTokenConfigured = $telegramGroupBotTokenStored !== '';
+if ($telegramGroupBotTokenConfigured && strpos($telegramGroupBotTokenStored, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+    $telegramGroupBotTokenConfigured = trim((string) cfmod_decrypt_sensitive(substr($telegramGroupBotTokenStored, strlen('enc::')))) !== '';
 }
+$telegramGroupBotTokenPlaceholder = $telegramGroupBotTokenConfigured ? '留空表示保持当前 Token 不变' : '123456:ABCDEF...';
 $telegramGroupRewardSetting = max(1, intval($module_settings['telegram_group_reward_amount'] ?? 1));
 $telegramAuthMaxAgeSetting = max(60, min(604800, intval($module_settings['telegram_reward_auth_max_age_seconds'] ?? 86400)));
+
+$inviteGateModeLabel = $lang['runtime_invite_gate_mode'] ?? '新用户准入模式';
+$inviteGateModeHint = $lang['runtime_invite_gate_mode_hint'] ?? '支持邀请码 / GitHub / Telegram 组合；Telegram 授权需先在 BotFather 配置域名白名单。';
+$inviteTelegramBotUsernameLabel = $lang['runtime_invite_telegram_bot_username'] ?? '准入 Telegram Bot 用户名';
+$inviteTelegramBotUsernameHint = $lang['runtime_invite_telegram_bot_username_hint'] ?? '留空时回退使用社群奖励 Bot 用户名。';
+$inviteTelegramBotTokenLabel = $lang['runtime_invite_telegram_bot_token'] ?? '准入 Telegram Bot Token';
+$inviteTelegramBotTokenHint = $lang['runtime_invite_telegram_bot_token_hint'] ?? '留空时回退使用社群奖励 Bot Token；用于静默验证 Telegram 授权回传。';
+$inviteTelegramAuthAgeLabel = $lang['runtime_invite_telegram_auth_age'] ?? '准入授权有效期（秒）';
+$inviteTelegramAuthAgeHint = $lang['runtime_invite_telegram_auth_age_hint'] ?? '限制 Telegram 静默授权数据时效（60-604800）。';
+$inviteGateModeSetting = trim((string) ($module_settings['invite_registration_gate_mode'] ?? 'disabled'));
+$inviteGateModeOptions = [
+    'disabled' => '关闭准入验证',
+    'invite_only' => '仅邀请码',
+    'github_only' => '仅 GitHub',
+    'telegram_only' => '仅 Telegram（静默授权）',
+    'invite_or_github' => '邀请码 / GitHub 二选一',
+    'invite_or_telegram' => '邀请码 / Telegram 二选一',
+    'github_or_telegram' => 'GitHub / Telegram 二选一',
+    'invite_or_github_or_telegram' => '邀请码 / GitHub / Telegram 三选一',
+];
+if (!array_key_exists($inviteGateModeSetting, $inviteGateModeOptions)) {
+    $inviteGateModeSetting = 'disabled';
+}
+$inviteTelegramBotUsernameSetting = trim((string) ($module_settings['invite_registration_telegram_bot_username'] ?? ''));
+$inviteTelegramBotTokenStored = trim((string) ($module_settings['invite_registration_telegram_bot_token'] ?? ''));
+$inviteTelegramBotTokenConfigured = $inviteTelegramBotTokenStored !== '';
+if ($inviteTelegramBotTokenConfigured && strpos($inviteTelegramBotTokenStored, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+    $inviteTelegramBotTokenConfigured = trim((string) cfmod_decrypt_sensitive(substr($inviteTelegramBotTokenStored, strlen('enc::')))) !== '';
+}
+$inviteTelegramBotTokenPlaceholder = $inviteTelegramBotTokenConfigured ? '留空表示保持当前 Token 不变（未填写则回退社群奖励 Token）' : '123456:ABCDEF...（留空回退社群奖励 Token）';
+$inviteTelegramAuthAgeSetting = max(60, min(604800, intval($module_settings['invite_registration_telegram_auth_max_age_seconds'] ?? ($module_settings['telegram_reward_auth_max_age_seconds'] ?? 86400))));
 
 $orphanTitle = $lang['runtime_orphan_title'] ?? '孤儿记录扫描与清理';
 $orphanIntro = $lang['runtime_orphan_intro'] ?? '扫描本地存在但云端已删除的解析记录，可选择只统计或直接删除。';
@@ -396,8 +429,8 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
       </div>
       <div class="col-12 col-lg-4">
         <label class="form-label" for="telegram_group_bot_token"><?php echo htmlspecialchars($telegramGroupBotTokenLabel); ?></label>
-        <input type="password" class="form-control" id="telegram_group_bot_token" name="telegram_group_bot_token" value="<?php echo htmlspecialchars($telegramGroupBotTokenSetting); ?>" placeholder="123456:ABCDEF...">
-        <small class="text-muted"><?php echo htmlspecialchars($telegramGroupBotTokenHint); ?></small>
+        <input type="password" class="form-control" id="telegram_group_bot_token" name="telegram_group_bot_token" value="" autocomplete="new-password" placeholder="<?php echo htmlspecialchars($telegramGroupBotTokenPlaceholder); ?>">
+        <small class="text-muted"><?php echo htmlspecialchars($telegramGroupBotTokenHint); ?><?php if ($telegramGroupBotTokenConfigured): ?>（已检测到历史 Token，留空将保持不变）<?php endif; ?></small>
       </div>
       <div class="col-12 col-lg-2">
         <label class="form-label" for="telegram_group_reward_amount"><?php echo htmlspecialchars($telegramGroupRewardLabel); ?></label>
@@ -408,6 +441,30 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
         <label class="form-label" for="telegram_reward_auth_max_age_seconds"><?php echo htmlspecialchars($telegramAuthMaxAgeLabel); ?></label>
         <input type="number" class="form-control" id="telegram_reward_auth_max_age_seconds" name="telegram_reward_auth_max_age_seconds" min="60" max="604800" step="60" value="<?php echo htmlspecialchars($telegramAuthMaxAgeSetting); ?>">
         <small class="text-muted"><?php echo htmlspecialchars($telegramAuthMaxAgeHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="invite_registration_gate_mode"><?php echo htmlspecialchars($inviteGateModeLabel); ?></label>
+        <select class="form-select" id="invite_registration_gate_mode" name="invite_registration_gate_mode">
+          <?php foreach ($inviteGateModeOptions as $modeValue => $modeLabel): ?>
+            <option value="<?php echo htmlspecialchars($modeValue, ENT_QUOTES); ?>" <?php echo $inviteGateModeSetting === $modeValue ? 'selected' : ''; ?>><?php echo htmlspecialchars($modeLabel); ?></option>
+          <?php endforeach; ?>
+        </select>
+        <small class="text-muted"><?php echo htmlspecialchars($inviteGateModeHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="invite_registration_telegram_bot_username"><?php echo htmlspecialchars($inviteTelegramBotUsernameLabel); ?></label>
+        <input type="text" class="form-control" id="invite_registration_telegram_bot_username" name="invite_registration_telegram_bot_username" value="<?php echo htmlspecialchars($inviteTelegramBotUsernameSetting); ?>" placeholder="my_invite_bot">
+        <small class="text-muted"><?php echo htmlspecialchars($inviteTelegramBotUsernameHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="invite_registration_telegram_bot_token"><?php echo htmlspecialchars($inviteTelegramBotTokenLabel); ?></label>
+        <input type="password" class="form-control" id="invite_registration_telegram_bot_token" name="invite_registration_telegram_bot_token" value="" autocomplete="new-password" placeholder="<?php echo htmlspecialchars($inviteTelegramBotTokenPlaceholder); ?>">
+        <small class="text-muted"><?php echo htmlspecialchars($inviteTelegramBotTokenHint); ?><?php if ($inviteTelegramBotTokenConfigured): ?>（已检测到历史 Token，留空将保持不变）<?php endif; ?></small>
+      </div>
+      <div class="col-12 col-lg-3">
+        <label class="form-label" for="invite_registration_telegram_auth_max_age_seconds"><?php echo htmlspecialchars($inviteTelegramAuthAgeLabel); ?></label>
+        <input type="number" class="form-control" id="invite_registration_telegram_auth_max_age_seconds" name="invite_registration_telegram_auth_max_age_seconds" min="60" max="604800" step="60" value="<?php echo htmlspecialchars($inviteTelegramAuthAgeSetting); ?>">
+        <small class="text-muted"><?php echo htmlspecialchars($inviteTelegramAuthAgeHint); ?></small>
       </div>
       <div class="col-12">
         <button type="submit" class="btn btn-primary mt-2"><?php echo htmlspecialchars($saveLabel); ?></button>

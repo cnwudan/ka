@@ -83,6 +83,7 @@ class CfSettingsRepository
 
         $settings = $this->normalizeInviteRegistrationGithubSecret($settings);
         $settings = $this->normalizeTelegramGroupBotToken($settings);
+        $settings = $this->normalizeInviteRegistrationTelegramBotToken($settings);
         $settings = $this->applyDefaults($settings);
         $settings = $this->synchronizeProviders($settings);
         $settings = $this->migrateLegacyFields($settings);
@@ -100,6 +101,11 @@ class CfSettingsRepository
         return $this->normalizeSensitiveSetting($settings, 'telegram_group_bot_token');
     }
 
+    private function normalizeInviteRegistrationTelegramBotToken(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'invite_registration_telegram_bot_token');
+    }
+
     private function normalizeSensitiveSetting(array $settings, string $key): array
     {
         if (!array_key_exists($key, $settings)) {
@@ -112,27 +118,125 @@ class CfSettingsRepository
             return $settings;
         }
 
-        $prefix = 'enc::';
-        if (strpos($rawValue, $prefix) === 0) {
-            $encrypted = substr($rawValue, strlen($prefix));
-            $settings[$key] = trim((string) cfmod_decrypt_sensitive($encrypted));
+        $plainValue = $this->decodeSensitiveRawValue($rawValue);
+        if ($plainValue !== '' && !$this->isMaskedSensitivePlaceholder($plainValue)) {
+            if (strpos($rawValue, 'enc::') !== 0) {
+                $this->persistSensitiveRawValue($key, $rawValue);
+            }
+            $settings[$key] = $plainValue;
             return $settings;
         }
 
-        $encrypted = cfmod_encrypt_sensitive($rawValue);
-        if ($encrypted !== null && $encrypted !== '') {
-            $stored = $prefix . $encrypted;
+        $fallback = $this->resolveSensitiveFallback($key, [$rawValue]);
+        if (($fallback['plain'] ?? '') !== '') {
+            $settings[$key] = (string) $fallback['plain'];
+            $this->persistSensitiveRawValue($key, (string) ($fallback['raw'] ?? ''));
+            return $settings;
+        }
+
+        $settings[$key] = '';
+        return $settings;
+    }
+
+    private function resolveSensitiveFallback(string $key, array $excludeRawValues = []): array
+    {
+        $excludeRawValues = array_values(array_filter(array_map(static function ($value): string {
+            return trim((string) $value);
+        }, $excludeRawValues), static function (string $value): bool {
+            return $value !== '';
+        }));
+
+        $modules = array_values(array_unique([$this->currentModuleSlug(), $this->legacyModuleSlug()]));
+        foreach ($modules as $module) {
             try {
-                Capsule::table('tbladdonmodules')->updateOrInsert(
-                    ['module' => $this->currentModuleSlug(), 'setting' => $key],
-                    ['value' => $stored]
-                );
+                $rows = Capsule::table('tbladdonmodules')
+                    ->where('module', $module)
+                    ->where('setting', $key)
+                    ->get();
             } catch (\Throwable $e) {
+                $rows = [];
+            }
+
+            foreach ($rows as $row) {
+                $candidateRaw = trim((string) ($row->value ?? ''));
+                if ($candidateRaw === '' || in_array($candidateRaw, $excludeRawValues, true)) {
+                    continue;
+                }
+
+                $candidatePlain = $this->decodeSensitiveRawValue($candidateRaw);
+                if ($candidatePlain === '' || $this->isMaskedSensitivePlaceholder($candidatePlain)) {
+                    continue;
+                }
+
+                return [
+                    'raw' => $candidateRaw,
+                    'plain' => $candidatePlain,
+                    'module' => $module,
+                ];
             }
         }
 
-        $settings[$key] = $rawValue;
-        return $settings;
+        return [
+            'raw' => '',
+            'plain' => '',
+            'module' => '',
+        ];
+    }
+
+    private function decodeSensitiveRawValue(string $rawValue): string
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return '';
+        }
+
+        $prefix = 'enc::';
+        if (strpos($rawValue, $prefix) === 0) {
+            $encrypted = substr($rawValue, strlen($prefix));
+            return trim((string) cfmod_decrypt_sensitive($encrypted));
+        }
+
+        return $rawValue;
+    }
+
+    private function persistSensitiveRawValue(string $key, string $rawValue): void
+    {
+        $rawValue = trim($rawValue);
+        if ($rawValue === '') {
+            return;
+        }
+
+        $stored = $rawValue;
+        if (strpos($stored, 'enc::') !== 0) {
+            $encrypted = cfmod_encrypt_sensitive($stored);
+            if ($encrypted === null || $encrypted === '') {
+                return;
+            }
+            $stored = 'enc::' . $encrypted;
+        }
+
+        try {
+            Capsule::table('tbladdonmodules')->updateOrInsert(
+                ['module' => $this->currentModuleSlug(), 'setting' => $key],
+                ['value' => $stored]
+            );
+        } catch (\Throwable $e) {
+        }
+    }
+
+    private function isMaskedSensitivePlaceholder(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        $length = function_exists('mb_strlen') ? (int) mb_strlen($value, 'UTF-8') : strlen($value);
+        if ($length < 4 || $length > 512) {
+            return false;
+        }
+
+        return preg_match('/^[\*\x{FF0A}\x{2022}\x{25CF}]+$/u', $value) === 1;
     }
 
     private function applyDefaults(array $settings): array
@@ -178,6 +282,9 @@ class CfSettingsRepository
             'invite_registration_github_client_secret' => '',
             'invite_registration_github_min_months' => '0',
             'invite_registration_github_min_repos' => '0',
+            'invite_registration_telegram_bot_username' => '',
+            'invite_registration_telegram_bot_token' => '',
+            'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
             'privileged_allow_register_suspended_root' => '0',
             'privileged_unlimited_invite_generation' => '1',

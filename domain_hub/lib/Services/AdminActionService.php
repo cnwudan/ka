@@ -1626,7 +1626,13 @@ class CfAdminActionService
             $telegramGroupBotUsername = ltrim($telegramGroupBotUsername, '@');
         }
         $postedTelegramBotToken = trim((string) ($_POST['telegram_group_bot_token'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedTelegramBotToken)) {
+            $postedTelegramBotToken = '';
+        }
         $existingTelegramBotToken = trim((string) ($moduleSettings['telegram_group_bot_token'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingTelegramBotToken)) {
+            $existingTelegramBotToken = '';
+        }
         $telegramGroupBotToken = $postedTelegramBotToken !== '' ? $postedTelegramBotToken : $existingTelegramBotToken;
         $telegramGroupRewardAmountInput = intval($_POST['telegram_group_reward_amount'] ?? ($moduleSettings['telegram_group_reward_amount'] ?? 1));
         $telegramGroupRewardAmount = max(1, min(1000, $telegramGroupRewardAmountInput));
@@ -1635,6 +1641,27 @@ class CfAdminActionService
         if (preg_match('/^\s*javascript:/i', $telegramGroupLink)) {
             $telegramGroupLink = '';
         }
+
+        $allowedInviteGateModes = ['disabled', 'invite_only', 'github_only', 'telegram_only', 'invite_or_github', 'invite_or_telegram', 'github_or_telegram', 'invite_or_github_or_telegram'];
+        $inviteRegistrationGateMode = trim((string) ($_POST['invite_registration_gate_mode'] ?? ($moduleSettings['invite_registration_gate_mode'] ?? 'disabled')));
+        if (!in_array($inviteRegistrationGateMode, $allowedInviteGateModes, true)) {
+            $inviteRegistrationGateMode = 'disabled';
+        }
+        $inviteTelegramBotUsername = trim((string) ($_POST['invite_registration_telegram_bot_username'] ?? ($moduleSettings['invite_registration_telegram_bot_username'] ?? '')));
+        if ($inviteTelegramBotUsername !== '' && strpos($inviteTelegramBotUsername, '@') === 0) {
+            $inviteTelegramBotUsername = ltrim($inviteTelegramBotUsername, '@');
+        }
+        $postedInviteTelegramBotToken = trim((string) ($_POST['invite_registration_telegram_bot_token'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedInviteTelegramBotToken)) {
+            $postedInviteTelegramBotToken = '';
+        }
+        $existingInviteTelegramBotToken = trim((string) ($moduleSettings['invite_registration_telegram_bot_token'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingInviteTelegramBotToken)) {
+            $existingInviteTelegramBotToken = '';
+        }
+        $inviteTelegramBotToken = $postedInviteTelegramBotToken !== '' ? $postedInviteTelegramBotToken : $existingInviteTelegramBotToken;
+        $inviteTelegramAuthMaxAgeInput = intval($_POST['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['invite_registration_telegram_auth_max_age_seconds'] ?? ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400)));
+        $inviteTelegramAuthMaxAge = max(60, min(604800, $inviteTelegramAuthMaxAgeInput));
 
         try {
             self::persistModuleSettings([
@@ -1667,6 +1694,10 @@ class CfAdminActionService
                 'telegram_group_bot_token' => $telegramGroupBotToken,
                 'telegram_group_reward_amount' => (string) $telegramGroupRewardAmount,
                 'telegram_reward_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
+                'invite_registration_gate_mode' => $inviteRegistrationGateMode,
+                'invite_registration_telegram_bot_username' => $inviteTelegramBotUsername,
+                'invite_registration_telegram_bot_token' => $inviteTelegramBotToken,
+                'invite_registration_telegram_auth_max_age_seconds' => (string) $inviteTelegramAuthMaxAge,
                 'risk_scan_batch_size' => (string) $riskScanBatchSize,
                 'rate_limit_register_per_hour' => (string) $rateLimitRegister,
                 'rate_limit_dns_per_hour' => (string) $rateLimitDns,
@@ -1705,6 +1736,10 @@ class CfAdminActionService
                     'telegram_group_bot_token_set' => $telegramGroupBotToken !== '' ? 1 : 0,
                     'telegram_group_reward_amount' => $telegramGroupRewardAmount,
                     'telegram_reward_auth_max_age_seconds' => $telegramAuthMaxAge,
+                    'invite_registration_gate_mode' => $inviteRegistrationGateMode,
+                    'invite_registration_telegram_bot_username' => $inviteTelegramBotUsername,
+                    'invite_registration_telegram_bot_token_set' => $inviteTelegramBotToken !== '' ? 1 : 0,
+                    'invite_registration_telegram_auth_max_age_seconds' => $inviteTelegramAuthMaxAge,
                     'rate_limit_register_per_hour' => $rateLimitRegister,
                     'rate_limit_dns_per_hour' => $rateLimitDns,
                     'rate_limit_api_key_per_hour' => $rateLimitApiKey,
@@ -4101,6 +4136,36 @@ class CfAdminActionService
         $slug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
         $legacy = defined('CF_MODULE_NAME_LEGACY') ? CF_MODULE_NAME_LEGACY : 'cloudflare_subdomain';
         return array_values(array_unique([$slug, $legacy]));
+    }
+
+    private static function isMaskedSensitivePlaceholder(string $value): bool
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return false;
+        }
+
+        $length = function_exists('mb_strlen') ? (int) mb_strlen($value, 'UTF-8') : strlen($value);
+        if ($length < 4 || $length > 512) {
+            return false;
+        }
+
+        return preg_match('/^[\*\x{FF0A}\x{2022}\x{25CF}]+$/u', $value) === 1;
+    }
+
+    private static function isStoredMaskedSensitiveValue(string $storedValue): bool
+    {
+        $storedValue = trim($storedValue);
+        if ($storedValue === '') {
+            return false;
+        }
+
+        $plain = $storedValue;
+        if (strpos($storedValue, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+            $plain = trim((string) cfmod_decrypt_sensitive(substr($storedValue, strlen('enc::'))));
+        }
+
+        return self::isMaskedSensitivePlaceholder($plain);
     }
 
     private static function persistModuleSetting(string $key, string $value): void
