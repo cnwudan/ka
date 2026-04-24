@@ -572,7 +572,15 @@ $inviteCountdownDayUnit = $cfInviteText('cfclient.invite.countdown.day_unit', 'å
                                                 tbody.innerHTML=html;
                                             }
                                             function load(){
-                                                fetch('index.php?m=<?php echo htmlspecialchars($moduleSlug, ENT_QUOTES); ?>&action=realtime_top&limit=10', {
+                                                <?php
+                                                $realtimeParams = isset($cfClientBaseEntryQuery) && is_array($cfClientBaseEntryQuery)
+                                                    ? $cfClientBaseEntryQuery
+                                                    : ['action' => 'addon', 'module' => $moduleSlug];
+                                                $realtimeParams['module_action'] = 'realtime_top';
+                                                $realtimeParams['limit'] = 10;
+                                                $realtimeTopUrl = ($cfClientEntryScript ?? 'clientarea.php') . '?' . http_build_query($realtimeParams);
+                                                ?>
+                                                fetch('<?php echo htmlspecialchars($realtimeTopUrl, ENT_QUOTES); ?>', {
                                                     method: 'POST',
                                                     credentials: 'same-origin',
                                                     headers: {

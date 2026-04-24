@@ -8,6 +8,9 @@
             'domainGiftEnabled' => !empty($domainGiftEnabled),
             'quotaRedeemEnabled' => !empty($quotaRedeemEnabled),
             'moduleSlug' => $moduleSlug,
+            'clientEntryScript' => $cfClientEntryScript ?? 'clientarea.php',
+            'clientBaseQuery' => $cfClientBaseEntryQuery ?? ['action' => 'addon', 'module' => $moduleSlug],
+            'moduleActionParam' => 'module_action',
         ], CFMOD_SAFE_JSON_FLAGS); ?>;
     </script>
     <script src="<?php echo htmlspecialchars($cfmodAssetsBase . '/js/client.js?v=1', ENT_QUOTES); ?>"></script>
@@ -17,6 +20,51 @@
             CFClient.setLangMap(window.CF_CLIENT_LANG || {});
             CFClient.setConfig(window.CF_CLIENT_CONFIG || {});
             CFClient.bootstrap();
+        }
+
+        function cfClientResolveRouteConfig() {
+            var cfg = window.CF_CLIENT_CONFIG || {};
+            var script = (typeof cfg.clientEntryScript === 'string' && cfg.clientEntryScript !== '') ? cfg.clientEntryScript : 'clientarea.php';
+            var baseQuery = (cfg.clientBaseQuery && Object(cfg.clientBaseQuery) === cfg.clientBaseQuery)
+                ? cfg.clientBaseQuery
+                : { action: 'addon', module: (cfg.moduleSlug || 'domain_hub') };
+            var actionParam = (typeof cfg.moduleActionParam === 'string' && cfg.moduleActionParam !== '')
+                ? cfg.moduleActionParam
+                : 'module_action';
+            return {
+                script: script,
+                baseQuery: baseQuery,
+                actionParam: actionParam
+            };
+        }
+
+        function cfClientBuildModuleUrl(action, extraParams) {
+            var route = cfClientResolveRouteConfig();
+            var params = new URLSearchParams();
+
+            Object.keys(route.baseQuery).forEach(function(key) {
+                var value = route.baseQuery[key];
+                if (value === null || typeof value === 'undefined') {
+                    return;
+                }
+                params.set(key, String(value));
+            });
+
+            if (action) {
+                params.set(route.actionParam, String(action));
+            }
+
+            if (extraParams && Object(extraParams) === extraParams) {
+                Object.keys(extraParams).forEach(function(key) {
+                    var value = extraParams[key];
+                    if (value === null || typeof value === 'undefined') {
+                        return;
+                    }
+                    params.set(key, String(value));
+                });
+            }
+
+            return route.script + '?' + params.toString();
         }
 
         const ROOT_LIMIT_MAP = <?php echo json_encode($rootLimitMap, CFMOD_SAFE_JSON_FLAGS); ?>;
@@ -286,8 +334,7 @@ function checkVpnBeforeAction(callback) {
         callback(false);
         return;
     }
-    var moduleSlug = (window.CF_CLIENT_CONFIG && window.CF_CLIENT_CONFIG.moduleSlug) || 'domain_hub';
-    var ajaxUrl = 'index.php?m=' + encodeURIComponent(moduleSlug) + '&action=ajax_check_vpn';
+    var ajaxUrl = cfClientBuildModuleUrl('ajax_check_vpn');
     fetch(ajaxUrl, {
         method: 'POST',
         headers: {
@@ -773,8 +820,6 @@ proxiedCheckbox.disabled = false;
             if (!window.bootstrap) { return; }
             var modalEl = document.getElementById('quotaRedeemModal');
             if (!modalEl) { return; }
-            var moduleSlug = (window.CF_CLIENT_CONFIG && window.CF_CLIENT_CONFIG.moduleSlug) || 'domain_hub';
-            var ajaxBase = 'index.php?m=' + encodeURIComponent(moduleSlug);
             var bsModal = new bootstrap.Modal(modalEl);
             var form = document.getElementById('quotaRedeemForm');
             var codeInput = document.getElementById('redeemCodeInput');
@@ -786,7 +831,7 @@ proxiedCheckbox.disabled = false;
             var state = { historyLoaded: false, loading: false };
 
             function buildUrl(action) {
-                return ajaxBase + (ajaxBase.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(action);
+                return cfClientBuildModuleUrl(action);
             }
 
             function sendRedeem(action, payload) {
@@ -921,7 +966,6 @@ proxiedCheckbox.disabled = false;
             const workbenchEl = document.getElementById('giftWorkbench');
             if (!workbenchEl) { return; }
 
-            const ajaxBase = <?php echo json_encode('index.php?m=' . $moduleSlug, CFMOD_SAFE_JSON_FLAGS); ?>;
             const state = {
                 subdomains: <?php echo json_encode($domainGiftSubdomains, CFMOD_SAFE_JSON_FLAGS); ?>,
                 selectedSubdomainId: 0,
@@ -958,7 +1002,7 @@ proxiedCheckbox.disabled = false;
             }
 
             function buildUrl(action) {
-                return ajaxBase + (ajaxBase.indexOf('?') === -1 ? '?' : '&') + 'action=' + encodeURIComponent(action);
+                return cfClientBuildModuleUrl(action);
             }
 
             function giftFetch(action, payload){
@@ -1415,7 +1459,6 @@ proxiedCheckbox.disabled = false;
                 return cfLang(key, whoisIsChinese ? zh : en);
             };
 
-            var moduleSlug = (window.CF_CLIENT_CONFIG && window.CF_CLIENT_CONFIG.moduleSlug) || 'domain_hub';
             var domainInput = document.getElementById('whoisLookupDomainInput');
             var lookupBtn = document.getElementById('whoisLookupButton');
             var resultCard = document.getElementById('whoisResultCard');
@@ -1425,7 +1468,7 @@ proxiedCheckbox.disabled = false;
             var privacySaveBtn = document.getElementById('whoisPrivacySaveButton');
 
             function buildUrl(action) {
-                return 'index.php?m=' + encodeURIComponent(moduleSlug) + '&action=' + encodeURIComponent(action);
+                return cfClientBuildModuleUrl(action);
             }
 
             function send(action, payload) {
@@ -1593,7 +1636,6 @@ proxiedCheckbox.disabled = false;
                 return cfLang(key, digIsChinese ? zh : en);
             };
 
-            var moduleSlug = (window.CF_CLIENT_CONFIG && window.CF_CLIENT_CONFIG.moduleSlug) || 'domain_hub';
             var domainInput = document.getElementById('digLookupDomainInput');
             var typeSelect = document.getElementById('digLookupTypeSelect');
             var lookupBtn = document.getElementById('digLookupButton');
@@ -1602,7 +1644,7 @@ proxiedCheckbox.disabled = false;
             var alertContainer = document.getElementById('digAlertContainer');
 
             function buildUrl(action) {
-                return 'index.php?m=' + encodeURIComponent(moduleSlug) + '&action=' + encodeURIComponent(action);
+                return cfClientBuildModuleUrl(action);
             }
 
             function send(action, payload) {

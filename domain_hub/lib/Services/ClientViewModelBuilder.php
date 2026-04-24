@@ -886,10 +886,19 @@ class CfClientViewModelBuilder
         }
         $domainSearchClearParams = $_GET;
         unset($domainSearchClearParams['domain_search'], $domainSearchClearParams['p'], $domainSearchClearParams['page']);
-        $domainSearchClearParams['m'] = $moduleSlug;
+        $entryBaseParams = self::entryBaseQuery($moduleSlug);
+        if (isset($entryBaseParams['action'])) {
+            unset($domainSearchClearParams['m']);
+        }
+        if (isset($entryBaseParams['m'])) {
+            unset($domainSearchClearParams['action'], $domainSearchClearParams['module']);
+        }
+        foreach ($entryBaseParams as $key => $value) {
+            $domainSearchClearParams[$key] = $value;
+        }
         $domainSearchClearQueryString = http_build_query($domainSearchClearParams);
         if ($domainSearchClearQueryString === '') {
-            $domainSearchClearQueryString = 'm=' . urlencode($moduleSlug);
+            $domainSearchClearQueryString = http_build_query($entryBaseParams);
         }
         $domainPageSizeSetting = intval($moduleSettings['client_page_size'] ?? 20);
         $domainPageSize = max(1, min(20, $domainPageSizeSetting));
@@ -955,16 +964,18 @@ class CfClientViewModelBuilder
         $currentParams = self::ensureLanguageBaseParams($currentParams, $moduleSlug);
         $returnToken = self::encodeLanguageRedirectParams($currentParams);
 
-        $params = [
-            'm' => $moduleSlug,
-            'action' => 'change_language',
-            'lang' => $code,
-        ];
+        $params = self::entryBaseQuery($moduleSlug);
+        $params['cf_lang'] = $code;
         if ($returnToken !== '') {
             $params['return'] = $returnToken;
         }
 
-        return 'index.php?' . http_build_query($params);
+        $script = 'clientarea.php';
+        if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript')) {
+            $script = CfClientController::preferredClientEntryScript();
+        }
+
+        return $script . '?' . http_build_query($params);
     }
 
     private static function encodeLanguageRedirectParams(array $params): string
@@ -1008,13 +1019,10 @@ class CfClientViewModelBuilder
 
     private static function entryBaseQuery(string $moduleSlug): array
     {
-        if (class_exists('CfClientController') && method_exists('CfClientController', 'buildClientBaseQuery')) {
-            return CfClientController::buildClientBaseQuery($moduleSlug);
+        if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery')) {
+            return CfClientController::preferredClientBaseQuery($moduleSlug);
         }
-        if (self::detectClientAreaRequest()) {
-            return ['action' => 'addon', 'module' => $moduleSlug];
-        }
-        return ['m' => $moduleSlug];
+        return ['action' => 'addon', 'module' => $moduleSlug];
     }
 
     private static function ensureLanguageBaseParams(array $params, string $moduleSlug): array

@@ -253,14 +253,14 @@ $cfClientHasToolFeatures = !empty($quotaRedeemEnabled)
     || $inviteRegistrationEnabled
     || $cfClientHasRootdomainInvite;
 
-$cfClientEntryScript = class_exists('CfClientController')
-    ? CfClientController::resolveClientEntryScript()
-    : 'index.php';
-$cfClientBaseEntryQuery = class_exists('CfClientController')
-    ? CfClientController::buildClientBaseQuery($moduleSlug)
-    : ['m' => $moduleSlug];
+$cfClientEntryScript = (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript'))
+    ? CfClientController::preferredClientEntryScript()
+    : 'clientarea.php';
+$cfClientBaseEntryQuery = (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery'))
+    ? CfClientController::preferredClientBaseQuery($moduleSlug)
+    : ['action' => 'addon', 'module' => $moduleSlug];
 if (!is_array($cfClientBaseEntryQuery) || empty($cfClientBaseEntryQuery)) {
-    $cfClientBaseEntryQuery = ['m' => $moduleSlug];
+    $cfClientBaseEntryQuery = ['action' => 'addon', 'module' => $moduleSlug];
 }
 
 $cfClientIsChinese = strtolower((string) $currentClientLanguage) === 'chinese';

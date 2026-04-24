@@ -76,6 +76,22 @@ class CfClientController
         return ['m' => $moduleSlug];
     }
 
+    public static function preferredClientEntryScript(): string
+    {
+        return 'clientarea.php';
+    }
+
+    public static function preferredClientBaseQuery(string $moduleSlug): array
+    {
+        return ['action' => 'addon', 'module' => $moduleSlug];
+    }
+
+    public static function buildPreferredClientUrl(string $moduleSlug, array $params = []): string
+    {
+        $query = array_merge(self::preferredClientBaseQuery($moduleSlug), $params);
+        return self::preferredClientEntryScript() . '?' . http_build_query($query);
+    }
+
     private static function isClientAreaRequestContext(): bool
     {
         $script = strtolower(basename($_SERVER['SCRIPT_NAME'] ?? ''));
@@ -140,7 +156,11 @@ class CfClientController
             define('CFMOD_CLIENTAREA_PAGE_RENDERED', true);
         
             $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
-            $actionParam = $_GET['action'] ?? '';
+            $actionParam = (string) ($_GET['action'] ?? '');
+            $moduleActionParam = (string) ($_GET['module_action'] ?? ($_GET['cf_action'] ?? ''));
+            if (($actionParam === '' || strtolower($actionParam) === 'addon') && $moduleActionParam !== '') {
+                $actionParam = $moduleActionParam;
+            }
             if ($actionParam === 'change_language') {
                 $requestedLang = (string)($_GET['lang'] ?? '');
                 $returnPayload = is_string($_GET['return'] ?? null) ? (string)$_GET['return'] : null;
@@ -215,26 +235,18 @@ class CfClientController
             }
         
             // 使用WHMCS的钩子系统检查额外限制
-            // 触发一个自定义钩子点，允许其他插件/钩子阻止访问
+            // 优先执行外部 ClientAreaPage 钩子，兼容返回重定向指令的认证/验证插件
             $pageTitleText = cfmod_trans('cfclient.breadcrumb.client_page', '我的二级域名管理');
+            $this->enforceExternalClientAreaHooks($vars, $userId, $pageTitleText);
+
+            // 触发一个自定义钩子点，允许其他插件/钩子阻止访问
             $hookResults = run_hook('ClientAreaPageBeforeAccess', [
                 'userid' => $userId,
                 'module' => CF_MODULE_NAME,
                 'legacy_module' => CF_MODULE_NAME_LEGACY,
                 'pagetitle' => $pageTitleText
             ]);
-        
-            // 检查是否有任何钩子返回了重定向指令
-            foreach ($hookResults as $result) {
-                if (is_array($result) && isset($result['redirect'])) {
-                    header('Location: ' . $result['redirect']);
-                    exit;
-                }
-                if (is_string($result) && strpos($result, 'Location:') === 0) {
-                    header($result);
-                    exit;
-                }
-            }
+            $this->handleHookRedirectResults($hookResults);
         
             // 检查安全问题（如果系统要求）
             $securityQuestionsEnabled = Capsule::table('tblconfiguration')
@@ -292,6 +304,53 @@ class CfClientController
             // 包含客户端模板
         include __DIR__ . '/../../templates/client.tpl';
             exit;
+    }
+
+    private function enforceExternalClientAreaHooks(array $vars, int $userId, string $pageTitleText): void
+    {
+            if (!function_exists('run_hook')) {
+                return;
+            }
+
+            $payload = is_array($vars) ? $vars : [];
+            $payload['userid'] = $userId;
+            $payload['module'] = CF_MODULE_NAME;
+            $payload['legacy_module'] = CF_MODULE_NAME_LEGACY;
+            $payload['pagetitle'] = $pageTitleText;
+
+            $GLOBALS['cfmod_suppress_clientarea_hooks'] = true;
+            try {
+                $hookResults = run_hook('ClientAreaPage', $payload);
+            } catch (\Throwable $e) {
+                $hookResults = [];
+            }
+            unset($GLOBALS['cfmod_suppress_clientarea_hooks']);
+
+            $this->handleHookRedirectResults($hookResults);
+    }
+
+    private function handleHookRedirectResults($hookResults): void
+    {
+            foreach ((array) $hookResults as $result) {
+                if (is_array($result)) {
+                    $redirect = '';
+                    foreach (['redirect', 'redirectTo', 'forceRedirect', 'location'] as $key) {
+                        $value = trim((string) ($result[$key] ?? ''));
+                        if ($value !== '') {
+                            $redirect = $value;
+                            break;
+                        }
+                    }
+                    if ($redirect !== '') {
+                        header('Location: ' . $redirect);
+                        exit;
+                    }
+                }
+                if (is_string($result) && strpos($result, 'Location:') === 0) {
+                    header($result);
+                    exit;
+                }
+            }
     }
 
     private function handleLanguageSwitchRequest(string $languageCode, string $moduleSlug, ?array $returnParams = null): void
@@ -552,7 +611,11 @@ class CfClientController
     {
                 // AJAX处理：API密钥管理
                             $action = (string) ($_GET['action'] ?? $_POST['action'] ?? '');
+                            $moduleAction = (string) ($_GET['module_action'] ?? $_POST['module_action'] ?? ($_GET['cf_action'] ?? ($_POST['cf_action'] ?? '')));
                             $ajaxAction = (string) ($_GET['ajax_action'] ?? $_POST['ajax_action'] ?? '');
+                            if (($action === '' || strtolower($action) === 'addon') && $moduleAction !== '') {
+                                $action = $moduleAction;
+                            }
                             if (($action === '' || strtolower($action) === 'addon') && strpos($ajaxAction, 'ajax_') === 0) {
                                 $action = $ajaxAction;
                             }
@@ -1805,17 +1868,17 @@ class CfClientController
         $base = 'clientarea.php?action=addon&module=' . CF_MODULE_NAME;
 
         return [
-            'createApiKey' => $base . '&action=ajax_create_api_key',
-            'updateApiKeyName' => $base . '&action=ajax_update_api_key_name',
-            'regenerateApiKey' => $base . '&action=ajax_regenerate_api_key',
-            'deleteApiKey' => $base . '&action=ajax_delete_api_key',
+            'createApiKey' => $base . '&module_action=ajax_create_api_key',
+            'updateApiKeyName' => $base . '&module_action=ajax_update_api_key_name',
+            'regenerateApiKey' => $base . '&module_action=ajax_regenerate_api_key',
+            'deleteApiKey' => $base . '&module_action=ajax_delete_api_key',
             'domainGift' => [
-                'initiate' => $base . '&action=ajax_initiate_domain_gift',
-                'accept' => $base . '&action=ajax_accept_domain_gift',
-                'cancel' => $base . '&action=ajax_cancel_domain_gift',
-                'list' => $base . '&action=ajax_list_domain_gifts',
+                'initiate' => $base . '&module_action=ajax_initiate_domain_gift',
+                'accept' => $base . '&module_action=ajax_accept_domain_gift',
+                'cancel' => $base . '&module_action=ajax_cancel_domain_gift',
+                'list' => $base . '&module_action=ajax_list_domain_gifts',
             ],
-            'leaderboard' => $base . '&ajax=realtime_top',
+            'leaderboard' => $base . '&module_action=realtime_top',
         ];
     }
 
