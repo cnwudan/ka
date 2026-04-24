@@ -75,6 +75,11 @@ class CfAdminController
             return;
         }
 
+        if ($moduleMatches && $action === 'get_subdomain_dns_records') {
+            $this->respondSubdomainDnsRecords();
+            return;
+        }
+
         if ($moduleMatches && $action === 'get_admin_heavy_stats') {
             $this->respondAdminHeavyStats();
             return;
@@ -611,6 +616,79 @@ class CfAdminController
         } else {
             echo json_encode(['success' => false]);
         }
+        exit;
+    }
+
+    private function respondSubdomainDnsRecords(): void
+    {
+        header('Content-Type: application/json; charset=utf-8');
+
+        if (!isset($_SESSION['adminid']) || (int) $_SESSION['adminid'] <= 0) {
+            echo json_encode(['success' => false, 'error' => 'unauthorized']);
+            exit;
+        }
+
+        $subdomainId = isset($_GET['subdomain_id']) ? (int) $_GET['subdomain_id'] : 0;
+        if ($subdomainId <= 0) {
+            echo json_encode(['success' => false, 'error' => 'invalid_subdomain_id']);
+            exit;
+        }
+
+        if (!$this->schemaHasTable('mod_cloudflare_subdomain') || !$this->schemaHasTable('mod_cloudflare_dns_records')) {
+            echo json_encode(['success' => false, 'error' => 'table_not_ready']);
+            exit;
+        }
+
+        $subdomain = Capsule::table('mod_cloudflare_subdomain')
+            ->select('id', 'userid', 'subdomain', 'rootdomain', 'status', 'updated_at')
+            ->where('id', $subdomainId)
+            ->first();
+
+        if (!$subdomain) {
+            echo json_encode(['success' => false, 'error' => 'subdomain_not_found']);
+            exit;
+        }
+
+        $records = [];
+        try {
+            $rows = Capsule::table('mod_cloudflare_dns_records')
+                ->select('id', 'record_id', 'name', 'type', 'content', 'ttl', 'priority', 'line', 'status', 'updated_at')
+                ->where('subdomain_id', $subdomainId)
+                ->orderBy('id', 'desc')
+                ->get();
+
+            foreach ($rows as $row) {
+                $records[] = [
+                    'id' => (int) ($row->id ?? 0),
+                    'record_id' => (string) ($row->record_id ?? ''),
+                    'name' => (string) ($row->name ?? ''),
+                    'type' => strtoupper((string) ($row->type ?? '')),
+                    'content' => (string) ($row->content ?? ''),
+                    'ttl' => (int) ($row->ttl ?? 0),
+                    'priority' => $row->priority !== null ? (int) $row->priority : null,
+                    'line' => $row->line !== null ? (string) $row->line : null,
+                    'status' => (string) ($row->status ?? ''),
+                    'updated_at' => (string) ($row->updated_at ?? ''),
+                ];
+            }
+        } catch (\Throwable $e) {
+            echo json_encode(['success' => false, 'error' => 'query_failed']);
+            exit;
+        }
+
+        echo json_encode([
+            'success' => true,
+            'subdomain' => [
+                'id' => (int) ($subdomain->id ?? 0),
+                'userid' => (int) ($subdomain->userid ?? 0),
+                'name' => (string) ($subdomain->subdomain ?? ''),
+                'rootdomain' => (string) ($subdomain->rootdomain ?? ''),
+                'status' => (string) ($subdomain->status ?? ''),
+                'updated_at' => (string) ($subdomain->updated_at ?? ''),
+            ],
+            'records' => $records,
+            'count' => count($records),
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 

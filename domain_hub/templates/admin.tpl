@@ -638,6 +638,9 @@ $riskLogEvents = $riskLogMeta['entries'] ?? [];
                                                         <button type="button" class="btn btn-sm btn-outline-primary" title="调整到期" onclick="toggleExpiryForm(<?php echo $s->id; ?>)">
                                                             <i class="fas fa-clock"></i>
                                                         </button>
+                                                        <button type="button" class="btn btn-sm btn-outline-info js-view-subdomain-dns" title="查看解析记录" data-subdomain-id="<?php echo intval($s->id); ?>" data-subdomain-name="<?php echo htmlspecialchars($s->subdomain, ENT_QUOTES, 'UTF-8'); ?>" data-toggle="modal" data-target="#subdomainDnsModal" data-bs-toggle="modal" data-bs-target="#subdomainDnsModal">
+                                                            <i class="fas fa-eye"></i>
+                                                        </button>
                                                         <form method="post" class="d-inline" onsubmit="return confirm('确定删除该子域名？此操作不可恢复。');">
                                                             <input type="hidden" name="action" value="admin_delete_subdomain">
                                                             <input type="hidden" name="subdomain_id" value="<?php echo $s->id; ?>">
@@ -706,6 +709,28 @@ $riskLogEvents = $riskLogMeta['entries'] ?? [];
                             <div class="text-center text-muted small">第 <?php echo $subPage; ?> / <?php echo $subTotalPages; ?> 页（共 <?php echo $subTotal; ?> 条）</div>
                         </nav>
                         <?php endif; ?>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal fade" id="subdomainDnsModal" tabindex="-1" aria-labelledby="subdomainDnsModalLabel" aria-hidden="true">
+                <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="subdomainDnsModalLabel"><i class="fas fa-list-alt me-2"></i><span id="cfmodSubdomainDnsModalTitle">解析记录</span></h5>
+                            <button type="button" class="close" data-dismiss="modal" data-bs-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                        </div>
+                        <div class="modal-body">
+                            <div id="cfmodSubdomainDnsModalAlert" class="alert d-none" role="alert"></div>
+                            <div id="cfmodSubdomainDnsModalLoading" class="text-center text-muted py-4 d-none">
+                                <i class="fas fa-spinner fa-spin me-2"></i>正在读取本地已同步的解析记录...
+                            </div>
+                            <div id="cfmodSubdomainDnsModalSummary" class="small text-muted mb-2 d-none"></div>
+                            <div id="cfmodSubdomainDnsModalRecords" class="row g-2"></div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-dismiss="modal" data-bs-dismiss="modal">关闭</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1019,6 +1044,7 @@ $cfAdminFooterConfig = [
     'api' => [
         'quotaEndpoint' => '?module=domain_hub&action=get_user_quota&userid=',
         'heavyStatsEndpoint' => '?module=domain_hub&action=get_admin_heavy_stats',
+        'subdomainDnsEndpoint' => '?module=domain_hub&action=get_subdomain_dns_records&subdomain_id=',
     ],
 ];
 ?>

@@ -4,6 +4,7 @@ $footerLang = $footerConfig['lang'] ?? [];
 $csrfToken = (string)($footerConfig['csrfToken'] ?? '');
 $announcementEnabled = !empty($footerConfig['announcement']['enabled']);
 $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&action=get_user_quota&userid=';
+$subdomainDnsEndpoint = $footerConfig['api']['subdomainDnsEndpoint'] ?? '?module=domain_hub&action=get_subdomain_dns_records&subdomain_id=';
 ?>
 <script>
 (function(){
@@ -32,6 +33,7 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
 (function(){
   var lang = <?php echo json_encode($footerLang, CFMOD_SAFE_JSON_FLAGS); ?> || {};
   var quotaEndpoint = <?php echo json_encode($quotaEndpoint, CFMOD_SAFE_JSON_FLAGS); ?>;
+  var subdomainDnsEndpoint = <?php echo json_encode($subdomainDnsEndpoint, CFMOD_SAFE_JSON_FLAGS); ?>;
   var heavyStatsEndpoint = <?php echo json_encode(($footerConfig['api']['heavyStatsEndpoint'] ?? '?module=domain_hub&action=get_admin_heavy_stats'), CFMOD_SAFE_JSON_FLAGS); ?>;
   function format(template, value){
     if (!template) { return ''; }
@@ -409,6 +411,7 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
     initPurgeHelper();
     initAnnouncementModal();
     initHeavyStatsRefresh();
+    initSubdomainDnsViewer();
     initModalPolyfill();
     var batchMode = document.getElementById('batchExpiryMode');
     if (batchMode) {
@@ -460,7 +463,10 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
     }
 
     function showBackdrop(modal){
-
+      var existing = null;
+      if (modal && modal.id) {
+        existing = document.querySelector('.' + activeBackdropClass + '[data-target="' + modal.id + '"]');
+      }
       if (existing) { return existing; }
       var backdrop = document.createElement('div');
       backdrop.className = 'modal-backdrop fade in ' + activeBackdropClass;
@@ -588,6 +594,180 @@ $quotaEndpoint = $footerConfig['api']['quotaEndpoint'] ?? '?module=domain_hub&ac
         modal.style.display = 'block';
       });
   };
+
+  function getSubdomainDnsModalElements(){
+    return {
+      title: document.getElementById('cfmodSubdomainDnsModalTitle'),
+      loading: document.getElementById('cfmodSubdomainDnsModalLoading'),
+      alert: document.getElementById('cfmodSubdomainDnsModalAlert'),
+      summary: document.getElementById('cfmodSubdomainDnsModalSummary'),
+      records: document.getElementById('cfmodSubdomainDnsModalRecords')
+    };
+  }
+
+  function setSubdomainDnsModalLoading(loading){
+    var els = getSubdomainDnsModalElements();
+    if (!els.loading) { return; }
+    if (loading) {
+      els.loading.classList.remove('d-none');
+    } else {
+      els.loading.classList.add('d-none');
+    }
+  }
+
+  function setSubdomainDnsModalAlert(message, level){
+    var els = getSubdomainDnsModalElements();
+    if (!els.alert) { return; }
+    if (!message) {
+      els.alert.className = 'alert d-none';
+      els.alert.textContent = '';
+      return;
+    }
+    var style = level || 'warning';
+    els.alert.className = 'alert alert-' + style;
+    els.alert.textContent = message;
+  }
+
+  function setSubdomainDnsModalSummary(text){
+    var els = getSubdomainDnsModalElements();
+    if (!els.summary) { return; }
+    if (!text) {
+      els.summary.classList.add('d-none');
+      els.summary.textContent = '';
+      return;
+    }
+    els.summary.classList.remove('d-none');
+    els.summary.textContent = text;
+  }
+
+  function clearSubdomainDnsModalRecords(){
+    var els = getSubdomainDnsModalElements();
+    if (els.records) {
+      els.records.innerHTML = '';
+    }
+  }
+
+  function appendSubdomainDnsRecordCard(container, record){
+    if (!container || !record) { return; }
+    var col = document.createElement('div');
+    col.className = 'col-12';
+
+    var card = document.createElement('div');
+    card.className = 'card border-light shadow-sm';
+
+    var body = document.createElement('div');
+    body.className = 'card-body py-2 px-3';
+
+    var top = document.createElement('div');
+    top.className = 'd-flex justify-content-between align-items-center mb-2';
+
+    var typeBadge = document.createElement('span');
+    typeBadge.className = 'badge bg-primary';
+    typeBadge.textContent = String(record.type || '').toUpperCase() || 'UNKNOWN';
+    top.appendChild(typeBadge);
+
+    var statusBadge = document.createElement('span');
+    statusBadge.className = 'badge bg-light text-dark';
+    statusBadge.textContent = record.status ? String(record.status) : 'active';
+    top.appendChild(statusBadge);
+
+    var name = document.createElement('div');
+    name.className = 'fw-semibold text-break';
+    name.textContent = String(record.name || '-');
+
+    var content = document.createElement('code');
+    content.className = 'd-block text-break mt-1';
+    content.textContent = String(record.content || '');
+
+    var meta = document.createElement('div');
+    meta.className = 'small text-muted mt-2';
+    var parts = ['TTL: ' + String(record.ttl || 0)];
+    if (record.priority !== null && record.priority !== undefined) {
+      parts.push('Priority: ' + String(record.priority));
+    }
+    if (record.line) {
+      parts.push('线路: ' + String(record.line));
+    }
+    if (record.record_id) {
+      parts.push('远端ID: ' + String(record.record_id));
+    }
+    if (record.updated_at) {
+      parts.push('更新: ' + String(record.updated_at));
+    }
+    meta.textContent = parts.join(' | ');
+
+    body.appendChild(top);
+    body.appendChild(name);
+    body.appendChild(content);
+    body.appendChild(meta);
+    card.appendChild(body);
+    col.appendChild(card);
+    container.appendChild(col);
+  }
+
+  function openSubdomainDnsViewer(subdomainId, subdomainName){
+    var sid = parseInt(subdomainId, 10);
+    if (!sid || sid <= 0) { return; }
+
+    var els = getSubdomainDnsModalElements();
+    if (els.title) {
+      els.title.textContent = '解析记录 - ' + (subdomainName || ('ID #' + sid));
+    }
+
+    setSubdomainDnsModalAlert('', '');
+    setSubdomainDnsModalSummary('');
+    clearSubdomainDnsModalRecords();
+    setSubdomainDnsModalLoading(true);
+
+    if (!subdomainDnsEndpoint) {
+      setSubdomainDnsModalLoading(false);
+      setSubdomainDnsModalAlert('未配置解析记录查询接口。', 'warning');
+      return;
+    }
+
+    var requestUrl = subdomainDnsEndpoint + encodeURIComponent(sid) + '&_=' + Date.now();
+    fetch(requestUrl, { credentials: 'same-origin' })
+      .then(function(response){ return response.json(); })
+      .then(function(data){
+        setSubdomainDnsModalLoading(false);
+        if (!data || !data.success) {
+          setSubdomainDnsModalAlert('读取解析记录失败，请稍后重试。', 'danger');
+          return;
+        }
+
+        var rows = Array.isArray(data.records) ? data.records : [];
+        var container = els.records;
+        if (!container) {
+          return;
+        }
+        if (rows.length === 0) {
+          setSubdomainDnsModalSummary('当前本地暂无已同步的解析记录。');
+          setSubdomainDnsModalAlert('未找到解析记录（可能该子域名尚未设置解析或尚未同步）。', 'info');
+          return;
+        }
+
+        setSubdomainDnsModalSummary('共 ' + rows.length + ' 条本地已同步解析记录。');
+        rows.forEach(function(row){
+          appendSubdomainDnsRecordCard(container, row);
+        });
+      })
+      .catch(function(){
+        setSubdomainDnsModalLoading(false);
+        setSubdomainDnsModalAlert('网络异常，读取解析记录失败。', 'danger');
+      });
+  }
+
+  function initSubdomainDnsViewer(){
+    document.querySelectorAll('.js-view-subdomain-dns').forEach(function(button){
+      button.addEventListener('click', function(){
+        var sid = button.getAttribute('data-subdomain-id') || '';
+        var name = button.getAttribute('data-subdomain-name') || '';
+        openSubdomainDnsViewer(sid, name);
+      });
+    });
+  }
+
+  window.openSubdomainDnsViewer = openSubdomainDnsViewer;
 
   window.validateQuotaForm = function(){
     var maxCount = document.getElementById('max_count').value;
