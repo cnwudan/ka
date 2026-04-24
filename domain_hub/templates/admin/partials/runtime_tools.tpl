@@ -82,6 +82,53 @@ $supportGroupLabel = $lang['runtime_support_group_label'] ?? '前台交流群链
 $supportGroupHint = $lang['runtime_support_group_hint'] ?? '显示在左侧菜单“交流群组”入口，支持 TG/Discord 等链接';
 $supportTicketUrlSetting = trim((string) ($module_settings['client_support_ticket_url'] ?? '')) ?: 'submitticket.php';
 $supportGroupUrlSetting = trim((string) ($module_settings['client_support_group_url'] ?? '')) ?: 'https://t.me/+l9I5TNRDLP5lZDBh';
+$helpAiEnableLabel = $lang['runtime_help_ai_enable'] ?? '启用帮助中心 AI 搜索/问答';
+$helpAiEnableHint = $lang['runtime_help_ai_enable_hint'] ?? '开启后，前台帮助中心将出现 AI 搜索/问答按钮。';
+$helpAiProviderLabel = $lang['runtime_help_ai_provider'] ?? 'AI 提供商';
+$helpAiProviderHint = $lang['runtime_help_ai_provider_hint'] ?? '支持 Google Gemini API 与 OpenRouter API（free models 路由）';
+$helpAiAssistantNameLabel = $lang['runtime_help_ai_assistant_name'] ?? 'AI 助手名称';
+$helpAiAssistantNameHint = $lang['runtime_help_ai_assistant_name_hint'] ?? '显示在帮助中心对话弹窗中的名称。';
+$helpAiSystemPromptLabel = $lang['runtime_help_ai_system_prompt'] ?? 'AI 系统提示词';
+$helpAiSystemPromptHint = $lang['runtime_help_ai_system_prompt_hint'] ?? '建议限制回答范围为本插件的域名、DNS、API 与帮助中心相关内容。';
+$helpAiMaxInputLabel = $lang['runtime_help_ai_max_input'] ?? '单次提问最大长度';
+$helpAiMaxInputHint = $lang['runtime_help_ai_max_input_hint'] ?? '限制 200-2000 字符，防止过长请求。';
+$helpAiGeminiKeyLabel = $lang['runtime_help_ai_gemini_key'] ?? 'Gemini API Key';
+$helpAiGeminiModelLabel = $lang['runtime_help_ai_gemini_model'] ?? 'Gemini 模型名称';
+$helpAiGeminiModelHint = $lang['runtime_help_ai_gemini_model_hint'] ?? '建议使用支持免费层的 Gemini 模型。';
+$helpAiOpenrouterKeyLabel = $lang['runtime_help_ai_openrouter_key'] ?? 'OpenRouter API Key';
+$helpAiOpenrouterModelLabel = $lang['runtime_help_ai_openrouter_model'] ?? 'OpenRouter 模型名称';
+$helpAiOpenrouterModelHint = $lang['runtime_help_ai_openrouter_model_hint'] ?? '推荐填写带 :free 后缀的模型，如 meta-llama/llama-3.1-8b-instruct:free。';
+$helpAiEnabledSetting = in_array($module_settings['enable_help_ai_search'] ?? '0', ['1','on','yes','true'], true);
+$helpAiProviderSetting = strtolower(trim((string) ($module_settings['help_ai_provider'] ?? 'gemini')));
+if (!in_array($helpAiProviderSetting, ['gemini', 'openrouter'], true)) {
+    $helpAiProviderSetting = 'gemini';
+}
+$helpAiAssistantNameSetting = trim((string) ($module_settings['help_ai_assistant_name'] ?? 'AI 助手'));
+if ($helpAiAssistantNameSetting === '') {
+    $helpAiAssistantNameSetting = 'AI 助手';
+}
+$helpAiSystemPromptSetting = trim((string) ($module_settings['help_ai_system_prompt'] ?? ''));
+$helpAiMaxInputSetting = max(200, min(2000, intval($module_settings['help_ai_max_input_chars'] ?? 600)));
+$helpAiGeminiModelSetting = trim((string) ($module_settings['help_ai_gemini_model'] ?? 'gemini-2.0-flash'));
+if ($helpAiGeminiModelSetting === '') {
+    $helpAiGeminiModelSetting = 'gemini-2.0-flash';
+}
+$helpAiGeminiKeyStored = trim((string) ($module_settings['help_ai_gemini_api_key'] ?? ''));
+$helpAiGeminiKeyConfigured = $helpAiGeminiKeyStored !== '';
+if ($helpAiGeminiKeyConfigured && strpos($helpAiGeminiKeyStored, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+    $helpAiGeminiKeyConfigured = trim((string) cfmod_decrypt_sensitive(substr($helpAiGeminiKeyStored, strlen('enc::')))) !== '';
+}
+$helpAiGeminiKeyPlaceholder = $helpAiGeminiKeyConfigured ? '留空表示保持当前 Key 不变' : 'AIza...';
+$helpAiOpenrouterModelSetting = trim((string) ($module_settings['help_ai_openrouter_model'] ?? 'meta-llama/llama-3.1-8b-instruct:free'));
+if ($helpAiOpenrouterModelSetting === '') {
+    $helpAiOpenrouterModelSetting = 'meta-llama/llama-3.1-8b-instruct:free';
+}
+$helpAiOpenrouterKeyStored = trim((string) ($module_settings['help_ai_openrouter_api_key'] ?? ''));
+$helpAiOpenrouterKeyConfigured = $helpAiOpenrouterKeyStored !== '';
+if ($helpAiOpenrouterKeyConfigured && strpos($helpAiOpenrouterKeyStored, 'enc::') === 0 && function_exists('cfmod_decrypt_sensitive')) {
+    $helpAiOpenrouterKeyConfigured = trim((string) cfmod_decrypt_sensitive(substr($helpAiOpenrouterKeyStored, strlen('enc::')))) !== '';
+}
+$helpAiOpenrouterKeyPlaceholder = $helpAiOpenrouterKeyConfigured ? '留空表示保持当前 Key 不变' : 'sk-or-...';
 $githubStarEnableLabel = $lang['runtime_github_star_enable'] ?? '启用 GitHub 点赞奖励';
 $githubStarEnableHint = $lang['runtime_github_star_enable_hint'] ?? '用户完成 GitHub 点赞后可领取额外注册额度。';
 $githubStarRepoLabel = $lang['runtime_github_star_repo'] ?? 'GitHub 仓库地址';
@@ -466,6 +513,62 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
         <input type="number" class="form-control" id="invite_registration_telegram_auth_max_age_seconds" name="invite_registration_telegram_auth_max_age_seconds" min="60" max="604800" step="60" value="<?php echo htmlspecialchars($inviteTelegramAuthAgeSetting); ?>">
         <small class="text-muted"><?php echo htmlspecialchars($inviteTelegramAuthAgeHint); ?></small>
       </div>
+
+      <div class="col-12">
+        <hr>
+        <h6 class="text-muted mb-2"><i class="fas fa-robot"></i> 帮助中心 AI 搜索 / 问答</h6>
+      </div>
+      <div class="col-12 col-lg-4">
+        <div class="form-check form-switch mt-2">
+          <input class="form-check-input" type="checkbox" id="enable_help_ai_search" name="enable_help_ai_search" value="1" <?php echo $helpAiEnabledSetting ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="enable_help_ai_search"><?php echo htmlspecialchars($helpAiEnableLabel); ?></label>
+        </div>
+        <small class="text-muted d-block"><?php echo htmlspecialchars($helpAiEnableHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="help_ai_provider"><?php echo htmlspecialchars($helpAiProviderLabel); ?></label>
+        <select class="form-select" id="help_ai_provider" name="help_ai_provider">
+          <option value="gemini" <?php echo $helpAiProviderSetting === 'gemini' ? 'selected' : ''; ?>>Google Gemini API</option>
+          <option value="openrouter" <?php echo $helpAiProviderSetting === 'openrouter' ? 'selected' : ''; ?>>OpenRouter API</option>
+        </select>
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiProviderHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="help_ai_assistant_name"><?php echo htmlspecialchars($helpAiAssistantNameLabel); ?></label>
+        <input type="text" class="form-control" id="help_ai_assistant_name" name="help_ai_assistant_name" maxlength="60" value="<?php echo htmlspecialchars($helpAiAssistantNameSetting); ?>" placeholder="AI 助手">
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiAssistantNameHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-3">
+        <label class="form-label" for="help_ai_max_input_chars"><?php echo htmlspecialchars($helpAiMaxInputLabel); ?></label>
+        <input type="number" class="form-control" id="help_ai_max_input_chars" name="help_ai_max_input_chars" min="200" max="2000" value="<?php echo htmlspecialchars($helpAiMaxInputSetting); ?>">
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiMaxInputHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-9">
+        <label class="form-label" for="help_ai_system_prompt"><?php echo htmlspecialchars($helpAiSystemPromptLabel); ?></label>
+        <textarea class="form-control" id="help_ai_system_prompt" name="help_ai_system_prompt" rows="3" placeholder="你是 domain_hub 帮助中心助手，仅回答插件相关问题。若超出范围请引导用户提交工单。"><?php echo htmlspecialchars($helpAiSystemPromptSetting); ?></textarea>
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiSystemPromptHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="help_ai_gemini_api_key"><?php echo htmlspecialchars($helpAiGeminiKeyLabel); ?></label>
+        <input type="password" class="form-control" id="help_ai_gemini_api_key" name="help_ai_gemini_api_key" value="" autocomplete="new-password" placeholder="<?php echo htmlspecialchars($helpAiGeminiKeyPlaceholder); ?>">
+        <small class="text-muted"><?php if ($helpAiGeminiKeyConfigured): ?>已检测到历史 Key，留空将保持不变。<?php else: ?>用于 Google Gemini API 鉴权。<?php endif; ?></small>
+      </div>
+      <div class="col-12 col-lg-8">
+        <label class="form-label" for="help_ai_gemini_model"><?php echo htmlspecialchars($helpAiGeminiModelLabel); ?></label>
+        <input type="text" class="form-control" id="help_ai_gemini_model" name="help_ai_gemini_model" value="<?php echo htmlspecialchars($helpAiGeminiModelSetting); ?>" placeholder="gemini-2.0-flash">
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiGeminiModelHint); ?></small>
+      </div>
+      <div class="col-12 col-lg-4">
+        <label class="form-label" for="help_ai_openrouter_api_key"><?php echo htmlspecialchars($helpAiOpenrouterKeyLabel); ?></label>
+        <input type="password" class="form-control" id="help_ai_openrouter_api_key" name="help_ai_openrouter_api_key" value="" autocomplete="new-password" placeholder="<?php echo htmlspecialchars($helpAiOpenrouterKeyPlaceholder); ?>">
+        <small class="text-muted"><?php if ($helpAiOpenrouterKeyConfigured): ?>已检测到历史 Key，留空将保持不变。<?php else: ?>用于 OpenRouter API 鉴权。<?php endif; ?></small>
+      </div>
+      <div class="col-12 col-lg-8">
+        <label class="form-label" for="help_ai_openrouter_model"><?php echo htmlspecialchars($helpAiOpenrouterModelLabel); ?></label>
+        <input type="text" class="form-control" id="help_ai_openrouter_model" name="help_ai_openrouter_model" value="<?php echo htmlspecialchars($helpAiOpenrouterModelSetting); ?>" placeholder="meta-llama/llama-3.1-8b-instruct:free">
+        <small class="text-muted"><?php echo htmlspecialchars($helpAiOpenrouterModelHint); ?></small>
+      </div>
+
       <div class="col-12">
         <button type="submit" class="btn btn-primary mt-2"><?php echo htmlspecialchars($saveLabel); ?></button>
       </div>

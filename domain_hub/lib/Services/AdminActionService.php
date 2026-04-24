@@ -1610,6 +1610,47 @@ class CfAdminActionService
         if (preg_match('/^\s*javascript:/i', $clientSupportGroupUrl)) {
             $clientSupportGroupUrl = 'https://t.me/+l9I5TNRDLP5lZDBh';
         }
+
+        $helpAiSearchEnabled = (($_POST['enable_help_ai_search'] ?? '') === '1');
+        $helpAiProvider = strtolower(trim((string) ($_POST['help_ai_provider'] ?? ($moduleSettings['help_ai_provider'] ?? 'gemini'))));
+        if (!in_array($helpAiProvider, ['gemini', 'openrouter'], true)) {
+            $helpAiProvider = 'gemini';
+        }
+        $helpAiAssistantName = trim((string) ($_POST['help_ai_assistant_name'] ?? ($moduleSettings['help_ai_assistant_name'] ?? 'AI 助手')));
+        if ($helpAiAssistantName === '') {
+            $helpAiAssistantName = 'AI 助手';
+        }
+        $helpAiSystemPrompt = trim((string) ($_POST['help_ai_system_prompt'] ?? ($moduleSettings['help_ai_system_prompt'] ?? '')));
+        $helpAiMaxInputCharsInput = intval($_POST['help_ai_max_input_chars'] ?? ($moduleSettings['help_ai_max_input_chars'] ?? 600));
+        $helpAiMaxInputChars = max(200, min(2000, $helpAiMaxInputCharsInput));
+        $helpAiGeminiModel = trim((string) ($_POST['help_ai_gemini_model'] ?? ($moduleSettings['help_ai_gemini_model'] ?? 'gemini-2.0-flash')));
+        if ($helpAiGeminiModel === '') {
+            $helpAiGeminiModel = 'gemini-2.0-flash';
+        }
+        $helpAiOpenrouterModel = trim((string) ($_POST['help_ai_openrouter_model'] ?? ($moduleSettings['help_ai_openrouter_model'] ?? 'meta-llama/llama-3.1-8b-instruct:free')));
+        if ($helpAiOpenrouterModel === '') {
+            $helpAiOpenrouterModel = 'meta-llama/llama-3.1-8b-instruct:free';
+        }
+        $postedHelpAiGeminiApiKey = trim((string) ($_POST['help_ai_gemini_api_key'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedHelpAiGeminiApiKey)) {
+            $postedHelpAiGeminiApiKey = '';
+        }
+        $existingHelpAiGeminiApiKey = trim((string) ($moduleSettings['help_ai_gemini_api_key'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingHelpAiGeminiApiKey)) {
+            $existingHelpAiGeminiApiKey = '';
+        }
+        $helpAiGeminiApiKey = $postedHelpAiGeminiApiKey !== '' ? $postedHelpAiGeminiApiKey : $existingHelpAiGeminiApiKey;
+
+        $postedHelpAiOpenrouterApiKey = trim((string) ($_POST['help_ai_openrouter_api_key'] ?? ''));
+        if (self::isMaskedSensitivePlaceholder($postedHelpAiOpenrouterApiKey)) {
+            $postedHelpAiOpenrouterApiKey = '';
+        }
+        $existingHelpAiOpenrouterApiKey = trim((string) ($moduleSettings['help_ai_openrouter_api_key'] ?? ''));
+        if (self::isStoredMaskedSensitiveValue($existingHelpAiOpenrouterApiKey)) {
+            $existingHelpAiOpenrouterApiKey = '';
+        }
+        $helpAiOpenrouterApiKey = $postedHelpAiOpenrouterApiKey !== '' ? $postedHelpAiOpenrouterApiKey : $existingHelpAiOpenrouterApiKey;
+
         $enableGithubStarReward = (($_POST['enable_github_star_reward'] ?? '') === '1');
         $githubStarRepoUrl = trim((string) ($_POST['github_star_repo_url'] ?? ($moduleSettings['github_star_repo_url'] ?? '')));
         if (class_exists('CfGithubStarRewardService')) {
@@ -1684,6 +1725,15 @@ class CfAdminActionService
                 'dns_unlock_purchase_price' => number_format($dnsUnlockPurchasePrice, 2, '.', ''),
                 'client_support_ticket_url' => $clientSupportTicketUrl,
                 'client_support_group_url' => $clientSupportGroupUrl,
+                'enable_help_ai_search' => $helpAiSearchEnabled ? '1' : '0',
+                'help_ai_provider' => $helpAiProvider,
+                'help_ai_assistant_name' => $helpAiAssistantName,
+                'help_ai_system_prompt' => $helpAiSystemPrompt,
+                'help_ai_max_input_chars' => (string) $helpAiMaxInputChars,
+                'help_ai_gemini_api_key' => $helpAiGeminiApiKey,
+                'help_ai_gemini_model' => $helpAiGeminiModel,
+                'help_ai_openrouter_api_key' => $helpAiOpenrouterApiKey,
+                'help_ai_openrouter_model' => $helpAiOpenrouterModel,
                 'enable_github_star_reward' => $enableGithubStarReward ? '1' : '0',
                 'github_star_repo_url' => $githubStarRepoUrl,
                 'github_star_reward_amount' => (string) $githubStarRewardAmount,
@@ -1726,6 +1776,15 @@ class CfAdminActionService
                     'dns_unlock_purchase_price' => $dnsUnlockPurchasePrice,
                     'client_support_ticket_url' => $clientSupportTicketUrl,
                     'client_support_group_url' => $clientSupportGroupUrl,
+                    'enable_help_ai_search' => $helpAiSearchEnabled ? 1 : 0,
+                    'help_ai_provider' => $helpAiProvider,
+                    'help_ai_assistant_name' => $helpAiAssistantName,
+                    'help_ai_system_prompt_length' => strlen($helpAiSystemPrompt),
+                    'help_ai_max_input_chars' => $helpAiMaxInputChars,
+                    'help_ai_gemini_model' => $helpAiGeminiModel,
+                    'help_ai_openrouter_model' => $helpAiOpenrouterModel,
+                    'help_ai_gemini_api_key_set' => $helpAiGeminiApiKey !== '' ? 1 : 0,
+                    'help_ai_openrouter_api_key_set' => $helpAiOpenrouterApiKey !== '' ? 1 : 0,
                     'enable_github_star_reward' => $enableGithubStarReward ? 1 : 0,
                     'github_star_repo_url' => $githubStarRepoUrl,
                     'github_star_reward_amount' => $githubStarRewardAmount,

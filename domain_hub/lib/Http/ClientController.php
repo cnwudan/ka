@@ -1097,6 +1097,53 @@ class CfClientController
                                 }
                             }
 
+                            // 帮助中心 AI 搜索 / 问答 AJAX
+                            if ($action === 'ajax_help_ai_search') {
+                                header('Content-Type: application/json; charset=utf-8');
+                                $settingsForHelpAi = cf_get_module_settings_cached();
+                                if (!is_array($settingsForHelpAi)) {
+                                    $settingsForHelpAi = [];
+                                }
+                                if (!class_exists('CfAiHelpSearchService') || !CfAiHelpSearchService::isEnabled($settingsForHelpAi)) {
+                                    echo json_encode(['success' => false, 'error' => self::actionText('cfclient.ajax.help_ai.disabled', '帮助中心 AI 搜索功能暂未开启')], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                }
+
+                                try {
+                                    $csrf = $_SERVER['HTTP_X_CSRF_TOKEN'] ?? '';
+                                    if (empty($_SESSION['cfmod_csrf']) || !hash_equals($_SESSION['cfmod_csrf'], (string) $csrf)) {
+                                        throw new \RuntimeException(self::actionText('cfclient.csrf_failed', '安全校验失败：请刷新页面后重试。'));
+                                    }
+
+                                    $rawInput = file_get_contents('php://input');
+                                    $payload = json_decode($rawInput, true);
+                                    if (!is_array($payload)) {
+                                        $payload = [];
+                                    }
+
+                                    $query = trim((string) ($payload['query'] ?? ''));
+                                    $history = is_array($payload['history'] ?? null) ? $payload['history'] : [];
+
+                                    $result = CfAiHelpSearchService::ask($userId, $query, $history, $settingsForHelpAi, [
+                                        'ip' => (string) ($_SERVER['REMOTE_ADDR'] ?? ''),
+                                        'site_url' => (string) ((isset($_SERVER['HTTP_HOST']) ? (((!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST']) : '')),
+                                    ]);
+
+                                    echo json_encode([
+                                        'success' => true,
+                                        'data' => $result,
+                                    ], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                } catch (\Throwable $e) {
+                                    $errorText = trim((string) $e->getMessage());
+                                    if ($errorText === '') {
+                                        $errorText = self::actionText('cfclient.ajax.help_ai.error', 'AI 搜索失败，请稍后再试。');
+                                    }
+                                    echo json_encode(['success' => false, 'error' => $errorText], JSON_UNESCAPED_UNICODE);
+                                    exit;
+                                }
+                            }
+
                             // 域名转赠 AJAX
                             if (in_array($action, ['ajax_initiate_domain_gift','ajax_accept_domain_gift','ajax_cancel_domain_gift','ajax_list_domain_gifts'], true)) {
                                 header('Content-Type: application/json; charset=utf-8');
@@ -1879,6 +1926,7 @@ class CfClientController
             'updateApiKeyName' => $buildUrl('ajax_update_api_key_name'),
             'regenerateApiKey' => $buildUrl('ajax_regenerate_api_key'),
             'deleteApiKey' => $buildUrl('ajax_delete_api_key'),
+            'helpAiSearch' => $buildUrl('ajax_help_ai_search'),
             'domainGift' => [
                 'initiate' => $buildUrl('ajax_initiate_domain_gift'),
                 'accept' => $buildUrl('ajax_accept_domain_gift'),

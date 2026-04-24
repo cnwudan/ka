@@ -4,6 +4,12 @@ $isClientLanguageChinese = $clientLanguageCode === 'chinese';
 $supportTicketUrl = isset($cfClientSupportTicketUrl) && trim((string) $cfClientSupportTicketUrl) !== '' ? (string) $cfClientSupportTicketUrl : 'submitticket.php';
 $supportGroupUrl = isset($cfClientSupportGroupUrl) && trim((string) $cfClientSupportGroupUrl) !== '' ? (string) $cfClientSupportGroupUrl : 'https://t.me/+l9I5TNRDLP5lZDBh';
 $clientPortalUrl = isset($cfClientPortalUrl) && trim((string) $cfClientPortalUrl) !== '' ? (string) $cfClientPortalUrl : 'index.php';
+$helpAiEnabled = !empty($helpAiSearchEnabled);
+$helpAiAssistantDisplayName = trim((string) ($helpAiAssistantName ?? 'AI 助手'));
+if ($helpAiAssistantDisplayName === '') {
+    $helpAiAssistantDisplayName = $isClientLanguageChinese ? 'AI 助手' : 'AI Assistant';
+}
+$helpAiMaxChars = max(200, min(2000, intval($helpAiMaxInputChars ?? 600)));
 $extrasTexts = [
     'tipsTitle' => cfclient_lang('cfclient.extras.tips.title', $isClientLanguageChinese ? '帮助中心知识库' : 'Help Center Knowledge Base', [], true),
     'searchPlaceholder' => cfclient_lang('cfclient.extras.search.placeholder', $isClientLanguageChinese ? '搜索关键字，例如：DNS 生效、解析报错、域名转赠' : 'Search keywords, e.g. DNS propagation, record errors, domain transfer', [], true),
@@ -23,6 +29,17 @@ $extrasTexts = [
     'supportKbDesc' => cfclient_lang('cfclient.extras.support.kb_desc', $isClientLanguageChinese ? '查看 WHMCS 官方知识库文档与教程' : 'Browse WHMCS documentation and tutorials', [], true),
     'supportContactDesc' => cfclient_lang('cfclient.extras.support.contact_desc', $isClientLanguageChinese ? '加入社群获取实时公告与交流支持' : 'Join the community for announcements and real-time support', [], true),
     'backToPortal' => cfclient_lang('cfclient.extras.back_to_portal', $isClientLanguageChinese ? '返回客户中心' : 'Back to Client Area', [], true),
+    'aiButton' => cfclient_lang('cfclient.extras.ai.button', $isClientLanguageChinese ? 'AI 搜索/问答' : 'AI Search & Chat', [], true),
+    'aiModalTitle' => cfclient_lang('cfclient.extras.ai.modal_title', $isClientLanguageChinese ? '帮助中心 AI 助手' : 'Help Center AI Assistant', [], true),
+    'aiModalHint' => cfclient_lang('cfclient.extras.ai.modal_hint', $isClientLanguageChinese ? '可咨询域名注册、续期、DNS 解析、API 密钥等插件相关问题。' : 'Ask about plugin topics such as registration, renewal, DNS records, and API keys.', [], true),
+    'aiInputPlaceholder' => cfclient_lang('cfclient.extras.ai.input_placeholder', $isClientLanguageChinese ? '请输入你的问题…' : 'Type your question…', [], true),
+    'aiSend' => cfclient_lang('cfclient.extras.ai.send', $isClientLanguageChinese ? '发送' : 'Send', [], true),
+    'aiThinking' => cfclient_lang('cfclient.extras.ai.thinking', $isClientLanguageChinese ? '思考中…' : 'Thinking…', [], true),
+    'aiWelcome' => cfclient_lang('cfclient.extras.ai.welcome', $isClientLanguageChinese ? '你好，我是 %s。请告诉我你遇到的问题。' : 'Hi, I\'m %s. Tell me what you need help with.', [$helpAiAssistantDisplayName], true),
+    'aiUserLabel' => cfclient_lang('cfclient.extras.ai.user_label', $isClientLanguageChinese ? '我' : 'You', [], true),
+    'aiEmptyQuestion' => cfclient_lang('cfclient.extras.ai.empty_question', $isClientLanguageChinese ? '请输入问题后再发送。' : 'Please enter a question before sending.', [], true),
+    'aiTooLong' => cfclient_lang('cfclient.extras.ai.too_long', $isClientLanguageChinese ? '问题过长，请控制在 %s 字以内。' : 'Your question is too long. Keep it within %s characters.', [$helpAiMaxChars], true),
+    'aiRequestFailed' => cfclient_lang('cfclient.extras.ai.request_failed', $isClientLanguageChinese ? 'AI 请求失败，请稍后再试。' : 'AI request failed. Please try again later.', [], true),
 ];
 $privilegedDeleteHistoryEnabled = !empty($privilegedAllowDeleteWithDnsHistory);
 $deleteTipKey = !empty($clientDeleteEnabled) ? 'cfclient.extras.tips.domain.delete_enabled' : 'cfclient.extras.tips.domain.delete';
@@ -114,15 +131,22 @@ $helpSections = [
 ?>
 <div class="cf-help-center mt-4">
     <div class="cf-help-search-wrap mb-3">
-        <div class="position-relative">
-            <i class="fas fa-search cf-help-search-icon"></i>
-            <input
-                type="search"
-                class="form-control cf-help-search-input"
-                id="cfHelpSearchInput"
-                placeholder="<?php echo $extrasTexts['searchPlaceholder']; ?>"
-                autocomplete="off"
-            >
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+            <div class="position-relative flex-grow-1">
+                <i class="fas fa-search cf-help-search-icon"></i>
+                <input
+                    type="search"
+                    class="form-control cf-help-search-input"
+                    id="cfHelpSearchInput"
+                    placeholder="<?php echo $extrasTexts['searchPlaceholder']; ?>"
+                    autocomplete="off"
+                >
+            </div>
+            <?php if ($helpAiEnabled): ?>
+                <button type="button" class="btn btn-primary" id="cfHelpAiOpenBtn">
+                    <i class="fas fa-robot me-1"></i><?php echo $extrasTexts['aiButton']; ?>
+                </button>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -208,6 +232,30 @@ $helpSections = [
         </div>
     </div>
 </div>
+
+<?php if ($helpAiEnabled): ?>
+<div class="modal fade" id="cfHelpAiModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-robot text-primary me-2"></i><?php echo $extrasTexts['aiModalTitle']; ?></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-light border small mb-3"><?php echo $extrasTexts['aiModalHint']; ?></div>
+                <div class="border rounded p-2 bg-light" id="cfHelpAiMessages" style="max-height: 360px; overflow: auto;"></div>
+                <div class="text-danger small mt-2 d-none" id="cfHelpAiError"></div>
+            </div>
+            <div class="modal-footer">
+                <div class="input-group">
+                    <input type="text" class="form-control" id="cfHelpAiInput" maxlength="<?php echo intval($helpAiMaxChars); ?>" placeholder="<?php echo $extrasTexts['aiInputPlaceholder']; ?>">
+                    <button type="button" class="btn btn-primary" id="cfHelpAiSendBtn"><?php echo $extrasTexts['aiSend']; ?></button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
 
 <div class="row mt-4">
     <div class="col-12">
@@ -305,6 +353,170 @@ $helpSections = [
 
     searchInput.addEventListener('input', function () {
         applyFilter(searchInput.value);
+    });
+})();
+
+(function () {
+    var aiEnabled = <?php echo $helpAiEnabled ? 'true' : 'false'; ?>;
+    if (!aiEnabled) {
+        return;
+    }
+
+    var openBtn = document.getElementById('cfHelpAiOpenBtn');
+    var modalEl = document.getElementById('cfHelpAiModal');
+    var messagesEl = document.getElementById('cfHelpAiMessages');
+    var errorEl = document.getElementById('cfHelpAiError');
+    var inputEl = document.getElementById('cfHelpAiInput');
+    var sendBtn = document.getElementById('cfHelpAiSendBtn');
+    var modal = null;
+    var history = [];
+    var busy = false;
+    var maxChars = <?php echo intval($helpAiMaxChars); ?>;
+
+    if (!openBtn || !modalEl || !messagesEl || !inputEl || !sendBtn) {
+        return;
+    }
+
+    var text = {
+        assistantName: <?php echo json_encode($helpAiAssistantDisplayName, JSON_UNESCAPED_UNICODE); ?>,
+        userName: <?php echo json_encode($extrasTexts['aiUserLabel'], JSON_UNESCAPED_UNICODE); ?>,
+        welcome: <?php echo json_encode($extrasTexts['aiWelcome'], JSON_UNESCAPED_UNICODE); ?>,
+        emptyQuestion: <?php echo json_encode($extrasTexts['aiEmptyQuestion'], JSON_UNESCAPED_UNICODE); ?>,
+        tooLong: <?php echo json_encode($extrasTexts['aiTooLong'], JSON_UNESCAPED_UNICODE); ?>,
+        requestFailed: <?php echo json_encode($extrasTexts['aiRequestFailed'], JSON_UNESCAPED_UNICODE); ?>,
+        send: <?php echo json_encode($extrasTexts['aiSend'], JSON_UNESCAPED_UNICODE); ?>,
+        thinking: <?php echo json_encode($extrasTexts['aiThinking'], JSON_UNESCAPED_UNICODE); ?>
+    };
+
+    var escapeHtml = function (value) {
+        return String(value || '').replace(/[&<>"']/g, function (ch) {
+            return ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'})[ch];
+        });
+    };
+
+    var renderMessage = function (role, content) {
+        var row = document.createElement('div');
+        row.className = 'mb-2';
+
+        var badgeClass = role === 'assistant' ? 'bg-primary' : 'bg-secondary';
+        var roleName = role === 'assistant' ? text.assistantName : text.userName;
+        var body = '<div class="small mb-1"><span class="badge ' + badgeClass + '">' + escapeHtml(roleName) + '</span></div>' +
+            '<div class="border rounded bg-white p-2 small" style="white-space: pre-wrap;">' + escapeHtml(content) + '</div>';
+        row.innerHTML = body;
+        messagesEl.appendChild(row);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    };
+
+    var showError = function (message) {
+        if (!errorEl) {
+            return;
+        }
+        var textMessage = String(message || '').trim();
+        if (textMessage === '') {
+            errorEl.classList.add('d-none');
+            errorEl.textContent = '';
+            return;
+        }
+        errorEl.textContent = textMessage;
+        errorEl.classList.remove('d-none');
+    };
+
+    var setBusy = function (state) {
+        busy = !!state;
+        sendBtn.disabled = busy;
+        sendBtn.textContent = busy ? text.thinking : text.send;
+        inputEl.disabled = busy;
+    };
+
+    var ensureModal = function () {
+        if (!window.bootstrap || !bootstrap.Modal) {
+            return null;
+        }
+        if (!modal) {
+            modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        }
+        return modal;
+    };
+
+    var buildUrl = function () {
+        if (typeof cfClientBuildModuleUrl === 'function') {
+            return cfClientBuildModuleUrl('ajax_help_ai_search');
+        }
+        return 'index.php?m=domain_hub&module_action=ajax_help_ai_search';
+    };
+
+    var sendQuestion = function () {
+        if (busy) {
+            return;
+        }
+        var question = (inputEl.value || '').trim();
+        if (!question) {
+            showError(text.emptyQuestion);
+            return;
+        }
+        if (question.length > maxChars) {
+            showError(text.tooLong);
+            return;
+        }
+
+        showError('');
+        renderMessage('user', question);
+        history.push({ role: 'user', content: question });
+        inputEl.value = '';
+        setBusy(true);
+
+        fetch(buildUrl(), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': window.CF_MOD_CSRF || ''
+            },
+            body: JSON.stringify({
+                query: question,
+                history: history.slice(-8)
+            })
+        }).then(function (res) {
+            return res.json();
+        }).then(function (res) {
+            if (res && res.success && res.data && res.data.answer) {
+                var answer = String(res.data.answer || '').trim();
+                if (answer !== '') {
+                    renderMessage('assistant', answer);
+                    history.push({ role: 'assistant', content: answer });
+                    if (history.length > 12) {
+                        history = history.slice(-12);
+                    }
+                    return;
+                }
+            }
+            var errorText = (res && res.error) ? res.error : text.requestFailed;
+            showError(errorText);
+        }).catch(function () {
+            showError(text.requestFailed);
+        }).finally(function () {
+            setBusy(false);
+            inputEl.focus();
+        });
+    };
+
+    openBtn.addEventListener('click', function () {
+        var instance = ensureModal();
+        if (instance) {
+            instance.show();
+        }
+        if (!messagesEl.dataset.initialized) {
+            renderMessage('assistant', text.welcome);
+            messagesEl.dataset.initialized = '1';
+        }
+        inputEl.focus();
+    });
+
+    sendBtn.addEventListener('click', sendQuestion);
+    inputEl.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter' && !event.shiftKey) {
+            event.preventDefault();
+            sendQuestion();
+        }
     });
 })();
 </script>

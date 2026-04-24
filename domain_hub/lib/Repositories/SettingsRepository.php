@@ -84,6 +84,8 @@ class CfSettingsRepository
         $settings = $this->normalizeInviteRegistrationGithubSecret($settings);
         $settings = $this->normalizeTelegramGroupBotToken($settings);
         $settings = $this->normalizeInviteRegistrationTelegramBotToken($settings);
+        $settings = $this->normalizeHelpAiGeminiApiKey($settings);
+        $settings = $this->normalizeHelpAiOpenrouterApiKey($settings);
         $settings = $this->applyDefaults($settings);
         $settings = $this->synchronizeProviders($settings);
         $settings = $this->migrateLegacyFields($settings);
@@ -104,6 +106,16 @@ class CfSettingsRepository
     private function normalizeInviteRegistrationTelegramBotToken(array $settings): array
     {
         return $this->normalizeSensitiveSetting($settings, 'invite_registration_telegram_bot_token');
+    }
+
+    private function normalizeHelpAiGeminiApiKey(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'help_ai_gemini_api_key');
+    }
+
+    private function normalizeHelpAiOpenrouterApiKey(array $settings): array
+    {
+        return $this->normalizeSensitiveSetting($settings, 'help_ai_openrouter_api_key');
     }
 
     private function normalizeSensitiveSetting(array $settings, string $key): array
@@ -286,6 +298,15 @@ class CfSettingsRepository
             'invite_registration_telegram_bot_token' => '',
             'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
+            'enable_help_ai_search' => '0',
+            'help_ai_provider' => 'gemini',
+            'help_ai_assistant_name' => 'AI 助手',
+            'help_ai_system_prompt' => '',
+            'help_ai_max_input_chars' => '600',
+            'help_ai_gemini_api_key' => '',
+            'help_ai_gemini_model' => 'gemini-2.0-flash',
+            'help_ai_openrouter_api_key' => '',
+            'help_ai_openrouter_model' => 'meta-llama/llama-3.1-8b-instruct:free',
             'privileged_allow_register_suspended_root' => '0',
             'privileged_unlimited_invite_generation' => '1',
             'privileged_force_never_expire' => '1',
