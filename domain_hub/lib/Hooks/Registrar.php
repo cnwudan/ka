@@ -15,6 +15,91 @@ class CfHookRegistrar
         return '/' . ltrim($relative, '/');
     }
 
+
+    private static function preferredClientEntryScript(): string
+    {
+        if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript')) {
+            return CfClientController::preferredClientEntryScript();
+        }
+        return 'clientarea.php';
+    }
+
+    private static function preferredClientBaseQuery(): array
+    {
+        $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
+        if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery')) {
+            return CfClientController::preferredClientBaseQuery($moduleSlug);
+        }
+        return ['action' => 'addon', 'module' => $moduleSlug];
+    }
+
+    private static function buildCanonicalClientUrlFromRequest(): string
+    {
+        $params = self::preferredClientBaseQuery();
+        $requestParams = is_array($_GET ?? null) ? $_GET : [];
+
+        foreach ($requestParams as $key => $value) {
+            if (in_array($key, ['m', 'module', 'rp'], true)) {
+                continue;
+            }
+
+            if ($key === 'action') {
+                $actionValue = trim((string) $value);
+                $actionLower = strtolower($actionValue);
+                if ($actionLower === '' || $actionLower === 'addon') {
+                    continue;
+                }
+                $params['module_action'] = $actionValue;
+                continue;
+            }
+
+            $params[$key] = $value;
+        }
+
+        return self::preferredClientEntryScript() . '?' . http_build_query($params);
+    }
+
+    private static function isLegacyUiRequest(): bool
+    {
+        if (!cf_is_module_request() || !cf_is_legacy_module_entry()) {
+            return false;
+        }
+        if (CfApiRouter::isApiRequest()) {
+            return false;
+        }
+        return true;
+    }
+
+    private static function shouldCanonicalizeLegacyRequest(): bool
+    {
+        if (!self::isLegacyUiRequest()) {
+            return false;
+        }
+
+        $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
+        if (!in_array($method, ['GET', 'HEAD'], true)) {
+            return false;
+        }
+
+        $action = strtolower(trim((string) ($_REQUEST['action'] ?? '')));
+        $moduleAction = strtolower(trim((string) ($_REQUEST['module_action'] ?? ($_REQUEST['cf_action'] ?? ''))));
+        $ajaxAction = strtolower(trim((string) ($_REQUEST['ajax_action'] ?? '')));
+
+        if ($action === 'change_language' || $moduleAction === 'change_language') {
+            return false;
+        }
+
+        if (strpos($action, 'ajax_') === 0 || strpos($moduleAction, 'ajax_') === 0 || strpos($ajaxAction, 'ajax_') === 0) {
+            return false;
+        }
+
+        if (in_array($action, ['realtime_top'], true) || in_array($moduleAction, ['realtime_top'], true)) {
+            return false;
+        }
+
+        return true;
+    }
+
     public static function registerAll(): void
     {
         if (self::$registered) {
@@ -30,26 +115,23 @@ class CfHookRegistrar
     private static function registerClientHooks(): void
     {
         add_hook('ClientAreaPage', 1, function ($vars) {
-            if (cf_is_module_request()) {
-                if (CfApiRouter::isApiRequest()) {
-                    CfApiRouter::dispatch();
-                }
+            if (!cf_is_module_request()) {
+                return;
+            }
 
-                if (!isset($_SESSION['uid'])) {
-                    $target = 'index.php?m=' . CF_MODULE_NAME;
-                    if (!cf_is_legacy_module_entry()) {
-                        $target = 'clientarea.php?action=addon&module=' . CF_MODULE_NAME;
-                    }
-                    $requestUri = $_SERVER['REQUEST_URI'] ?? '';
-                    if (is_string($requestUri) && $requestUri !== '') {
-                        $relative = ltrim($requestUri, '/');
-                        if ($relative !== '' && stripos($relative, 'login.php') !== 0) {
-                            $target = $relative;
-                        }
-                    }
-                    header('Location: login.php?returnurl=' . urlencode($target));
-                    exit;
-                }
+            if (CfApiRouter::isApiRequest()) {
+                CfApiRouter::dispatch();
+            }
+
+            if (!isset($_SESSION['uid'])) {
+                $target = self::buildCanonicalClientUrlFromRequest();
+                header('Location: login.php?returnurl=' . urlencode($target));
+                exit;
+            }
+
+            if (self::shouldCanonicalizeLegacyRequest()) {
+                header('Location: ' . self::buildCanonicalClientUrlFromRequest());
+                exit;
             }
         });
 

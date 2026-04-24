@@ -76,6 +76,22 @@ class CfClientController
         return ['m' => $moduleSlug];
     }
 
+    public static function preferredClientEntryScript(): string
+    {
+        return 'clientarea.php';
+    }
+
+    public static function preferredClientBaseQuery(string $moduleSlug): array
+    {
+        return ['action' => 'addon', 'module' => $moduleSlug];
+    }
+
+    public static function buildPreferredClientUrl(string $moduleSlug, array $params = []): string
+    {
+        $query = array_merge(self::preferredClientBaseQuery($moduleSlug), $params);
+        return self::preferredClientEntryScript() . '?' . http_build_query($query);
+    }
+
     private static function isClientAreaRequestContext(): bool
     {
         $script = strtolower(basename($_SERVER['SCRIPT_NAME'] ?? ''));
@@ -140,7 +156,11 @@ class CfClientController
             define('CFMOD_CLIENTAREA_PAGE_RENDERED', true);
         
             $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
-            $actionParam = $_GET['action'] ?? '';
+            $actionParam = (string) ($_GET['action'] ?? '');
+            $moduleActionParam = (string) ($_GET['module_action'] ?? ($_GET['cf_action'] ?? ''));
+            if (($actionParam === '' || strtolower($actionParam) === 'addon') && $moduleActionParam !== '') {
+                $actionParam = $moduleActionParam;
+            }
             if ($actionParam === 'change_language') {
                 $requestedLang = (string)($_GET['lang'] ?? '');
                 $returnPayload = is_string($_GET['return'] ?? null) ? (string)$_GET['return'] : null;
@@ -552,7 +572,11 @@ class CfClientController
     {
                 // AJAX处理：API密钥管理
                             $action = (string) ($_GET['action'] ?? $_POST['action'] ?? '');
+                            $moduleAction = (string) ($_GET['module_action'] ?? $_POST['module_action'] ?? ($_GET['cf_action'] ?? ($_POST['cf_action'] ?? '')));
                             $ajaxAction = (string) ($_GET['ajax_action'] ?? $_POST['ajax_action'] ?? '');
+                            if (($action === '' || strtolower($action) === 'addon') && $moduleAction !== '') {
+                                $action = $moduleAction;
+                            }
                             if (($action === '' || strtolower($action) === 'addon') && strpos($ajaxAction, 'ajax_') === 0) {
                                 $action = $ajaxAction;
                             }
@@ -1805,17 +1829,17 @@ class CfClientController
         $base = 'clientarea.php?action=addon&module=' . CF_MODULE_NAME;
 
         return [
-            'createApiKey' => $base . '&action=ajax_create_api_key',
-            'updateApiKeyName' => $base . '&action=ajax_update_api_key_name',
-            'regenerateApiKey' => $base . '&action=ajax_regenerate_api_key',
-            'deleteApiKey' => $base . '&action=ajax_delete_api_key',
+            'createApiKey' => $base . '&module_action=ajax_create_api_key',
+            'updateApiKeyName' => $base . '&module_action=ajax_update_api_key_name',
+            'regenerateApiKey' => $base . '&module_action=ajax_regenerate_api_key',
+            'deleteApiKey' => $base . '&module_action=ajax_delete_api_key',
             'domainGift' => [
-                'initiate' => $base . '&action=ajax_initiate_domain_gift',
-                'accept' => $base . '&action=ajax_accept_domain_gift',
-                'cancel' => $base . '&action=ajax_cancel_domain_gift',
-                'list' => $base . '&action=ajax_list_domain_gifts',
+                'initiate' => $base . '&module_action=ajax_initiate_domain_gift',
+                'accept' => $base . '&module_action=ajax_accept_domain_gift',
+                'cancel' => $base . '&module_action=ajax_cancel_domain_gift',
+                'list' => $base . '&module_action=ajax_list_domain_gifts',
             ],
-            'leaderboard' => $base . '&ajax=realtime_top',
+            'leaderboard' => $base . '&module_action=realtime_top',
         ];
     }
 
