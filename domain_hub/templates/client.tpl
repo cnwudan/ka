@@ -255,12 +255,12 @@ $cfClientHasToolFeatures = !empty($quotaRedeemEnabled)
 
 $cfClientEntryScript = (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript'))
     ? CfClientController::preferredClientEntryScript()
-    : 'clientarea.php';
+    : 'index.php';
 $cfClientBaseEntryQuery = (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery'))
     ? CfClientController::preferredClientBaseQuery($moduleSlug)
-    : ['action' => 'addon', 'module' => $moduleSlug];
+    : ['m' => $moduleSlug];
 if (!is_array($cfClientBaseEntryQuery) || empty($cfClientBaseEntryQuery)) {
-    $cfClientBaseEntryQuery = ['action' => 'addon', 'module' => $moduleSlug];
+    $cfClientBaseEntryQuery = ['m' => $moduleSlug];
 }
 
 $cfClientIsChinese = strtolower((string) $currentClientLanguage) === 'chinese';

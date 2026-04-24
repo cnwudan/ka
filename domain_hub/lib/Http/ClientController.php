@@ -78,12 +78,12 @@ class CfClientController
 
     public static function preferredClientEntryScript(): string
     {
-        return 'clientarea.php';
+        return 'index.php';
     }
 
     public static function preferredClientBaseQuery(string $moduleSlug): array
     {
-        return ['action' => 'addon', 'module' => $moduleSlug];
+        return ['m' => $moduleSlug];
     }
 
     public static function buildPreferredClientUrl(string $moduleSlug, array $params = []): string
@@ -1865,20 +1865,27 @@ class CfClientController
 
     private function buildAjaxEndpoints(): array
     {
-        $base = 'clientarea.php?action=addon&module=' . CF_MODULE_NAME;
+        $moduleSlug = defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub';
+        $baseParams = self::preferredClientBaseQuery($moduleSlug);
+
+        $buildUrl = static function (string $action) use ($baseParams): string {
+            $params = $baseParams;
+            $params['module_action'] = $action;
+            return self::preferredClientEntryScript() . '?' . http_build_query($params);
+        };
 
         return [
-            'createApiKey' => $base . '&module_action=ajax_create_api_key',
-            'updateApiKeyName' => $base . '&module_action=ajax_update_api_key_name',
-            'regenerateApiKey' => $base . '&module_action=ajax_regenerate_api_key',
-            'deleteApiKey' => $base . '&module_action=ajax_delete_api_key',
+            'createApiKey' => $buildUrl('ajax_create_api_key'),
+            'updateApiKeyName' => $buildUrl('ajax_update_api_key_name'),
+            'regenerateApiKey' => $buildUrl('ajax_regenerate_api_key'),
+            'deleteApiKey' => $buildUrl('ajax_delete_api_key'),
             'domainGift' => [
-                'initiate' => $base . '&module_action=ajax_initiate_domain_gift',
-                'accept' => $base . '&module_action=ajax_accept_domain_gift',
-                'cancel' => $base . '&module_action=ajax_cancel_domain_gift',
-                'list' => $base . '&module_action=ajax_list_domain_gifts',
+                'initiate' => $buildUrl('ajax_initiate_domain_gift'),
+                'accept' => $buildUrl('ajax_accept_domain_gift'),
+                'cancel' => $buildUrl('ajax_cancel_domain_gift'),
+                'list' => $buildUrl('ajax_list_domain_gifts'),
             ],
-            'leaderboard' => $base . '&module_action=realtime_top',
+            'leaderboard' => $buildUrl('realtime_top'),
         ];
     }
 

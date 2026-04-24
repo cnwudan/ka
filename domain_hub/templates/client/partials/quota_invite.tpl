@@ -575,10 +575,10 @@ $inviteCountdownDayUnit = $cfInviteText('cfclient.invite.countdown.day_unit', 'å
                                                 <?php
                                                 $realtimeParams = isset($cfClientBaseEntryQuery) && is_array($cfClientBaseEntryQuery)
                                                     ? $cfClientBaseEntryQuery
-                                                    : ['action' => 'addon', 'module' => $moduleSlug];
+                                                    : ['m' => $moduleSlug];
                                                 $realtimeParams['module_action'] = 'realtime_top';
                                                 $realtimeParams['limit'] = 10;
-                                                $realtimeTopUrl = ($cfClientEntryScript ?? 'clientarea.php') . '?' . http_build_query($realtimeParams);
+                                                $realtimeTopUrl = ($cfClientEntryScript ?? 'index.php') . '?' . http_build_query($realtimeParams);
                                                 ?>
                                                 fetch('<?php echo htmlspecialchars($realtimeTopUrl, ENT_QUOTES); ?>', {
                                                     method: 'POST',

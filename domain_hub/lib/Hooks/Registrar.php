@@ -21,7 +21,7 @@ class CfHookRegistrar
         if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript')) {
             return CfClientController::preferredClientEntryScript();
         }
-        return 'clientarea.php';
+        return 'index.php';
     }
 
     private static function preferredClientBaseQuery(): array
@@ -30,7 +30,7 @@ class CfHookRegistrar
         if (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientBaseQuery')) {
             return CfClientController::preferredClientBaseQuery($moduleSlug);
         }
-        return ['action' => 'addon', 'module' => $moduleSlug];
+        return ['m' => $moduleSlug];
     }
 
     private static function buildCanonicalClientUrlFromRequest(): string
@@ -78,6 +78,10 @@ class CfHookRegistrar
 
         $method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
         if (!in_array($method, ['GET', 'HEAD'], true)) {
+            return false;
+        }
+
+        if (self::preferredClientEntryScript() === 'index.php') {
             return false;
         }
 
