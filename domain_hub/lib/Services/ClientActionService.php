@@ -2564,49 +2564,9 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
                             $msg = $providerError;
                             $msg_type = 'danger';
                         } else {
-                            $deletedCount = 0;
-                            $existing = $cf->getDnsRecords($sub->cloudflare_zone_id, $sub->subdomain, ['type' => 'NS']);
-                            if ($existing['success']) {
-                                foreach ($existing['result'] as $r) {
-                                    if (strtoupper($r['type']) === 'NS' && ($r['name'] ?? '') === $sub->subdomain) {
-                                        $delRes = $cf->deleteSubdomain($sub->cloudflare_zone_id, $r['id'], [
-                                            'name' => $r['name'] ?? $sub->subdomain,
-                                            'type' => $r['type'] ?? 'NS',
-                                            'content' => $r['content'] ?? null,
-                                        ]);
-                                        if ($delRes['success'] ?? false) {
-                                            $deletedCount++;
-                                        }
-                                        Capsule::table('mod_cloudflare_dns_records')
-                                            ->where('subdomain_id', $subdomain_id)
-                                            ->where('record_id', $r['id'])
-                                            ->delete();
-                                    }
-                                }
-                            }
-
-                            $conflictDeleted = 0;
-                            if ($forceReplace) {
-                                $allAt = $cf->getDnsRecords($sub->cloudflare_zone_id, $sub->subdomain);
-                                if ($allAt['success']) {
-                                    foreach ($allAt['result'] as $r) {
-                                        $t = strtoupper($r['type'] ?? '');
-                                        if (($r['name'] ?? '') === $sub->subdomain && $t !== 'NS') {
-                                            $delRes = $cf->deleteSubdomain($sub->cloudflare_zone_id, $r['id'], [
-                                                'name' => $r['name'] ?? $sub->subdomain,
-                                                'type' => $r['type'] ?? $t,
-                                                'content' => $r['content'] ?? null,
-                                            ]);
-                                            if ($delRes['success']) {
-                                                $conflictDeleted++;
-                                            }
-                                            Capsule::table('mod_cloudflare_dns_records')
-                                                ->where('subdomain_id', $subdomain_id)
-                                                ->where('record_id', $r['id'])
-                                                ->delete();
-                                        }
-                                    }
-                                }
+                            $zoneId = (string) ($sub->cloudflare_zone_id ?: $sub->rootdomain);
+                            if ($zoneId === '') {
+                                throw new Exception(self::actionText('dns.ns.zone_missing', '缺少 Zone 信息，请联系管理员检查域名配置。'));
                             }
 
                             $list = array_filter(
@@ -2633,27 +2593,187 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
                                 throw new Exception($msg);
                             }
 
+                            $deleteLocalByRemote = static function (int $targetSubdomainId, array $remoteRecord): void {
+                                $recordId = trim((string) ($remoteRecord['id'] ?? ''));
+                                if ($recordId !== '') {
+                                    $deleted = Capsule::table('mod_cloudflare_dns_records')
+                                        ->where('subdomain_id', $targetSubdomainId)
+                                        ->where('record_id', $recordId)
+                                        ->delete();
+                                    if ($deleted > 0) {
+                                        return;
+                                    }
+                                }
+
+                                $name = strtolower(trim((string) ($remoteRecord['name'] ?? '')));
+                                $type = strtoupper(trim((string) ($remoteRecord['type'] ?? '')));
+                                $content = trim((string) ($remoteRecord['content'] ?? ''));
+                                if ($name === '' || $type === '') {
+                                    return;
+                                }
+
+                                $match = Capsule::table('mod_cloudflare_dns_records')
+                                    ->where('subdomain_id', $targetSubdomainId)
+                                    ->whereRaw('LOWER(name) = ?', [$name])
+                                    ->whereRaw('UPPER(type) = ?', [$type])
+                                    ->where(function ($query) use ($content) {
+                                        $query->where('content', $content)
+                                            ->orWhereRaw('LOWER(content) = ?', [strtolower($content)]);
+                                    })
+                                    ->orderBy('id', 'asc')
+                                    ->first();
+                                if ($match) {
+                                    Capsule::table('mod_cloudflare_dns_records')
+                                        ->where('id', intval($match->id ?? 0))
+                                        ->delete();
+                                }
+                            };
+
+                            $resolveDeleteErrorText = static function ($response): string {
+                                if (!is_array($response)) {
+                                    return '';
+                                }
+                                $errorMessage = $response['errors'] ?? ($response['message'] ?? ($response['error'] ?? ''));
+                                if (is_array($errorMessage)) {
+                                    $errorMessage = json_encode($errorMessage, JSON_UNESCAPED_UNICODE);
+                                }
+                                return trim((string) $errorMessage);
+                            };
+
+                            $isProviderDeleteSuccess = static function ($response) use ($resolveDeleteErrorText): bool {
+                                if (!is_array($response)) {
+                                    return false;
+                                }
+                                if (!empty($response['success'])) {
+                                    return true;
+                                }
+                                $errorCode = $response['code'] ?? ($response['http_code'] ?? null);
+                                if ($errorCode === 404 || $errorCode === '404') {
+                                    return true;
+                                }
+                                $errorText = strtolower($resolveDeleteErrorText($response));
+                                if ($errorText === '') {
+                                    return false;
+                                }
+                                return strpos($errorText, 'not found') !== false
+                                    || strpos($errorText, 'record not found') !== false
+                                    || strpos($errorText, 'does not exist') !== false
+                                    || strpos($errorText, '不存在') !== false;
+                            };
+
                             $limitPerSub = intval($module_settings['max_dns_records_per_subdomain'] ?? 0);
                             if ($limitPerSub > 0) {
                                 $currentCount = Capsule::table('mod_cloudflare_dns_records')
                                     ->where('subdomain_id', $subdomain_id)
                                     ->count();
-                                if ($currentCount + count($validList) > $limitPerSub) {
+                                $plannedNsRemove = Capsule::table('mod_cloudflare_dns_records')
+                                    ->where('subdomain_id', $subdomain_id)
+                                    ->whereRaw('LOWER(name) = ?', [strtolower((string) $sub->subdomain)])
+                                    ->whereRaw('UPPER(type) = ?', ['NS'])
+                                    ->count();
+                                $plannedConflictRemove = 0;
+                                if ($forceReplace) {
+                                    $plannedConflictRemove = Capsule::table('mod_cloudflare_dns_records')
+                                        ->where('subdomain_id', $subdomain_id)
+                                        ->whereRaw('LOWER(name) = ?', [strtolower((string) $sub->subdomain)])
+                                        ->whereRaw('UPPER(type) <> ?', ['NS'])
+                                        ->count();
+                                }
+                                $projectedCount = max(0, intval($currentCount) - intval($plannedNsRemove) - intval($plannedConflictRemove)) + count($validList);
+                                if ($projectedCount > $limitPerSub) {
                                     $msg = self::actionText('dns.ns.limit_exceeded', '此次替换将超出该域名的解析数量上限（%s），已取消操作', [$limitPerSub]);
                                     $msg_type = 'warning';
                                     throw new Exception($msg);
                                 }
                             }
 
+                            $deletedCount = 0;
+                            $conflictDeleted = 0;
+                            $cleanupErrors = [];
+
+                            $existing = $cf->getDnsRecords($zoneId, $sub->subdomain, ['type' => 'NS', 'per_page' => 1000]);
+                            if (!($existing['success'] ?? false)) {
+                                $errorText = $resolveDeleteErrorText($existing);
+                                throw new Exception(self::actionText('dns.ns.fetch_failed', '读取现有 NS 记录失败：%s', [$errorText !== '' ? $errorText : self::actionText('errors.unknown', '未知错误')]));
+                            }
+                            foreach (($existing['result'] ?? []) as $r) {
+                                $recordType = strtoupper((string) ($r['type'] ?? ''));
+                                $recordName = strtolower((string) ($r['name'] ?? ''));
+                                if ($recordType !== 'NS' || $recordName !== strtolower((string) $sub->subdomain)) {
+                                    continue;
+                                }
+                                $recordId = trim((string) ($r['id'] ?? ''));
+                                if ($recordId === '') {
+                                    $cleanupErrors[] = ['record' => 'NS:?', 'error' => 'missing_record_id'];
+                                    continue;
+                                }
+                                $delRes = $cf->deleteSubdomain($zoneId, $recordId, [
+                                    'name' => $r['name'] ?? $sub->subdomain,
+                                    'type' => $r['type'] ?? 'NS',
+                                    'content' => $r['content'] ?? null,
+                                ]);
+                                if ($isProviderDeleteSuccess($delRes)) {
+                                    $deletedCount++;
+                                    $deleteLocalByRemote($subdomain_id, $r);
+                                } else {
+                                    $cleanupErrors[] = [
+                                        'record' => 'NS:' . $recordId,
+                                        'error' => $resolveDeleteErrorText($delRes),
+                                    ];
+                                }
+                            }
+
+                            if ($forceReplace) {
+                                $allAt = $cf->getDnsRecords($zoneId, $sub->subdomain, ['per_page' => 1000]);
+                                if (!($allAt['success'] ?? false)) {
+                                    $errorText = $resolveDeleteErrorText($allAt);
+                                    throw new Exception(self::actionText('dns.ns.fetch_failed', '读取现有 NS 记录失败：%s', [$errorText !== '' ? $errorText : self::actionText('errors.unknown', '未知错误')]));
+                                }
+                                foreach (($allAt['result'] ?? []) as $r) {
+                                    $recordType = strtoupper((string) ($r['type'] ?? ''));
+                                    $recordName = strtolower((string) ($r['name'] ?? ''));
+                                    if ($recordName !== strtolower((string) $sub->subdomain) || $recordType === 'NS') {
+                                        continue;
+                                    }
+                                    $recordId = trim((string) ($r['id'] ?? ''));
+                                    if ($recordId === '') {
+                                        $cleanupErrors[] = ['record' => $recordType . ':?', 'error' => 'missing_record_id'];
+                                        continue;
+                                    }
+                                    $delRes = $cf->deleteSubdomain($zoneId, $recordId, [
+                                        'name' => $r['name'] ?? $sub->subdomain,
+                                        'type' => $r['type'] ?? $recordType,
+                                        'content' => $r['content'] ?? null,
+                                    ]);
+                                    if ($isProviderDeleteSuccess($delRes)) {
+                                        $conflictDeleted++;
+                                        $deleteLocalByRemote($subdomain_id, $r);
+                                    } else {
+                                        $cleanupErrors[] = [
+                                            'record' => $recordType . ':' . $recordId,
+                                            'error' => $resolveDeleteErrorText($delRes),
+                                        ];
+                                    }
+                                }
+                            }
+
+                            if (!empty($cleanupErrors)) {
+                                $preview = [];
+                                foreach (array_slice($cleanupErrors, 0, 3) as $entry) {
+                                    $preview[] = ($entry['record'] ?? '?') . ' => ' . (($entry['error'] ?? '') !== '' ? $entry['error'] : self::actionText('errors.unknown', '未知错误'));
+                                }
+                                throw new Exception(self::actionText('dns.ns.cleanup_failed', '清理旧记录失败：%s', [implode('; ', $preview)]));
+                            }
+
                             $created = [];
                             $errors = [];
                             foreach ($validList as $ns) {
-                                $res = $cf->createDnsRecord($sub->cloudflare_zone_id, $sub->subdomain, 'NS', $ns, 86400, false);
+                                $res = $cf->createDnsRecord($zoneId, $sub->subdomain, 'NS', $ns, 86400, false);
                                 if ($res['success']) {
                                     $rid = $res['result']['id'];
                                     Capsule::table('mod_cloudflare_dns_records')->insert([
                                         'subdomain_id' => $subdomain_id,
-                                        'zone_id' => $sub->cloudflare_zone_id,
+                                        'zone_id' => $zoneId,
                                         'record_id' => $rid !== null ? (string) $rid : null,
                                         'name' => $sub->subdomain,
                                         'type' => 'NS',
