@@ -115,6 +115,9 @@ class CfHookRegistrar
     private static function registerClientHooks(): void
     {
         add_hook('ClientAreaPage', 1, function ($vars) {
+            if (!empty($GLOBALS['cfmod_suppress_clientarea_hooks'])) {
+                return;
+            }
             if (!cf_is_module_request()) {
                 return;
             }
@@ -136,6 +139,9 @@ class CfHookRegistrar
         });
 
         add_hook('ClientAreaPage', 999, function ($vars) {
+            if (!empty($GLOBALS['cfmod_suppress_clientarea_hooks'])) {
+                return;
+            }
             if (!cf_is_module_request() || !cf_is_legacy_module_entry()) {
                 return;
             }

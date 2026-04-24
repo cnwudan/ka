@@ -235,26 +235,18 @@ class CfClientController
             }
         
             // 使用WHMCS的钩子系统检查额外限制
-            // 触发一个自定义钩子点，允许其他插件/钩子阻止访问
+            // 优先执行外部 ClientAreaPage 钩子，兼容返回重定向指令的认证/验证插件
             $pageTitleText = cfmod_trans('cfclient.breadcrumb.client_page', '我的二级域名管理');
+            $this->enforceExternalClientAreaHooks($vars, $userId, $pageTitleText);
+
+            // 触发一个自定义钩子点，允许其他插件/钩子阻止访问
             $hookResults = run_hook('ClientAreaPageBeforeAccess', [
                 'userid' => $userId,
                 'module' => CF_MODULE_NAME,
                 'legacy_module' => CF_MODULE_NAME_LEGACY,
                 'pagetitle' => $pageTitleText
             ]);
-        
-            // 检查是否有任何钩子返回了重定向指令
-            foreach ($hookResults as $result) {
-                if (is_array($result) && isset($result['redirect'])) {
-                    header('Location: ' . $result['redirect']);
-                    exit;
-                }
-                if (is_string($result) && strpos($result, 'Location:') === 0) {
-                    header($result);
-                    exit;
-                }
-            }
+            $this->handleHookRedirectResults($hookResults);
         
             // 检查安全问题（如果系统要求）
             $securityQuestionsEnabled = Capsule::table('tblconfiguration')
@@ -312,6 +304,53 @@ class CfClientController
             // 包含客户端模板
         include __DIR__ . '/../../templates/client.tpl';
             exit;
+    }
+
+    private function enforceExternalClientAreaHooks(array $vars, int $userId, string $pageTitleText): void
+    {
+            if (!function_exists('run_hook')) {
+                return;
+            }
+
+            $payload = is_array($vars) ? $vars : [];
+            $payload['userid'] = $userId;
+            $payload['module'] = CF_MODULE_NAME;
+            $payload['legacy_module'] = CF_MODULE_NAME_LEGACY;
+            $payload['pagetitle'] = $pageTitleText;
+
+            $GLOBALS['cfmod_suppress_clientarea_hooks'] = true;
+            try {
+                $hookResults = run_hook('ClientAreaPage', $payload);
+            } catch (\Throwable $e) {
+                $hookResults = [];
+            }
+            unset($GLOBALS['cfmod_suppress_clientarea_hooks']);
+
+            $this->handleHookRedirectResults($hookResults);
+    }
+
+    private function handleHookRedirectResults($hookResults): void
+    {
+            foreach ((array) $hookResults as $result) {
+                if (is_array($result)) {
+                    $redirect = '';
+                    foreach (['redirect', 'redirectTo', 'forceRedirect', 'location'] as $key) {
+                        $value = trim((string) ($result[$key] ?? ''));
+                        if ($value !== '') {
+                            $redirect = $value;
+                            break;
+                        }
+                    }
+                    if ($redirect !== '') {
+                        header('Location: ' . $redirect);
+                        exit;
+                    }
+                }
+                if (is_string($result) && strpos($result, 'Location:') === 0) {
+                    header($result);
+                    exit;
+                }
+            }
     }
 
     private function handleLanguageSwitchRequest(string $languageCode, string $moduleSlug, ?array $returnParams = null): void
