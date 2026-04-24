@@ -78,6 +78,19 @@ class CfClientViewModelBuilder
         $globals['clientSupportTicketUrl'] = trim((string) ($moduleSettings['client_support_ticket_url'] ?? '')) ?: 'submitticket.php';
         $globals['clientSupportGroupUrl'] = trim((string) ($moduleSettings['client_support_group_url'] ?? '')) ?: 'https://t.me/+l9I5TNRDLP5lZDBh';
 
+        $helpAiEnabled = class_exists('CfAiHelpSearchService')
+            ? CfAiHelpSearchService::isEnabled($moduleSettings)
+            : (function_exists('cfmod_setting_enabled')
+                ? cfmod_setting_enabled($moduleSettings['enable_help_ai_search'] ?? '0')
+                : in_array(strtolower(trim((string) ($moduleSettings['enable_help_ai_search'] ?? '0'))), ['1', 'on', 'yes', 'true', 'enabled'], true));
+        $helpAiAssistantName = trim((string) ($moduleSettings['help_ai_assistant_name'] ?? 'AI 助手'));
+        if ($helpAiAssistantName === '') {
+            $helpAiAssistantName = 'AI 助手';
+        }
+        $globals['helpAiSearchEnabled'] = $helpAiEnabled;
+        $globals['helpAiAssistantName'] = $helpAiAssistantName;
+        $globals['helpAiMaxInputChars'] = max(200, min(2000, intval($moduleSettings['help_ai_max_input_chars'] ?? 600)));
+
         $globals['maintenanceMode'] = in_array(($moduleSettings['maintenance_mode'] ?? '0'), ['1','on','yes','true','enabled'], true);
         $globals['maintenanceMessage'] = trim($moduleSettings['maintenance_message'] ?? '');
 

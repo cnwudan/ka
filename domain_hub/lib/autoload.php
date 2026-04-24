@@ -31,6 +31,7 @@ spl_autoload_register(static function (string $class): void {
         'CfSslCertificateService' => __DIR__ . '/Services/SslCertificateService.php',
         'CfWhoisService' => __DIR__ . '/Services/WhoisService.php',
         'CfDigService' => __DIR__ . '/Services/DigService.php',
+        'CfAiHelpSearchService' => __DIR__ . '/Services/AiHelpSearchService.php',
 
         'CfRateLimiter' => __DIR__ . '/Services/RateLimiter.php',
         'CfModuleSettings' => __DIR__ . '/Support/ModuleSettings.php',
