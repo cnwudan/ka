@@ -490,6 +490,68 @@ class CfTelegramGroupRewardService
         }
     }
 
+    public static function bindUserFromAuthPayload(int $userId, array $moduleSettings, array $authPayload): array
+    {
+        if ($userId <= 0) {
+            throw new CfTelegramGroupRewardException('invalid_user');
+        }
+
+        $botToken = self::resolveBotToken($moduleSettings);
+        if (!self::validateBotToken($botToken)) {
+            throw new CfTelegramGroupRewardException('invalid_bot_token');
+        }
+
+        self::ensureTables();
+
+        $maxAgeSeconds = max(60, min(7 * 86400, (int) ($moduleSettings['telegram_reward_auth_max_age_seconds'] ?? 86400)));
+        $authData = self::verifyAuthPayload($authPayload, $botToken, $maxAgeSeconds);
+
+        $telegramUserId = (int) ($authData['telegram_user_id'] ?? 0);
+        $telegramUsername = self::normalizeTelegramUsername((string) ($authData['telegram_username'] ?? ''));
+        if ($telegramUserId <= 0) {
+            throw new CfTelegramGroupRewardException('auth_invalid');
+        }
+
+        $now = date('Y-m-d H:i:s');
+
+        Capsule::connection()->transaction(function () use ($userId, $telegramUserId, $telegramUsername, $authData, $now) {
+            $bindingExisting = Capsule::table(self::TABLE_BINDINGS)
+                ->where('userid', $userId)
+                ->lockForUpdate()
+                ->first();
+
+            $bindingByTelegram = Capsule::table(self::TABLE_BINDINGS)
+                ->where('telegram_user_id', $telegramUserId)
+                ->lockForUpdate()
+                ->first();
+            if ($bindingByTelegram && intval($bindingByTelegram->userid ?? 0) !== $userId) {
+                throw new CfTelegramGroupRewardException('telegram_used');
+            }
+
+            $bindingPayload = [
+                'telegram_user_id' => $telegramUserId,
+                'telegram_username' => $telegramUsername !== '' ? $telegramUsername : null,
+                'first_name' => trim((string) ($authData['first_name'] ?? '')) !== '' ? trim((string) ($authData['first_name'] ?? '')) : null,
+                'last_name' => trim((string) ($authData['last_name'] ?? '')) !== '' ? trim((string) ($authData['last_name'] ?? '')) : null,
+                'photo_url' => trim((string) ($authData['photo_url'] ?? '')) !== '' ? trim((string) ($authData['photo_url'] ?? '')) : null,
+                'auth_date' => max(0, intval($authData['auth_date'] ?? 0)),
+                'updated_at' => $now,
+            ];
+
+            if ($bindingExisting) {
+                Capsule::table(self::TABLE_BINDINGS)
+                    ->where('id', intval($bindingExisting->id ?? 0))
+                    ->update($bindingPayload);
+            } else {
+                $bindingPayload['userid'] = $userId;
+                $bindingPayload['created_at'] = $now;
+                Capsule::table(self::TABLE_BINDINGS)->insert($bindingPayload);
+            }
+        });
+
+        return self::getBindingForUser($userId);
+    }
+
     public static function getUserClaimState(int $userId, array $moduleSettings): array
     {
         $groupLink = self::resolveGroupLink($moduleSettings);
