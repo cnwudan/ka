@@ -259,6 +259,7 @@ $_LANG['cfclient.actions.invite_registration.telegram_invalid_config'] = 'Telegr
 $_LANG['cfclient.actions.invite_registration.telegram_error'] = 'Telegram verification failed: %s';
 $_LANG['cfclient.invite_registration.or'] = 'OR';
 $_LANG['cfclient.invite_registration.github.button'] = 'Continue with GitHub';
+$_LANG['cfclient.invite_registration.github.button_no_invite'] = 'Click to continue with GitHub (no invite code required).';
 $_LANG['cfclient.invite_registration.github.min_months'] = 'GitHub account age must be at least %s months.';
 $_LANG['cfclient.invite_registration.github.min_repos'] = 'GitHub public repositories must be at least %s.';
 $_LANG['cfclient.invite_registration.github.not_configured'] = 'GitHub OAuth is not configured by the administrator yet.';

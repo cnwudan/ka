@@ -721,9 +721,10 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
     border-color: #1f2328;
 }
 #inviteRegistrationRequiredModal .github-auth-button .github-logo {
-    height: 24px;
-    width: 24px;
+    height: 1.35em;
+    width: 1.35em;
     margin-right: 12px;
+    flex-shrink: 0;
     filter: brightness(0) invert(1);
 }
 #inviteRegistrationRequiredModal .invite-reg-github-hints {
@@ -742,7 +743,7 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
 #inviteRegistrationRequiredModal .invite-reg-github-hint i {
     font-size: 11px;
     margin-right: 4px;
-    color: #555555;
+    color: #F59E0B;
 }
 #inviteRegistrationRequiredModal .invite-reg-github-hint + .invite-reg-github-hint {
     margin-top: 2px;
@@ -818,10 +819,10 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                         <?php if ($inviteGateGithubMinMonths > 0 || $inviteGateGithubMinRepos > 0): ?>
                             <div class="invite-reg-github-hints">
                                 <?php if ($inviteGateGithubMinMonths > 0): ?>
-                                    <div class="invite-reg-github-hint"><i class="fas fa-info-circle" aria-hidden="true"></i><?php echo $modalText('cfclient.invite_registration.github.min_months', 'GitHub 账号需至少注册 %s 个月。', [$inviteGateGithubMinMonths]); ?></div>
+                                    <div class="invite-reg-github-hint"><i class="fas fa-exclamation-circle" aria-hidden="true"></i><?php echo $modalText('cfclient.invite_registration.github.min_months', 'GitHub 账号需至少注册 %s 个月。', [$inviteGateGithubMinMonths]); ?></div>
                                 <?php endif; ?>
                                 <?php if ($inviteGateGithubMinRepos > 0): ?>
-                                    <div class="invite-reg-github-hint"><i class="fas fa-info-circle" aria-hidden="true"></i><?php echo $modalText('cfclient.invite_registration.github.min_repos', 'GitHub 账号公开仓库数需至少 %s 个。', [$inviteGateGithubMinRepos]); ?></div>
+                                    <div class="invite-reg-github-hint"><i class="fas fa-exclamation-circle" aria-hidden="true"></i><?php echo $modalText('cfclient.invite_registration.github.min_repos', 'GitHub 账号公开仓库数需至少 %s 个。', [$inviteGateGithubMinRepos]); ?></div>
                                 <?php endif; ?>
                             </div>
                         <?php endif; ?>
