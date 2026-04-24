@@ -3560,6 +3560,7 @@ function cfmod_job_send_expiry_notices($job, array $payload = []): array {
         'sent' => 0,
         'warnings' => [],
         'days' => [],
+        'has_more' => false,
     ];
 
     try {
@@ -3580,15 +3581,29 @@ function cfmod_job_send_expiry_notices($job, array $payload = []): array {
             return $stats;
         }
         CfRenewalNoticeService::ensureTable();
+
         $batchLimit = intval($payload['batch_size'] ?? 200);
         $batchLimit = max(10, min(1000, $batchLimit));
+
+        $continuationRound = intval($payload['continuation_round'] ?? 0);
+        if ($continuationRound < 0) {
+            $continuationRound = 0;
+        }
+        $maxContinuationRounds = intval($payload['max_continuation_rounds'] ?? 50);
+        $maxContinuationRounds = max(1, min(500, $maxContinuationRounds));
+
         $stats['days'] = $daysList;
+        $stats['continuation_round'] = $continuationRound;
+        $stats['max_continuation_rounds'] = $maxContinuationRounds;
+
+        $hasMore = false;
+
         foreach ($daysList as $days) {
             $reminderKey = CfRenewalNoticeService::reminderKey($days);
             $targetTs = strtotime('+' . $days . ' days');
             $start = date('Y-m-d 00:00:00', $targetTs);
             $end = date('Y-m-d 23:59:59', $targetTs);
-            $records = Capsule::table('mod_cloudflare_subdomain as s')
+            $recordsRaw = Capsule::table('mod_cloudflare_subdomain as s')
                 ->select('s.*')
                 ->whereNotNull('s.expires_at')
                 ->where('s.never_expires', 0)
@@ -3602,10 +3617,25 @@ function cfmod_job_send_expiry_notices($job, array $payload = []): array {
                         ->whereColumn('n.expires_at_snapshot', 's.expires_at');
                 })
                 ->orderBy('s.expires_at', 'asc')
-                ->limit($batchLimit)
+                ->orderBy('s.id', 'asc')
+                ->limit($batchLimit + 1)
                 ->get();
 
-            foreach ($records as $subdomain) {
+            $records = $recordsRaw;
+            if ($records instanceof Collection) {
+                $records = $records->all();
+            }
+            if (!is_array($records)) {
+                $records = [];
+            }
+
+            if (count($records) > $batchLimit) {
+                $hasMore = true;
+                $records = array_slice($records, 0, $batchLimit);
+            }
+
+            foreach ($records as $subdomainRow) {
+                $subdomain = is_array($subdomainRow) ? (object) $subdomainRow : $subdomainRow;
                 $stats['processed']++;
                 $result = CfRenewalNoticeService::sendReminderEmail($subdomain, $template, $days);
                 if ($result['success']) {
@@ -3627,7 +3657,45 @@ function cfmod_job_send_expiry_notices($job, array $payload = []): array {
                 }
             }
         }
+
+        $stats['has_more'] = $hasMore;
         $stats['message'] = 'sent ' . $stats['sent'] . ' notices';
+
+        if ($hasMore) {
+            if ($continuationRound >= $maxContinuationRounds) {
+                $stats['warnings'][] = 'continuation_limit_reached';
+                $stats['message'] .= ' (continuation limit reached)';
+            } else {
+                $nextPayload = [
+                    'days' => $daysList,
+                    'batch_size' => $batchLimit,
+                    'auto' => !empty($payload['auto']),
+                    'continuation_round' => $continuationRound + 1,
+                    'max_continuation_rounds' => $maxContinuationRounds,
+                ];
+                $originJobId = intval($payload['origin_job_id'] ?? 0);
+                if ($originJobId <= 0) {
+                    $originJobId = intval($job->id ?? 0);
+                }
+                if ($originJobId > 0) {
+                    $nextPayload['origin_job_id'] = $originJobId;
+                }
+
+                $now = date('Y-m-d H:i:s');
+                $nextJobId = Capsule::table('mod_cloudflare_jobs')->insertGetId([
+                    'type' => 'send_expiry_notices',
+                    'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
+                    'priority' => intval($job->priority ?? 18),
+                    'status' => 'pending',
+                    'attempts' => 0,
+                    'next_run_at' => null,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                $stats['continuation_job_id'] = $nextJobId;
+                $stats['message'] .= ' (continuation queued)';
+            }
+        }
     } catch (\Throwable $e) {
         $stats['warnings'][] = $e->getMessage();
         $stats['message'] = 'failure:' . substr($e->getMessage(), 0, 60);
