@@ -721,8 +721,8 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
     border-color: #1f2328;
 }
 #inviteRegistrationRequiredModal .github-auth-button .github-logo {
-    height: 1.35em;
-    width: 1.35em;
+    height: 2.025em;
+    width: 2.025em;
     margin-right: 12px;
     flex-shrink: 0;
     filter: brightness(0) invert(1);
