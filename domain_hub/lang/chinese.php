@@ -258,6 +258,7 @@ $_LANG['cfclient.actions.invite_registration.telegram_invalid_config'] = '管理
 $_LANG['cfclient.actions.invite_registration.telegram_error'] = 'Telegram 验证失败：%s';
 $_LANG['cfclient.invite_registration.or'] = '或';
 $_LANG['cfclient.invite_registration.github.button'] = '使用 GitHub 快捷认证';
+$_LANG['cfclient.invite_registration.github.button_no_invite'] = '点击使用 GitHub 快捷认证（无需邀请码）。';
 $_LANG['cfclient.invite_registration.github.min_months'] = 'GitHub 账号需至少注册 %s 个月。';
 $_LANG['cfclient.invite_registration.github.min_repos'] = 'GitHub 账号公开仓库数需至少 %s 个。';
 $_LANG['cfclient.invite_registration.github.not_configured'] = '管理员尚未配置 GitHub OAuth，请联系管理员。';
