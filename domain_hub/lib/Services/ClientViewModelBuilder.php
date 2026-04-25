@@ -604,6 +604,11 @@ class CfClientViewModelBuilder
             'renewal_notice_telegram_enabled' => '0',
             'renewal_notice_telegram_bot_username' => '',
             'renewal_notice_telegram_bot_token' => '',
+            'renewal_notice_telegram_template' => "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。",
             'renewal_notice_telegram_days' => '30,10',
             'renewal_notice_telegram_auth_max_age_seconds' => '86400',
             'enable_ssl_request' => '1',

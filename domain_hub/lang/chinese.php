@@ -826,13 +826,13 @@ $_LANG['github_star_reward.success'] = '感谢支持！已奖励 %s 个注册额
 $_LANG['github_star_reward.disabled'] = '当前未启用 GitHub 点赞奖励功能。';
 $_LANG['github_star_reward.invalid_repo'] = '管理员尚未配置有效的 GitHub 仓库地址。';
 $_LANG['github_star_reward.invalid_username'] = '请输入有效的 GitHub 用户名后再领取。';
-$_LANG['github_star_reward.username_used'] = '该 GitHub 用户名已被其他���号用于领取奖励，请使用您自己的账号。';
+$_LANG['github_star_reward.username_used'] = '该 GitHub 用户名已被其他账号用于领取奖励，请使用您自己的账号。';
 $_LANG['github_star_reward.not_starred'] = '系统未核验到该账号已 Star 指定仓库，请完成点赞后再领取（需公开可见）。';
 $_LANG['github_star_reward.verify_rate_limited'] = 'GitHub 核验请求过于频繁，请稍后再试。';
 $_LANG['github_star_reward.verify_failed'] = '暂时无法完成 GitHub 核验，请稍后再试。';
 $_LANG['github_star_reward.already'] = '您已经领取过该 GitHub 仓库的点赞奖励。';
 $_LANG['github_star_reward.quota_error'] = '配额信息读取失败，请稍后重试。';
-$_LANG['github_star_reward.invalid_user'] = '未找到登录用户，请刷新页面后��试。';
+$_LANG['github_star_reward.invalid_user'] = '未找到登录用户，请刷新页面后重试。';
 $_LANG['github_star_reward.error'] = '领取失败：%s';
 
 $_LANG['cfclient.feature.expiry_telegram.title'] = 'Telegram 到期提醒';
