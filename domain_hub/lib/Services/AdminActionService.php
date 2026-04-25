@@ -1030,18 +1030,35 @@ class CfAdminActionService
             if ($targetRoot === '') {
                 throw new Exception('请选择要导出的根域名');
             }
+            $exportSource = strtolower(trim((string) ($_POST['pdns_export_source'] ?? 'remote')));
+            if (!in_array($exportSource, ['remote', 'local'], true)) {
+                $exportSource = 'remote';
+            }
             $useSegmented = (($_POST['pdns_segmented_export'] ?? '0') === '1');
             $segmentSizeRaw = $_POST['pdns_export_segment_size'] ?? 10000;
             $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
                 ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
                 : max(1000, min(50000, intval($segmentSizeRaw ?: 10000)));
 
-            if ($useSegmented && function_exists('cfmod_collect_rootdomain_pdns_dataset_segmented')) {
-                $dataset = cfmod_collect_rootdomain_pdns_dataset_segmented($targetRoot, $segmentSize);
-                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_segmented');
+            if ($exportSource === 'local') {
+                if (!function_exists('cfmod_collect_rootdomain_pdns_dataset_from_local')) {
+                    throw new Exception('当前环境不支持本地缓存导出');
+                }
+                $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local($targetRoot);
+                if ($useSegmented && function_exists('cfmod_pdns_make_segmented_dataset')) {
+                    $dataset = cfmod_pdns_make_segmented_dataset($dataset, $segmentSize);
+                    cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_local_segmented');
+                } else {
+                    cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_local');
+                }
             } else {
-                $dataset = cfmod_collect_rootdomain_pdns_dataset($targetRoot);
-                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export');
+                if ($useSegmented && function_exists('cfmod_collect_rootdomain_pdns_dataset_segmented')) {
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset_segmented($targetRoot, $segmentSize);
+                    cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_segmented');
+                } else {
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset($targetRoot);
+                    cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export');
+                }
             }
             exit;
         } catch (Exception $e) {
@@ -1061,9 +1078,9 @@ class CfAdminActionService
                 throw new Exception('请选择目标根域名');
             }
 
-            $overwriteSameNameType = (($_POST['pdns_overwrite_same_name_type'] ?? '1') === '1');
-            $enqueueCalibration = (($_POST['pdns_enqueue_root_calibration'] ?? '1') === '1');
-            $useSegmentedImport = (($_POST['pdns_segmented_import'] ?? '1') === '1');
+            $overwriteSameNameType = isset($_POST['pdns_overwrite_same_name_type']) && (string) $_POST['pdns_overwrite_same_name_type'] === '1';
+            $enqueueCalibration = isset($_POST['pdns_enqueue_root_calibration']) && (string) $_POST['pdns_enqueue_root_calibration'] === '1';
+            $useSegmentedImport = isset($_POST['pdns_segmented_import']) && (string) $_POST['pdns_segmented_import'] === '1';
             $segmentSizeRaw = $_POST['pdns_import_segment_size'] ?? 10000;
             $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
                 ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
@@ -1163,7 +1180,7 @@ class CfAdminActionService
             return null;
         }
         $payload = [
-            'mode' => 'check_and_fix',
+            'mode' => 'fix',
             'rootdomain' => $rootdomain,
             'fix_ttl' => 1,
             'fix_missing' => 1,

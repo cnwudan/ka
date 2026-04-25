@@ -1676,6 +1676,124 @@ function cfmod_collect_rootdomain_pdns_dataset(string $rootdomain): array {
     ];
 }
 
+function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): array {
+    $normalized = cfmod_normalize_rootdomain($rootdomain);
+    if ($normalized === '') {
+        throw new \InvalidArgumentException('根域名不能为空');
+    }
+
+    if (!cfmod_table_exists('mod_cloudflare_subdomain') || !cfmod_table_exists('mod_cloudflare_dns_records')) {
+        throw new \RuntimeException('本地 DNS 数据表不存在，无法执行本地缓存导出');
+    }
+
+    $rootRow = null;
+    if (cfmod_table_exists('mod_cloudflare_rootdomains')) {
+        try {
+            $rootRow = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [$normalized])
+                ->first();
+        } catch (\Throwable $e) {
+            $rootRow = null;
+        }
+    }
+
+    $providerAccountId = intval($rootRow->provider_account_id ?? 0);
+    $providerAccount = [];
+    if ($providerAccountId > 0 && function_exists('cfmod_get_provider_account')) {
+        $providerAccount = cfmod_get_provider_account($providerAccountId) ?: [];
+    }
+
+    $subdomainIds = [];
+    try {
+        $subRows = Capsule::table('mod_cloudflare_subdomain')
+            ->whereRaw('LOWER(rootdomain) = ?', [$normalized])
+            ->select('id')
+            ->get();
+        foreach ($subRows as $subRow) {
+            $sid = intval($subRow->id ?? 0);
+            if ($sid > 0) {
+                $subdomainIds[] = $sid;
+            }
+        }
+    } catch (\Throwable $e) {
+        throw new \RuntimeException('读取本地子域名数据失败：' . $e->getMessage(), 0, $e);
+    }
+
+    $rawRecords = [];
+    if (!empty($subdomainIds)) {
+        try {
+            $dnsRows = Capsule::table('mod_cloudflare_dns_records')
+                ->whereIn('subdomain_id', $subdomainIds)
+                ->orderBy('subdomain_id', 'asc')
+                ->orderBy('id', 'asc')
+                ->get();
+            foreach ($dnsRows as $row) {
+                $status = strtolower(trim((string) ($row->status ?? 'active')));
+                $rawRecords[] = [
+                    'name' => (string) ($row->name ?? ''),
+                    'type' => (string) ($row->type ?? ''),
+                    'content' => (string) ($row->content ?? ''),
+                    'ttl' => intval($row->ttl ?? 600),
+                    'priority' => ($row->priority ?? null),
+                    'record_id' => (string) ($row->record_id ?? ''),
+                    'disabled' => ($status !== '' && $status !== 'active') ? 1 : 0,
+                ];
+            }
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('读取本地 DNS 记录失败：' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    $warnings = [
+        '当前为本地缓存导出，仅用于应急，记录可能不是最新云端状态。',
+    ];
+    $normalizedRecords = [];
+    $identitySet = [];
+
+    foreach ($rawRecords as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $normalizedRecord = cfmod_pdns_normalize_record($record, $normalized, $warnings, true);
+        if ($normalizedRecord === null) {
+            continue;
+        }
+        $identityKey = cfmod_pdns_record_identity_key($normalizedRecord);
+        if ($identityKey !== null && isset($identitySet[$identityKey])) {
+            continue;
+        }
+        if ($identityKey !== null) {
+            $identitySet[$identityKey] = true;
+        }
+        $normalizedRecords[] = $normalizedRecord;
+    }
+
+    $rrsets = cfmod_pdns_group_records_to_rrsets($normalizedRecords);
+
+    return [
+        'schema_version' => 1,
+        'format' => 'pdns-rrset-json',
+        'generated_at' => date('c'),
+        'module' => CF_MODULE_NAME,
+        'rootdomain' => $normalized,
+        'zone_id' => trim((string) ($rootRow->cloudflare_zone_id ?? '')),
+        'source_provider' => [
+            'id' => $providerAccountId,
+            'name' => $providerAccount['name'] ?? null,
+            'provider_type' => $providerAccount['provider_type'] ?? null,
+        ],
+        'export_source' => 'local_cache',
+        'rrsets' => $rrsets,
+        'records' => $normalizedRecords,
+        'counts' => [
+            'raw_records' => count($rawRecords),
+            'records' => count($normalizedRecords),
+            'rrsets' => count($rrsets),
+        ],
+        'warnings' => array_values(array_unique(array_filter($warnings))),
+    ];
+}
+
 function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRootdomain, array $options = []): array {
     $targetRootdomain = cfmod_normalize_rootdomain($targetRootdomain);
     if ($targetRootdomain === '') {

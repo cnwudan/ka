@@ -952,7 +952,8 @@ function run_cf_queue_once(int $maxJobs = 3): void {
 function cfmod_job_calibrate_all($job, array $payload): array {
     $jobId = intval($job->id);
     $settings = cfmod_get_settings();
-    $mode = ($payload['mode'] ?? 'dry') === 'fix' ? 'fix' : 'dry';
+    $rawMode = strtolower(trim((string) ($payload['mode'] ?? 'dry')));
+    $mode = in_array($rawMode, ['fix', 'check_and_fix'], true) ? 'fix' : 'dry';
     $payloadBatch = intval($payload['batch_size'] ?? 0);
     if ($payloadBatch > 0) {
         $batchSize = $payloadBatch;
