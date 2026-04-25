@@ -105,18 +105,17 @@ class CfTelegramExpiryReminderService
         }
 
         $days = [];
+        $seen = [];
         foreach ($candidates as $candidate) {
             $day = (int) $candidate;
-            if ($day > 0) {
-                $days[] = $day;
+            if ($day <= 0 || isset($seen[$day])) {
+                continue;
             }
-        }
-
-        $days = array_values(array_unique($days));
-        sort($days, SORT_NUMERIC);
-
-        if (count($days) > 2) {
-            $days = array_slice($days, 0, 2);
+            $seen[$day] = true;
+            $days[] = $day;
+            if (count($days) >= 2) {
+                break;
+            }
         }
 
         return $days;
@@ -125,14 +124,16 @@ class CfTelegramExpiryReminderService
     public static function formatDaysCsv(array $days): string
     {
         $normalized = [];
+        $seen = [];
         foreach ($days as $day) {
             $value = (int) $day;
-            if ($value > 0) {
-                $normalized[] = $value;
+            if ($value <= 0 || isset($seen[$value])) {
+                continue;
             }
+            $seen[$value] = true;
+            $normalized[] = $value;
         }
-        $normalized = array_values(array_unique($normalized));
-        sort($normalized, SORT_NUMERIC);
+
         return implode(',', $normalized);
     }
 

@@ -10,6 +10,20 @@
 
 **速率限制：** 默认 60 请求/分钟（可在后台配置）
 
+## OpenAPI / Swagger 自动化文档
+
+系统会根据 `api_handler.php` 的路由实现自动发现 API 端点并生成 OpenAPI 文档，减少“文档与实现漂移”问题。
+
+- **OpenAPI JSON：** `https://您的域名/index.php?m=domain_hub&endpoint=docs&format=openapi`
+- **Swagger UI：** `https://您的域名/index.php?m=domain_hub&endpoint=docs&action=swagger`
+
+> 说明：OpenAPI 文档为运行时自动生成，接口新增/删除后无需手工维护静态 swagger 文件。
+
+**离线导出（可用于CI发布）：**
+```bash
+php docs/generate_openapi.php https://您的域名 docs/openapi.json
+```
+
 ---
 
 ## 认证
@@ -741,24 +755,45 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=quota" \
 
 ---
 
-## 错误代码
+## 错误代码与统一错误结构
 
-| HTTP状态码 | 说明 |
-|-----------|------|
-| 200 | 请求成功 |
-| 400 | 请求参数错误 |
-| 401 | 认证失败 |
-| 403 | 权限不足或功能已禁用 |
-| 404 | 资源不存在 |
-| 429 | 请求频率超限 |
-| 500 | 服务器内部错误 |
+从当前版本开始，所有 API 错误响应统一为以下结构：
 
-**错误响应示例：**
 ```json
 {
+  "success": false,
+  "error_code": "auth_invalid_credentials",
+  "message": "Invalid API key",
+  "details": {
+    "request_id": "optional"
+  },
   "error": "Invalid API key"
 }
 ```
+
+字段说明：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| success | boolean | 固定为 false |
+| error_code | string | 稳定错误码（建议业务侧按此字段处理） |
+| message | string | 人类可读错误描述 |
+| details | object | 可选，附加上下文（如 limit/remaining/reset_at） |
+| error | string | 兼容旧版客户端（等同 message） |
+
+常见错误码：
+
+| error_code | HTTP状态码 | 说明 |
+|-----------|-----------|------|
+| bad_request | 400 | 请求参数错误 |
+| auth_invalid_credentials | 401 | API Key/Secret 无效或缺失 |
+| auth_ip_not_allowed | 403 | 请求 IP 不在白名单 |
+| api_access_disabled | 403 | 后台关闭了 API 访问 |
+| not_found / subdomain_not_found / dns_record_not_found | 404 | 资源不存在 |
+| quota_exceeded | 429 | 额度不足 |
+| rate_limit_exceeded | 429 | 请求频率超限 |
+| provider_operation_failed | 502 | 上游 DNS 提供商执行失败 |
+| internal_error | 500 | 服务内部异常 |
 
 ---
 
@@ -772,10 +807,15 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=quota" \
 **超限响应示例：**
 ```json
 {
-  "error": "Rate limit exceeded",
-  "limit": 60,
-  "remaining": 0,
-  "reset_at": "2025-10-19 15:31:00"
+  "success": false,
+  "error_code": "rate_limit_exceeded",
+  "message": "Rate limit exceeded",
+  "details": {
+    "limit": 60,
+    "remaining": 0,
+    "reset_at": "2025-10-19 15:31:00"
+  },
+  "error": "Rate limit exceeded"
 }
 ```
 

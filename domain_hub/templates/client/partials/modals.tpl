@@ -882,7 +882,7 @@ $inviteGateFlash = is_array($inviteRegistrationGateFlash ?? null) ? $inviteRegis
                                 <i class="fab fa-telegram-plane me-1"></i><?php echo $modalText('cfclient.invite_registration.telegram.submit', '我已授权 Telegram，继续验证'); ?>
                             </button>
                             <div class="form-text text-muted mt-2"><?php echo $modalText('cfclient.invite_registration.telegram.ttl_hint', '授权数据最长有效 %s 秒，超时请重新授权。', [$inviteGateTelegramAuthMaxAge]); ?></div>
-                            <div class="form-text text-muted"><?php echo $modalText('cfclient.invite_registration.telegram.domain_hint', '若出现 Bot domain invalid，请在 BotFather 中为该 Bot 配置当前站点域名白名单。'); ?></div>
+
                         </form>
                     <?php else: ?>
                         <div class="alert alert-secondary mb-3">
@@ -1019,7 +1019,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 data-onauth="cfExpiryTelegramReminderOnAuth(user)">
                             </script>
                         </div>
-                        <div class="form-text text-muted"><?php echo $modalText('cfclient.expiry_telegram.modal.domain_hint', '若出现 Bot domain invalid，请在 BotFather 中为该 Bot 配置当前站点域名白名单。'); ?></div>
+
                     <?php else: ?>
                         <div class="alert alert-warning small mb-0">
                             <?php echo $modalText('cfclient.expiry_telegram.modal.not_configured', '管理员尚未完成 Telegram 提醒配置，暂无法授权。'); ?>
