@@ -226,11 +226,24 @@ $renewalTestDaysLabel = $lang['renewal_notice_test_days_label'] ?? '提醒天数
 $renewalTestEmailLabel = $lang['renewal_notice_test_email_label'] ?? '覆盖收件邮箱（可选）';
 $renewalTestButton = $lang['renewal_notice_test_button'] ?? '发送测试邮件';
 $renewalVariablesHint = $lang['renewal_notice_variables_hint'] ?? '{$domain} / {$rootdomain} / {$fqdn} / {$expiry_date} / {$days_left}';
+$renewalTelegramTitle = $lang['renewal_notice_telegram_title'] ?? 'Telegram 到期提醒';
+$renewalTelegramEnableLabel = $lang['renewal_notice_telegram_enable'] ?? '启用 Telegram 到期提醒';
+$renewalTelegramBotUserLabel = $lang['renewal_notice_telegram_bot_user'] ?? 'Bot 用户名';
+$renewalTelegramBotTokenLabel = $lang['renewal_notice_telegram_bot_token'] ?? 'Bot Token';
+$renewalTelegramDaysLabel = $lang['renewal_notice_telegram_days'] ?? 'Telegram 提醒天数';
+$renewalTelegramAuthAgeLabel = $lang['renewal_notice_telegram_auth_age'] ?? '授权有效期（秒）';
+$renewalTelegramHint = $lang['renewal_notice_telegram_hint'] ?? '支持 1~2 个提醒天数（逗号分隔），如 30,10；填 0 表示关闭该档位。';
 
 $renewalEnabledSetting = in_array($module_settings['renewal_notice_enabled'] ?? '0', ['1','on','yes','true'], true);
 $renewalTemplateName = $module_settings['renewal_notice_template'] ?? '';
 $renewalDay1Setting = $module_settings['renewal_notice_days_primary'] ?? '';
 $renewalDay2Setting = $module_settings['renewal_notice_days_secondary'] ?? '';
+$renewalTelegramEnabledSetting = in_array($module_settings['renewal_notice_telegram_enabled'] ?? '0', ['1','on','yes','true'], true);
+$renewalTelegramBotUsername = ltrim((string) ($module_settings['renewal_notice_telegram_bot_username'] ?? ''), '@');
+$renewalTelegramDaysSetting = (string) ($module_settings['renewal_notice_telegram_days'] ?? '30,10');
+$renewalTelegramAuthAgeSetting = (string) ($module_settings['renewal_notice_telegram_auth_max_age_seconds'] ?? '86400');
+$renewalTelegramTokenRaw = trim((string) ($module_settings['renewal_notice_telegram_bot_token'] ?? ''));
+$renewalTelegramTokenConfigured = $renewalTelegramTokenRaw !== '';
 
 $orphanSummary = $runtimeView['orphanCursors'] ?? ['default' => 0, 'list' => []];
 $orphanCursorDefaultValue = intval($orphanSummary['default'] ?? 0);
@@ -685,6 +698,34 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
       <div class="col-12 col-md-2">
         <label class="form-label" for="renewal_notice_days_secondary"><?php echo htmlspecialchars($renewalDaysSecondaryLabel); ?></label>
         <input type="number" class="form-control" id="renewal_notice_days_secondary" name="renewal_notice_days_secondary" min="0" value="<?php echo htmlspecialchars($renewalDay2Setting); ?>" placeholder="7">
+      </div>
+
+      <div class="col-12"><hr class="my-2"></div>
+      <div class="col-12">
+        <h6 class="mb-1"><?php echo htmlspecialchars($renewalTelegramTitle); ?></h6>
+        <small class="text-muted"><?php echo htmlspecialchars($renewalTelegramHint); ?></small>
+      </div>
+      <div class="col-12 col-md-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="renewal_notice_telegram_enabled" name="renewal_notice_telegram_enabled" value="1" <?php echo $renewalTelegramEnabledSetting ? 'checked' : ''; ?>>
+          <label class="form-check-label" for="renewal_notice_telegram_enabled"><?php echo htmlspecialchars($renewalTelegramEnableLabel); ?></label>
+        </div>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label" for="renewal_notice_telegram_bot_username"><?php echo htmlspecialchars($renewalTelegramBotUserLabel); ?></label>
+        <input type="text" class="form-control" id="renewal_notice_telegram_bot_username" name="renewal_notice_telegram_bot_username" value="<?php echo htmlspecialchars($renewalTelegramBotUsername); ?>" placeholder="your_bot">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label" for="renewal_notice_telegram_bot_token"><?php echo htmlspecialchars($renewalTelegramBotTokenLabel); ?></label>
+        <input type="password" class="form-control" id="renewal_notice_telegram_bot_token" name="renewal_notice_telegram_bot_token" value="" placeholder="<?php echo htmlspecialchars($renewalTelegramTokenConfigured ? '已配置，留空表示不变' : '123456789:AA...'); ?>" autocomplete="new-password">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label" for="renewal_notice_telegram_days"><?php echo htmlspecialchars($renewalTelegramDaysLabel); ?></label>
+        <input type="text" class="form-control" id="renewal_notice_telegram_days" name="renewal_notice_telegram_days" value="<?php echo htmlspecialchars($renewalTelegramDaysSetting); ?>" placeholder="30,10">
+      </div>
+      <div class="col-12 col-md-1">
+        <label class="form-label" for="renewal_notice_telegram_auth_max_age_seconds"><?php echo htmlspecialchars($renewalTelegramAuthAgeLabel); ?></label>
+        <input type="number" class="form-control" id="renewal_notice_telegram_auth_max_age_seconds" name="renewal_notice_telegram_auth_max_age_seconds" min="60" value="<?php echo htmlspecialchars($renewalTelegramAuthAgeSetting); ?>" placeholder="86400">
       </div>
       <div class="col-12">
         <button type="submit" class="btn btn-primary"><?php echo htmlspecialchars($renewalSaveLabel); ?></button>

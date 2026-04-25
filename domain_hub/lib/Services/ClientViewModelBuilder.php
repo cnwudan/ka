@@ -376,6 +376,35 @@ class CfClientViewModelBuilder
         $globals['telegramGroupRewardBotUsername'] = (string) ($telegramRewardState['bot_username'] ?? '');
         $globals['telegramGroupRewardHistory'] = $telegramRewardHistory;
 
+        $expiryTelegramState = [
+            'feature_enabled' => false,
+            'configured' => false,
+            'bot_username' => '',
+            'days' => [],
+            'days_csv' => '',
+            'subscribed' => false,
+            'telegram_bound' => false,
+            'telegram_user_id' => 0,
+            'telegram_username' => '',
+            'updated_at' => '',
+        ];
+        if ($userId > 0 && class_exists('CfTelegramExpiryReminderService')) {
+            try {
+                $expiryTelegramState = CfTelegramExpiryReminderService::getUserState($userId, $moduleSettings);
+            } catch (\Throwable $e) {
+            }
+        }
+        $globals['expiryTelegramReminderFeatureEnabled'] = !empty($expiryTelegramState['feature_enabled']);
+        $globals['expiryTelegramReminderConfigured'] = !empty($expiryTelegramState['configured']);
+        $globals['expiryTelegramReminderBotUsername'] = (string) ($expiryTelegramState['bot_username'] ?? '');
+        $globals['expiryTelegramReminderDays'] = is_array($expiryTelegramState['days'] ?? null) ? $expiryTelegramState['days'] : [];
+        $globals['expiryTelegramReminderDaysCsv'] = (string) ($expiryTelegramState['days_csv'] ?? '');
+        $globals['expiryTelegramReminderSubscribed'] = !empty($expiryTelegramState['subscribed']);
+        $globals['expiryTelegramReminderTelegramBound'] = !empty($expiryTelegramState['telegram_bound']);
+        $globals['expiryTelegramReminderTelegramUserId'] = (int) ($expiryTelegramState['telegram_user_id'] ?? 0);
+        $globals['expiryTelegramReminderTelegramUsername'] = (string) ($expiryTelegramState['telegram_username'] ?? '');
+        $globals['expiryTelegramReminderUpdatedAt'] = (string) ($expiryTelegramState['updated_at'] ?? '');
+
         $sslRequestEnabled = false;
         $sslRequestDomains = [];
         $sslCertificates = [
@@ -572,6 +601,11 @@ class CfClientViewModelBuilder
             'telegram_group_bot_token' => '',
             'telegram_group_reward_amount' => '1',
             'telegram_reward_auth_max_age_seconds' => '86400',
+            'renewal_notice_telegram_enabled' => '0',
+            'renewal_notice_telegram_bot_username' => '',
+            'renewal_notice_telegram_bot_token' => '',
+            'renewal_notice_telegram_days' => '30,10',
+            'renewal_notice_telegram_auth_max_age_seconds' => '86400',
             'enable_ssl_request' => '1',
             'letsencrypt_email' => '',
             'ssl_acme_client' => 'auto',
