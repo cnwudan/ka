@@ -609,6 +609,16 @@ class CfClientViewModelBuilder
 到期时间：{\$expiry_datetime}
 剩余天数：{\$days_left} 天
 请及时续期，避免域名失效。",
+            'renewal_notice_telegram_template_zh' => "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。",
+            'renewal_notice_telegram_template_en' => "[Domain Expiry Reminder]
+Domain: {\$fqdn}
+Expiry Time: {\$expiry_datetime}
+Days Left: {\$days_left}
+Please renew in time to avoid domain suspension.",
             'renewal_notice_telegram_days' => '30,10',
             'renewal_notice_telegram_auth_max_age_seconds' => '86400',
             'enable_ssl_request' => '1',

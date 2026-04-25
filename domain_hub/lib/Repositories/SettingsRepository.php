@@ -87,6 +87,7 @@ class CfSettingsRepository
         $settings = $this->normalizeInviteRegistrationTelegramBotToken($settings);
         $settings = $this->normalizeHelpAiGeminiApiKey($settings);
         $settings = $this->normalizeHelpAiOpenrouterApiKey($settings);
+        $settings = $this->normalizeRenewalNoticeTelegramTemplates($settings);
         $settings = $this->applyDefaults($settings);
         $settings = $this->synchronizeProviders($settings);
         $settings = $this->migrateLegacyFields($settings);
@@ -122,6 +123,22 @@ class CfSettingsRepository
     private function normalizeHelpAiOpenrouterApiKey(array $settings): array
     {
         return $this->normalizeSensitiveSetting($settings, 'help_ai_openrouter_api_key');
+    }
+
+    private function normalizeRenewalNoticeTelegramTemplates(array $settings): array
+    {
+        $legacyExists = array_key_exists('renewal_notice_telegram_template', $settings);
+        $zhExists = array_key_exists('renewal_notice_telegram_template_zh', $settings);
+
+        if ($legacyExists && !$zhExists) {
+            $settings['renewal_notice_telegram_template_zh'] = (string) ($settings['renewal_notice_telegram_template'] ?? '');
+        }
+
+        if (!$legacyExists && $zhExists) {
+            $settings['renewal_notice_telegram_template'] = (string) ($settings['renewal_notice_telegram_template_zh'] ?? '');
+        }
+
+        return $settings;
     }
 
     private function normalizeSensitiveSetting(array $settings, string $key): array
@@ -336,6 +353,16 @@ class CfSettingsRepository
 到期时间：{\$expiry_datetime}
 剩余天数：{\$days_left} 天
 请及时续期，避免域名失效。",
+            'renewal_notice_telegram_template_zh' => "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。",
+            'renewal_notice_telegram_template_en' => "[Domain Expiry Reminder]
+Domain: {\$fqdn}
+Expiry Time: {\$expiry_datetime}
+Days Left: {\$days_left}
+Please renew in time to avoid domain suspension.",
             'renewal_notice_telegram_days' => '30,10',
             'renewal_notice_telegram_auth_max_age_seconds' => '86400',
             'job_running_timeout_minutes' => '120',

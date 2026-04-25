@@ -232,7 +232,8 @@ $renewalTelegramBotUserLabel = $lang['renewal_notice_telegram_bot_user'] ?? 'Bot
 $renewalTelegramBotTokenLabel = $lang['renewal_notice_telegram_bot_token'] ?? 'Bot Token';
 $renewalTelegramDaysLabel = $lang['renewal_notice_telegram_days'] ?? 'Telegram 提醒天数';
 $renewalTelegramAuthAgeLabel = $lang['renewal_notice_telegram_auth_age'] ?? '授权有效期（秒）';
-$renewalTelegramTemplateLabel = $lang['renewal_notice_telegram_template_label'] ?? 'Telegram 消息模板';
+$renewalTelegramTemplateZhLabel = $lang['renewal_notice_telegram_template_zh_label'] ?? 'Telegram 中文模板';
+$renewalTelegramTemplateEnLabel = $lang['renewal_notice_telegram_template_en_label'] ?? 'Telegram 英文模板';
 $renewalTelegramTemplateHint = $lang['renewal_notice_telegram_template_hint'] ?? '支持变量 {$domain}、{$rootdomain}、{$fqdn}、{$expiry_date}、{$expiry_datetime}、{$days_left}、{$reminder_days}，可换行。';
 $renewalTelegramHint = $lang['renewal_notice_telegram_hint'] ?? '支持 1~2 个提醒天数（逗号分隔），如 30,10；填 0 表示关闭该档位。';
 $renewalTelegramTestTitle = $lang['renewal_notice_telegram_test_title'] ?? 'Telegram 测试发送';
@@ -248,9 +249,14 @@ $renewalDay1Setting = $module_settings['renewal_notice_days_primary'] ?? '';
 $renewalDay2Setting = $module_settings['renewal_notice_days_secondary'] ?? '';
 $renewalTelegramEnabledSetting = in_array($module_settings['renewal_notice_telegram_enabled'] ?? '0', ['1','on','yes','true'], true);
 $renewalTelegramBotUsername = ltrim((string) ($module_settings['renewal_notice_telegram_bot_username'] ?? ''), '@');
-$renewalTelegramTemplateSetting = (string) ($module_settings['renewal_notice_telegram_template'] ?? '');
-if ($renewalTelegramTemplateSetting === '' && class_exists('CfTelegramExpiryReminderService')) {
-    $renewalTelegramTemplateSetting = CfTelegramExpiryReminderService::defaultTemplate();
+$renewalTelegramTemplateLegacySetting = (string) ($module_settings['renewal_notice_telegram_template'] ?? '');
+$renewalTelegramTemplateZhSetting = (string) ($module_settings['renewal_notice_telegram_template_zh'] ?? $renewalTelegramTemplateLegacySetting);
+if ($renewalTelegramTemplateZhSetting === '' && class_exists('CfTelegramExpiryReminderService')) {
+    $renewalTelegramTemplateZhSetting = CfTelegramExpiryReminderService::defaultTemplate();
+}
+$renewalTelegramTemplateEnSetting = (string) ($module_settings['renewal_notice_telegram_template_en'] ?? '');
+if ($renewalTelegramTemplateEnSetting === '' && class_exists('CfTelegramExpiryReminderService') && method_exists('CfTelegramExpiryReminderService', 'defaultEnglishTemplate')) {
+    $renewalTelegramTemplateEnSetting = CfTelegramExpiryReminderService::defaultEnglishTemplate();
 }
 $renewalTelegramDaysSetting = (string) ($module_settings['renewal_notice_telegram_days'] ?? '30,10');
 $renewalTelegramAuthAgeSetting = (string) ($module_settings['renewal_notice_telegram_auth_max_age_seconds'] ?? '86400');
@@ -739,9 +745,15 @@ $cfmodOrphanRootOptionsHtml = implode("\n", $orphanRootOptions);
         <label class="form-label" for="renewal_notice_telegram_auth_max_age_seconds"><?php echo htmlspecialchars($renewalTelegramAuthAgeLabel); ?></label>
         <input type="number" class="form-control" id="renewal_notice_telegram_auth_max_age_seconds" name="renewal_notice_telegram_auth_max_age_seconds" min="60" value="<?php echo htmlspecialchars($renewalTelegramAuthAgeSetting); ?>" placeholder="86400">
       </div>
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="renewal_notice_telegram_template_zh"><?php echo htmlspecialchars($renewalTelegramTemplateZhLabel); ?></label>
+        <textarea class="form-control" id="renewal_notice_telegram_template_zh" name="renewal_notice_telegram_template_zh" rows="4" placeholder="【域名到期提醒】\n域名：{$fqdn}\n到期时间：{$expiry_datetime}\n剩余天数：{$days_left} 天\n请及时续期，避免域名失效。"><?php echo htmlspecialchars($renewalTelegramTemplateZhSetting); ?></textarea>
+      </div>
+      <div class="col-12 col-lg-6">
+        <label class="form-label" for="renewal_notice_telegram_template_en"><?php echo htmlspecialchars($renewalTelegramTemplateEnLabel); ?></label>
+        <textarea class="form-control" id="renewal_notice_telegram_template_en" name="renewal_notice_telegram_template_en" rows="4" placeholder="[Domain Expiry Reminder]\nDomain: {$fqdn}\nExpiry Time: {$expiry_datetime}\nDays Left: {$days_left}\nPlease renew in time to avoid domain suspension."><?php echo htmlspecialchars($renewalTelegramTemplateEnSetting); ?></textarea>
+      </div>
       <div class="col-12">
-        <label class="form-label" for="renewal_notice_telegram_template"><?php echo htmlspecialchars($renewalTelegramTemplateLabel); ?></label>
-        <textarea class="form-control" id="renewal_notice_telegram_template" name="renewal_notice_telegram_template" rows="4" placeholder="【域名到期提醒】\n域名：{$fqdn}\n到期时间：{$expiry_datetime}\n剩余天数：{$days_left} 天\n请及时续期，避免域名失效。"><?php echo htmlspecialchars($renewalTelegramTemplateSetting); ?></textarea>
         <small class="text-muted d-block"><?php echo htmlspecialchars($renewalTelegramTemplateHint); ?></small>
       </div>
       <div class="col-12">
