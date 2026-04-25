@@ -420,10 +420,10 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
     </div>
 </div>
 
-<!-- 根域名数据导出 / 导入 -->
+<!-- 根域名本地快照导出 / 导入 -->
 <div class="card mb-4">
     <div class="card-body">
-        <h5 class="card-title mb-3"><i class="fas fa-file-export"></i> 根域名数据导出 / 导入</h5>
+        <h5 class="card-title mb-3"><i class="fas fa-database"></i> 根域名本地快照导出 / 导入</h5>
         <div class="row g-4">
             <div class="col-md-6">
                 <form method="post">
@@ -436,18 +436,65 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <?php endforeach; ?>
                     </select>
                     <div class="mt-3 d-flex align-items-start">
-                        <button type="submit" class="btn btn-success me-2"><i class="fas fa-download me-1"></i> 导出数据</button>
-                        <span class="text-muted small">导出的 JSON 文件包含本地子域、DNS 记录、风险数据以及同步差异等信息，可用于快速恢复。</span>
+                        <button type="submit" class="btn btn-success me-2"><i class="fas fa-download me-1"></i> 导出本地快照</button>
+                        <span class="text-muted small">导出的 JSON 文件包含本地子域、DNS 记录、风险数据及同步差异，适用于本插件的整库恢复。</span>
                     </div>
                 </form>
             </div>
             <div class="col-md-6">
                 <form method="post" enctype="multipart/form-data">
                     <input type="hidden" name="action" value="import_rootdomain">
-                    <label class="form-label">上传导出文件</label>
+                    <label class="form-label">上传本地快照文件</label>
                     <input type="file" class="form-control" name="import_rootdomain_file" accept=".json,.json.gz" required>
                     <div class="form-text text-muted">支持 JSON 或 GZ 压缩文件；如存在同名子域，将自动覆盖为导入内容。</div>
-                    <button type="submit" class="btn btn-primary mt-3"><i class="fas fa-upload me-1"></i> 导入恢复</button>
+                    <button type="submit" class="btn btn-primary mt-3"><i class="fas fa-upload me-1"></i> 导入本地快照</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- PDNS 兼容一键导出 / 导入 -->
+<div class="card mb-4">
+    <div class="card-body">
+        <h5 class="card-title mb-3"><i class="fas fa-file-export"></i> PDNS 兼容一键导出 / 导入</h5>
+        <div class="row g-4">
+            <div class="col-md-6">
+                <form method="post">
+                    <input type="hidden" name="action" value="export_rootdomain_pdns">
+                    <label class="form-label">选择根域名导出</label>
+                    <select name="export_rootdomain_pdns_value" class="form-select" required>
+                        <option value="">-- 请选择 --</option>
+                        <?php foreach ($allKnownRootdomains as $domain): ?>
+                            <option value="<?php echo htmlspecialchars($domain); ?>"><?php echo htmlspecialchars($domain); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-text text-muted mt-2">导出远端当前解析，输出为 PowerDNS RRSet 兼容 JSON，可用于跨平台迁移。</div>
+                    <button type="submit" class="btn btn-outline-success mt-3"><i class="fas fa-download me-1"></i> 导出 PDNS 兼容文件</button>
+                </form>
+            </div>
+            <div class="col-md-6">
+                <form method="post" enctype="multipart/form-data">
+                    <input type="hidden" name="action" value="import_rootdomain_pdns">
+                    <label class="form-label">上传 PDNS 兼容文件</label>
+                    <input type="file" class="form-control" name="import_rootdomain_pdns_file" accept=".json,.json.gz" required>
+                    <label class="form-label mt-3">目标根域名</label>
+                    <select name="import_rootdomain_pdns_target" class="form-select" required>
+                        <option value="">-- 请选择 --</option>
+                        <?php foreach ($allKnownRootdomains as $domain): ?>
+                            <option value="<?php echo htmlspecialchars($domain); ?>"><?php echo htmlspecialchars($domain); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_overwrite_same_name_type" name="pdns_overwrite_same_name_type" value="1" checked>
+                        <label class="form-check-label" for="pdns_overwrite_same_name_type">覆盖同名同类型记录（REPLACE 模式）</label>
+                    </div>
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="pdns_enqueue_root_calibration" name="pdns_enqueue_root_calibration" value="1" checked>
+                        <label class="form-check-label" for="pdns_enqueue_root_calibration">导入后自动提交根域校准任务</label>
+                    </div>
+                    <div class="form-text text-muted">建议在大批量迁移后开启校准，自动同步本地与云端状态，降低前端编辑异常风险。</div>
+                    <button type="submit" class="btn btn-outline-primary mt-3"><i class="fas fa-upload me-1"></i> 一键导入到目标根域</button>
                 </form>
             </div>
         </div>

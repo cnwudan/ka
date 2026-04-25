@@ -619,12 +619,16 @@ function cfmod_collect_rootdomain_dataset(string $rootdomain): array {
     return $dataset;
 }
 
-function cfmod_stream_export_dataset(array $dataset, string $rootdomain): void {
+function cfmod_stream_export_dataset(array $dataset, string $rootdomain, string $filenamePrefix = 'domain_hub_export'): void {
     $safeDomain = preg_replace('/[^A-Za-z0-9_.-]+/', '_', $rootdomain);
     if ($safeDomain === '' || $safeDomain === null) {
         $safeDomain = 'rootdomain';
     }
-    $filename = 'domain_hub_export_' . $safeDomain . '_' . date('Ymd_His') . '.json';
+    $safePrefix = preg_replace('/[^A-Za-z0-9_.-]+/', '_', $filenamePrefix);
+    if ($safePrefix === '' || $safePrefix === null) {
+        $safePrefix = 'domain_hub_export';
+    }
+    $filename = $safePrefix . '_' . $safeDomain . '_' . date('Ymd_His') . '.json';
     $json = json_encode($dataset, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
     if ($json === false) {
         throw new \RuntimeException('JSON 编码失败：' . json_last_error_msg());
@@ -1029,8 +1033,790 @@ function cfmod_import_rootdomain_dataset(array $dataset): array {
     return $summary;
 }
 
+function cfmod_pdns_import_blocked_types(): array {
+    return [
+        'SOA', 'RRSIG', 'DNSKEY', 'NSEC', 'NSEC3', 'NSEC3PARAM', 'DS', 'CDS', 'CDNSKEY',
+        'TSIG', 'AXFR', 'IXFR', 'OPT'
+    ];
+}
+
+function cfmod_pdns_is_blocked_type(string $type): bool {
+    return in_array(strtoupper(trim($type)), cfmod_pdns_import_blocked_types(), true);
+}
+
+function cfmod_pdns_ends_with(string $haystack, string $needle): bool {
+    if ($needle == '') {
+        return true;
+    }
+    $len = strlen($needle);
+    if (strlen($haystack) < $len) {
+        return false;
+    }
+    return substr($haystack, -$len) === $needle;
+}
+
+function cfmod_pdns_name_within_rootdomain(string $name, string $rootdomain): bool {
+    $name = strtolower(rtrim(trim($name), '.'));
+    $rootdomain = cfmod_normalize_rootdomain($rootdomain);
+    if ($name === '' || $rootdomain === '') {
+        return false;
+    }
+    if ($name === $rootdomain) {
+        return true;
+    }
+    return cfmod_pdns_ends_with($name, '.' . $rootdomain);
+}
+
+function cfmod_pdns_normalize_record_name(string $name, string $rootdomain): string {
+    $name = strtolower(rtrim(trim($name), '.'));
+    $rootdomain = cfmod_normalize_rootdomain($rootdomain);
+    if ($name === '' || $name === '@') {
+        return $rootdomain;
+    }
+    if ($rootdomain !== '' && strpos($name, '.') === false && $name !== $rootdomain) {
+        return $name . '.' . $rootdomain;
+    }
+    return $name;
+}
+
+function cfmod_pdns_parse_mx_content(string $content, ?int $priority = null): array {
+    $content = trim($content);
+    if (preg_match('/^\s*(\d+)\s+(.+?)\s*$/', $content, $matches)) {
+        if ($priority === null) {
+            $priority = intval($matches[1]);
+        }
+        $content = trim($matches[2]);
+    }
+    $content = rtrim($content, '.');
+    return [
+        'priority' => $priority,
+        'content' => $content,
+    ];
+}
+
+function cfmod_pdns_parse_srv_content(string $content): ?array {
+    $content = trim($content);
+    if (!preg_match('/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+?)\s*$/', $content, $matches)) {
+        return null;
+    }
+    return [
+        'priority' => intval($matches[1]),
+        'weight' => intval($matches[2]),
+        'port' => intval($matches[3]),
+        'target' => rtrim(trim($matches[4]), '.'),
+    ];
+}
+
+function cfmod_pdns_parse_caa_content(string $content): ?array {
+    $content = trim($content);
+    if (!preg_match('/^\s*(\d+)\s+([a-zA-Z0-9]+)\s+"?(.*?)"?\s*$/', $content, $matches)) {
+        return null;
+    }
+    return [
+        'flags' => intval($matches[1]),
+        'tag' => trim($matches[2]),
+        'value' => str_replace('\"', '"', trim($matches[3])),
+    ];
+}
+
+function cfmod_pdns_unquote_txt_content(string $content): string {
+    $content = trim($content);
+    if (strlen($content) >= 2 && $content[0] === '"' && substr($content, -1) === '"') {
+        $content = substr($content, 1, -1);
+    }
+    return str_replace('\"', '"', $content);
+}
+
+function cfmod_pdns_quote_txt_content(string $content): string {
+    $content = trim($content);
+    if ($content === '') {
+        return '""';
+    }
+    if (strlen($content) >= 2 && $content[0] === '"' && substr($content, -1) === '"') {
+        return $content;
+    }
+    return '"' . str_replace('"', '\"', $content) . '"';
+}
+
+function cfmod_pdns_normalize_record(array $record, string $rootdomain, array &$warnings = [], bool $enforceRootdomain = true): ?array {
+    $rootdomain = cfmod_normalize_rootdomain($rootdomain);
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    if ($type === '') {
+        return null;
+    }
+
+    if (cfmod_pdns_is_blocked_type($type)) {
+        $warnings[] = '跳过不支持导入的记录类型：' . $type;
+        return null;
+    }
+
+    $nameRaw = (string) ($record['name'] ?? $rootdomain);
+    $name = cfmod_pdns_normalize_record_name($nameRaw, $rootdomain);
+    if ($name === '') {
+        return null;
+    }
+
+    if ($enforceRootdomain && !cfmod_pdns_name_within_rootdomain($name, $rootdomain)) {
+        $warnings[] = '跳过越界记录：' . $name;
+        return null;
+    }
+
+    $content = trim((string) ($record['content'] ?? ''));
+    if ($content === '') {
+        return null;
+    }
+
+    $ttl = intval($record['ttl'] ?? 600);
+    if ($ttl <= 0) {
+        $ttl = 600;
+    }
+    $ttl = max(60, $ttl);
+
+    $priority = null;
+    if (array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== '') {
+        $priority = intval($record['priority']);
+    }
+
+    if ($type === 'MX') {
+        $mx = cfmod_pdns_parse_mx_content($content, $priority);
+        $content = strtolower(trim((string) ($mx['content'] ?? '')));
+        $priority = isset($mx['priority']) && $mx['priority'] !== null ? intval($mx['priority']) : 10;
+        if ($content === '') {
+            return null;
+        }
+    } elseif (in_array($type, ['CNAME', 'NS', 'PTR'], true)) {
+        $content = strtolower(rtrim($content, '.'));
+    } elseif ($type === 'TXT') {
+        $content = cfmod_pdns_unquote_txt_content($content);
+    } elseif ($type === 'SRV') {
+        $srv = cfmod_pdns_parse_srv_content($content);
+        if ($srv !== null) {
+            $content = intval($srv['priority']) . ' ' . intval($srv['weight']) . ' ' . intval($srv['port']) . ' ' . strtolower((string) ($srv['target'] ?? ''));
+        }
+    }
+
+    if ($content === '') {
+        return null;
+    }
+
+    $recordId = '';
+    if (array_key_exists('record_id', $record) && $record['record_id'] !== null && $record['record_id'] !== '') {
+        $recordId = (string) $record['record_id'];
+    } elseif (array_key_exists('id', $record) && $record['id'] !== null && $record['id'] !== '') {
+        $recordId = (string) $record['id'];
+    }
+
+    return [
+        'name' => $name,
+        'type' => $type,
+        'content' => $content,
+        'ttl' => $ttl,
+        'priority' => $priority,
+        'disabled' => !empty($record['disabled']) ? 1 : 0,
+        'record_id' => $recordId,
+    ];
+}
+
+function cfmod_pdns_record_identity_key(array $record): ?string {
+    $name = strtolower(trim((string) ($record['name'] ?? '')));
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    $content = trim((string) ($record['content'] ?? ''));
+    if ($name === '' || $type === '' || $content === '') {
+        return null;
+    }
+
+    $priority = null;
+    if (array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== '') {
+        $priority = intval($record['priority']);
+    }
+
+    if ($type === 'MX') {
+        $mx = cfmod_pdns_parse_mx_content($content, $priority);
+        $content = strtolower(trim((string) ($mx['content'] ?? '')));
+        $priority = isset($mx['priority']) && $mx['priority'] !== null ? intval($mx['priority']) : 10;
+    } elseif ($type === 'TXT') {
+        $content = trim($content);
+    } else {
+        $content = strtolower(trim($content));
+    }
+
+    return $name . '|' . $type . '|' . $content . '|' . ($priority === null ? '' : (string) $priority);
+}
+
+function cfmod_pdns_record_content_for_rrset(array $record): string {
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    $content = trim((string) ($record['content'] ?? ''));
+
+    if ($type === 'MX') {
+        $priority = array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== ''
+            ? intval($record['priority'])
+            : null;
+        $mx = cfmod_pdns_parse_mx_content($content, $priority);
+        $mxPriority = isset($mx['priority']) && $mx['priority'] !== null ? intval($mx['priority']) : 10;
+        $mxContent = trim((string) ($mx['content'] ?? ''));
+        if ($mxContent !== '' && substr($mxContent, -1) !== '.') {
+            $mxContent .= '.';
+        }
+        return $mxPriority . ' ' . $mxContent;
+    }
+
+    if ($type === 'TXT') {
+        return cfmod_pdns_quote_txt_content($content);
+    }
+
+    if (in_array($type, ['CNAME', 'NS', 'PTR'], true)) {
+        if ($content !== '' && substr($content, -1) !== '.') {
+            $content .= '.';
+        }
+        return $content;
+    }
+
+    if ($type === 'SRV') {
+        $srv = cfmod_pdns_parse_srv_content($content);
+        if ($srv !== null) {
+            $target = trim((string) ($srv['target'] ?? ''));
+            if ($target !== '' && substr($target, -1) !== '.') {
+                $target .= '.';
+            }
+            return intval($srv['priority']) . ' ' . intval($srv['weight']) . ' ' . intval($srv['port']) . ' ' . $target;
+        }
+    }
+
+    return $content;
+}
+
+function cfmod_pdns_group_records_to_rrsets(array $records): array {
+    $grouped = [];
+    foreach ($records as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $name = strtolower(trim((string) ($record['name'] ?? '')));
+        $type = strtoupper(trim((string) ($record['type'] ?? '')));
+        if ($name === '' || $type === '') {
+            continue;
+        }
+        $rrsetName = rtrim($name, '.') . '.';
+        $key = $rrsetName . '|' . $type;
+        if (!isset($grouped[$key])) {
+            $ttl = intval($record['ttl'] ?? 600);
+            if ($ttl <= 0) {
+                $ttl = 600;
+            }
+            $grouped[$key] = [
+                'name' => $rrsetName,
+                'type' => $type,
+                'ttl' => max(60, $ttl),
+                'changetype' => 'REPLACE',
+                'records' => [],
+                '__contents' => [],
+            ];
+        }
+
+        $content = cfmod_pdns_record_content_for_rrset($record);
+        if ($content === '') {
+            continue;
+        }
+        $contentKey = strtolower(trim($content));
+        if (isset($grouped[$key]['__contents'][$contentKey])) {
+            continue;
+        }
+        $grouped[$key]['__contents'][$contentKey] = true;
+        $grouped[$key]['records'][] = [
+            'content' => $content,
+            'disabled' => !empty($record['disabled']),
+        ];
+    }
+
+    ksort($grouped);
+    $rrsets = [];
+    foreach ($grouped as $rrset) {
+        unset($rrset['__contents']);
+        usort($rrset['records'], static function (array $a, array $b): int {
+            return strcmp((string) ($a['content'] ?? ''), (string) ($b['content'] ?? ''));
+        });
+        $rrsets[] = $rrset;
+    }
+
+    return $rrsets;
+}
+
+function cfmod_pdns_parse_rrsets_to_records(array $rrsets, string $rootdomain, array &$warnings = []): array {
+    $records = [];
+    foreach ($rrsets as $rrset) {
+        if (!is_array($rrset)) {
+            continue;
+        }
+        $name = (string) ($rrset['name'] ?? '');
+        $type = strtoupper(trim((string) ($rrset['type'] ?? '')));
+        if ($name === '' || $type === '') {
+            continue;
+        }
+        $ttl = intval($rrset['ttl'] ?? 600);
+        if ($ttl <= 0) {
+            $ttl = 600;
+        }
+        $priority = array_key_exists('priority', $rrset) && $rrset['priority'] !== null && $rrset['priority'] !== ''
+            ? intval($rrset['priority'])
+            : null;
+
+        $rrsetRecords = isset($rrset['records']) && is_array($rrset['records']) ? $rrset['records'] : [];
+        if (empty($rrsetRecords) && isset($rrset['content'])) {
+            $rrsetRecords = [['content' => $rrset['content']]];
+        }
+
+        foreach ($rrsetRecords as $item) {
+            if (is_array($item)) {
+                $content = trim((string) ($item['content'] ?? ''));
+                $disabled = !empty($item['disabled']) ? 1 : 0;
+                $recordPriority = array_key_exists('priority', $item) && $item['priority'] !== null && $item['priority'] !== ''
+                    ? intval($item['priority'])
+                    : $priority;
+            } else {
+                $content = trim((string) $item);
+                $disabled = 0;
+                $recordPriority = $priority;
+            }
+            if ($content === '') {
+                continue;
+            }
+            $normalized = cfmod_pdns_normalize_record([
+                'name' => $name,
+                'type' => $type,
+                'content' => $content,
+                'ttl' => $ttl,
+                'priority' => $recordPriority,
+                'disabled' => $disabled,
+            ], $rootdomain, $warnings, true);
+            if ($normalized === null) {
+                continue;
+            }
+            $records[] = $normalized;
+        }
+    }
+    return $records;
+}
+
+function cfmod_pdns_create_record_on_provider($providerClient, string $zoneId, array $record): array {
+    if (!is_object($providerClient) || !method_exists($providerClient, 'createDnsRecord')) {
+        return ['success' => false, 'errors' => ['provider not ready']];
+    }
+
+    $name = (string) ($record['name'] ?? '');
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    $content = trim((string) ($record['content'] ?? ''));
+    $ttl = intval($record['ttl'] ?? 600);
+    if ($ttl <= 0) {
+        $ttl = 600;
+    }
+    $ttl = max(60, $ttl);
+
+    if ($name === '' || $type === '' || $content === '') {
+        return ['success' => false, 'errors' => ['invalid record payload']];
+    }
+
+    if ($type === 'MX') {
+        $priority = array_key_exists('priority', $record) && $record['priority'] !== null && $record['priority'] !== ''
+            ? intval($record['priority'])
+            : null;
+        $mx = cfmod_pdns_parse_mx_content($content, $priority);
+        $mxPriority = isset($mx['priority']) && $mx['priority'] !== null ? intval($mx['priority']) : 10;
+        $mxContent = trim((string) ($mx['content'] ?? ''));
+        if ($mxContent === '') {
+            return ['success' => false, 'errors' => ['invalid MX content']];
+        }
+        if (method_exists($providerClient, 'createMXRecord')) {
+            return $providerClient->createMXRecord($zoneId, $name, $mxContent, $mxPriority, $ttl);
+        }
+        $content = $mxPriority . ' ' . $mxContent;
+    }
+
+    if ($type === 'SRV' && method_exists($providerClient, 'createSRVRecord')) {
+        $srv = cfmod_pdns_parse_srv_content($content);
+        if ($srv !== null) {
+            return $providerClient->createSRVRecord(
+                $zoneId,
+                $name,
+                (string) ($srv['target'] ?? ''),
+                intval($srv['port'] ?? 0),
+                intval($srv['priority'] ?? 0),
+                intval($srv['weight'] ?? 0),
+                $ttl
+            );
+        }
+    }
+
+    if ($type === 'CAA' && method_exists($providerClient, 'createCAARecord')) {
+        $caa = cfmod_pdns_parse_caa_content($content);
+        if ($caa !== null) {
+            return $providerClient->createCAARecord(
+                $zoneId,
+                $name,
+                intval($caa['flags'] ?? 0),
+                (string) ($caa['tag'] ?? 'issue'),
+                (string) ($caa['value'] ?? ''),
+                $ttl
+            );
+        }
+    }
+
+    if ($type === 'TXT' && method_exists($providerClient, 'createTXTRecord')) {
+        return $providerClient->createTXTRecord($zoneId, $name, cfmod_pdns_unquote_txt_content($content), $ttl);
+    }
+
+    return $providerClient->createDnsRecord($zoneId, $name, $type, $content, $ttl, false);
+}
+
+function cfmod_pdns_delete_record_on_provider($providerClient, string $zoneId, array $record): array {
+    if (!is_object($providerClient)) {
+        return ['success' => false, 'errors' => ['provider not ready']];
+    }
+
+    $recordId = trim((string) ($record['record_id'] ?? ($record['id'] ?? '')));
+    $name = (string) ($record['name'] ?? '');
+    $type = strtoupper(trim((string) ($record['type'] ?? '')));
+    $content = (string) ($record['content'] ?? '');
+
+    if ($recordId !== '' && method_exists($providerClient, 'deleteSubdomain')) {
+        return $providerClient->deleteSubdomain($zoneId, $recordId, [
+            'name' => $name,
+            'type' => $type,
+            'content' => $content,
+        ]);
+    }
+
+    if (method_exists($providerClient, 'deleteRecordByContent') && $name !== '' && $type !== '' && $content !== '') {
+        return $providerClient->deleteRecordByContent($zoneId, $name, $type, $content);
+    }
+
+    return ['success' => false, 'errors' => ['record id missing']];
+}
+
+function cfmod_collect_rootdomain_pdns_dataset(string $rootdomain): array {
+    $normalized = cfmod_normalize_rootdomain($rootdomain);
+    if ($normalized === '') {
+        throw new \InvalidArgumentException('根域名不能为空');
+    }
+
+    $rootRow = null;
+    if (cfmod_table_exists('mod_cloudflare_rootdomains')) {
+        try {
+            $rootRow = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [$normalized])
+                ->first();
+        } catch (\Throwable $e) {
+            $rootRow = null;
+        }
+    }
+
+    $providerContext = null;
+    if ($rootRow && function_exists('cfmod_make_provider_client_for_rootdomain')) {
+        $providerContext = cfmod_make_provider_client_for_rootdomain($rootRow);
+    }
+    if (!$providerContext && function_exists('cfmod_make_provider_client')) {
+        $providerContext = cfmod_make_provider_client(null, $normalized, null, null, false);
+    }
+    if (!$providerContext || !is_object($providerContext['client'] ?? null)) {
+        throw new \RuntimeException('无法初始化根域名对应的 DNS 供应商客户端');
+    }
+
+    $providerClient = $providerContext['client'];
+    if (!method_exists($providerClient, 'getZoneId') || !method_exists($providerClient, 'getDnsRecords')) {
+        throw new \RuntimeException('当前 DNS 供应商不支持导出接口');
+    }
+
+    $zoneId = trim((string) ($rootRow->cloudflare_zone_id ?? ''));
+    if ($zoneId === '') {
+        $zoneId = (string) ($providerClient->getZoneId($normalized) ?: '');
+    }
+    if ($zoneId === '') {
+        throw new \RuntimeException('未找到根域名对应的 Zone 信息，请先确认该域名已托管');
+    }
+
+    $recordsRes = $providerClient->getDnsRecords($zoneId, null, ['per_page' => 1000]);
+    if (!($recordsRes['success'] ?? false)) {
+        $errors = $recordsRes['errors'] ?? [];
+        $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
+        if ($errorText === '') {
+            $errorText = '查询失败';
+        }
+        throw new \RuntimeException('读取远端 DNS 记录失败：' . $errorText);
+    }
+
+    $rawRecords = isset($recordsRes['result']) && is_array($recordsRes['result']) ? $recordsRes['result'] : [];
+    $warnings = [];
+    $normalizedRecords = [];
+    $identitySet = [];
+
+    foreach ($rawRecords as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $normalizedRecord = cfmod_pdns_normalize_record($record, $normalized, $warnings, true);
+        if ($normalizedRecord === null) {
+            continue;
+        }
+        $identityKey = cfmod_pdns_record_identity_key($normalizedRecord);
+        if ($identityKey !== null && isset($identitySet[$identityKey])) {
+            continue;
+        }
+        if ($identityKey !== null) {
+            $identitySet[$identityKey] = true;
+        }
+        $normalizedRecords[] = $normalizedRecord;
+    }
+
+    $rrsets = cfmod_pdns_group_records_to_rrsets($normalizedRecords);
+    $providerAccount = is_array($providerContext['account'] ?? null) ? $providerContext['account'] : [];
+
+    return [
+        'schema_version' => 1,
+        'format' => 'pdns-rrset-json',
+        'generated_at' => date('c'),
+        'module' => CF_MODULE_NAME,
+        'rootdomain' => $normalized,
+        'zone_id' => (string) $zoneId,
+        'source_provider' => [
+            'id' => intval($providerContext['provider_account_id'] ?? 0),
+            'name' => $providerAccount['name'] ?? null,
+            'provider_type' => $providerAccount['provider_type'] ?? null,
+        ],
+        'rrsets' => $rrsets,
+        'records' => $normalizedRecords,
+        'counts' => [
+            'raw_records' => count($rawRecords),
+            'records' => count($normalizedRecords),
+            'rrsets' => count($rrsets),
+        ],
+        'warnings' => array_values(array_unique(array_filter($warnings))),
+    ];
+}
+
+function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRootdomain, array $options = []): array {
+    $targetRootdomain = cfmod_normalize_rootdomain($targetRootdomain);
+    if ($targetRootdomain === '') {
+        throw new \InvalidArgumentException('目标根域名不能为空');
+    }
+
+    $overwriteSameNameType = !array_key_exists('overwrite_same_name_type', $options)
+        || !empty($options['overwrite_same_name_type']);
+
+    $warnings = [];
+    $desiredRecords = [];
+
+    if (isset($dataset['rrsets']) && is_array($dataset['rrsets'])) {
+        $desiredRecords = array_merge(
+            $desiredRecords,
+            cfmod_pdns_parse_rrsets_to_records($dataset['rrsets'], $targetRootdomain, $warnings)
+        );
+    }
+
+    if (isset($dataset['records']) && is_array($dataset['records'])) {
+        foreach ($dataset['records'] as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $normalized = cfmod_pdns_normalize_record($record, $targetRootdomain, $warnings, true);
+            if ($normalized === null) {
+                continue;
+            }
+            $desiredRecords[] = $normalized;
+        }
+    }
+
+    if (empty($desiredRecords)) {
+        throw new \RuntimeException('导入文件中没有可写入的解析记录');
+    }
+
+    $desiredIdentity = [];
+    $desiredUnique = [];
+    foreach ($desiredRecords as $record) {
+        $identityKey = cfmod_pdns_record_identity_key($record);
+        if ($identityKey !== null && isset($desiredIdentity[$identityKey])) {
+            continue;
+        }
+        if ($identityKey !== null) {
+            $desiredIdentity[$identityKey] = true;
+        }
+        $desiredUnique[] = $record;
+    }
+    $desiredRecords = $desiredUnique;
+
+    $rootRow = null;
+    if (cfmod_table_exists('mod_cloudflare_rootdomains')) {
+        try {
+            $rootRow = Capsule::table('mod_cloudflare_rootdomains')
+                ->whereRaw('LOWER(domain) = ?', [$targetRootdomain])
+                ->first();
+        } catch (\Throwable $e) {
+            $rootRow = null;
+        }
+    }
+
+    $providerContext = null;
+    if ($rootRow && function_exists('cfmod_make_provider_client_for_rootdomain')) {
+        $providerContext = cfmod_make_provider_client_for_rootdomain($rootRow);
+    }
+    if (!$providerContext && function_exists('cfmod_make_provider_client')) {
+        $providerContext = cfmod_make_provider_client(null, $targetRootdomain, null, null, false);
+    }
+    if (!$providerContext || !is_object($providerContext['client'] ?? null)) {
+        throw new \RuntimeException('无法初始化目标根域名对应的 DNS 供应商客户端');
+    }
+
+    $providerClient = $providerContext['client'];
+    if (!method_exists($providerClient, 'getZoneId') || !method_exists($providerClient, 'getDnsRecords')) {
+        throw new \RuntimeException('当前 DNS 供应商不支持导入接口');
+    }
+
+    $zoneId = trim((string) ($rootRow->cloudflare_zone_id ?? ''));
+    if ($zoneId === '') {
+        $zoneId = (string) ($providerClient->getZoneId($targetRootdomain) ?: '');
+    }
+    if ($zoneId === '') {
+        throw new \RuntimeException('目标供应商中未找到该根域名，请先完成托管后重试');
+    }
+
+    $existingRes = $providerClient->getDnsRecords($zoneId, null, ['per_page' => 1000]);
+    if (!($existingRes['success'] ?? false)) {
+        $errors = $existingRes['errors'] ?? [];
+        $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
+        if ($errorText === '') {
+            $errorText = '查询失败';
+        }
+        throw new \RuntimeException('读取目标根域名现有解析失败：' . $errorText);
+    }
+
+    $existingRecords = [];
+    foreach (($existingRes['result'] ?? []) as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $normalized = cfmod_pdns_normalize_record($record, $targetRootdomain, $warnings, true);
+        if ($normalized === null) {
+            continue;
+        }
+        $existingRecords[] = $normalized;
+    }
+
+    $existingByRrset = [];
+    $existingIdentity = [];
+    foreach ($existingRecords as $record) {
+        $rrsetKey = strtolower($record['name']) . '|' . strtoupper($record['type']);
+        if (!isset($existingByRrset[$rrsetKey])) {
+            $existingByRrset[$rrsetKey] = [];
+        }
+        $existingByRrset[$rrsetKey][] = $record;
+
+        $identityKey = cfmod_pdns_record_identity_key($record);
+        if ($identityKey !== null) {
+            $existingIdentity[$identityKey] = true;
+        }
+    }
+
+    $desiredByRrset = [];
+    foreach ($desiredRecords as $record) {
+        $rrsetKey = strtolower($record['name']) . '|' . strtoupper($record['type']);
+        if (!isset($desiredByRrset[$rrsetKey])) {
+            $desiredByRrset[$rrsetKey] = [];
+        }
+        $desiredByRrset[$rrsetKey][] = $record;
+    }
+    ksort($desiredByRrset);
+
+    $summary = [
+        'rootdomain' => $targetRootdomain,
+        'zone_id' => (string) $zoneId,
+        'source_rootdomain' => isset($dataset['rootdomain']) ? cfmod_normalize_rootdomain((string) $dataset['rootdomain']) : null,
+        'overwrite_same_name_type' => $overwriteSameNameType ? 1 : 0,
+        'rrsets_total' => count($desiredByRrset),
+        'records_total' => 0,
+        'records_created' => 0,
+        'records_skipped_existing' => 0,
+        'records_deleted_existing' => 0,
+        'records_failed' => 0,
+        'warnings' => [],
+    ];
+
+    foreach ($desiredByRrset as $rrsetKey => $records) {
+        if ($overwriteSameNameType && !empty($existingByRrset[$rrsetKey])) {
+            foreach ($existingByRrset[$rrsetKey] as $existingRecord) {
+                $deleteRes = cfmod_pdns_delete_record_on_provider($providerClient, $zoneId, $existingRecord);
+                if ($deleteRes['success'] ?? false) {
+                    $summary['records_deleted_existing']++;
+                    $identityKey = cfmod_pdns_record_identity_key($existingRecord);
+                    if ($identityKey !== null && isset($existingIdentity[$identityKey])) {
+                        unset($existingIdentity[$identityKey]);
+                    }
+                } else {
+                    $summary['records_failed']++;
+                    $errors = $deleteRes['errors'] ?? [];
+                    $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
+                    if ($errorText === '') {
+                        $errorText = '删除失败';
+                    }
+                    $warnings[] = '删除失败 ' . ($existingRecord['name'] ?? '') . ' ' . ($existingRecord['type'] ?? '') . '：' . $errorText;
+                }
+            }
+            unset($existingByRrset[$rrsetKey]);
+        }
+
+        foreach ($records as $record) {
+            $summary['records_total']++;
+            $identityKey = cfmod_pdns_record_identity_key($record);
+            if (!$overwriteSameNameType && $identityKey !== null && isset($existingIdentity[$identityKey])) {
+                $summary['records_skipped_existing']++;
+                continue;
+            }
+
+            $createRes = cfmod_pdns_create_record_on_provider($providerClient, $zoneId, $record);
+            if ($createRes['success'] ?? false) {
+                $summary['records_created']++;
+                if ($identityKey !== null) {
+                    $existingIdentity[$identityKey] = true;
+                }
+            } else {
+                $summary['records_failed']++;
+                $errors = $createRes['errors'] ?? [];
+                $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
+                if ($errorText === '') {
+                    $errorText = '写入失败';
+                }
+                $warnings[] = '写入失败 ' . ($record['name'] ?? '') . ' ' . ($record['type'] ?? '') . '：' . $errorText;
+            }
+        }
+    }
+
+    if ($rootRow) {
+        try {
+            Capsule::table('mod_cloudflare_rootdomains')
+                ->where('id', intval($rootRow->id))
+                ->update([
+                    'cloudflare_zone_id' => $zoneId,
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
+        } catch (\Throwable $e) {
+            $warnings[] = '更新根域名 Zone 标识失败';
+        }
+    }
+
+    $summary['warnings'] = array_values(array_unique(array_filter($warnings)));
+
+    if (function_exists('cloudflare_subdomain_log')) {
+        try {
+            cloudflare_subdomain_log('admin_import_rootdomain_pdns', [
+                'rootdomain' => $summary['rootdomain'],
+                'summary' => $summary,
+            ]);
+        } catch (\Throwable $e) {
+        }
+    }
+
+    return $summary;
+}
+
 if (!function_exists('cfmod_fetch_dns_records_for_subdomains')) {
-    function cfmod_fetch_dns_records_for_subdomains(array $subdomainRows, string $filterType = '', string $filterName = '', array $options = []): array {
+function cfmod_fetch_dns_records_for_subdomains(array $subdomainRows, string $filterType = '', string $filterName = '', array $options = []): array {
         $subdomainIds = [];
         $subdomainNames = [];
         foreach ($subdomainRows as $row) {
