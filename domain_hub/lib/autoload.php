@@ -39,6 +39,8 @@ spl_autoload_register(static function (string $class): void {
         'CfModuleInstaller' => __DIR__ . '/Setup/ModuleInstaller.php',
         'CfHookRegistrar' => __DIR__ . '/Hooks/Registrar.php',
         'CfApiRouter' => __DIR__ . '/Support/ApiRouter.php',
+        'CfApiContract' => __DIR__ . '/Support/ApiContract.php',
+        'CfOpenApiSpec' => __DIR__ . '/Support/OpenApiSpec.php',
     ];
 
     if (isset($classMap[$class])) {

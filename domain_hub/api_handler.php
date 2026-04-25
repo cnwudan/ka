@@ -22,9 +22,179 @@ require_once __DIR__ . '/lib/AdminMaintenance.php';
 
 
 function api_json($arr, $code = 200){
+    if (is_array($arr) && !array_key_exists('openapi', $arr)) {
+        $arr = api_standardize_payload($arr, intval($code));
+    }
     http_response_code($code);
     header('Content-Type: application/json; charset=utf-8');
     echo json_encode($arr, JSON_UNESCAPED_UNICODE);
+}
+
+
+
+function api_standardize_payload(array $payload, int $httpStatus): array
+{
+    $hasErrorText = isset($payload['error']) && trim((string) $payload['error']) !== '';
+    $success = $payload['success'] ?? null;
+    if ($success === null) {
+        $success = !$hasErrorText && $httpStatus < 400;
+    }
+    $success = (bool) $success;
+
+    if ($success) {
+        if (!array_key_exists('success', $payload)) {
+            $payload['success'] = true;
+        }
+        return $payload;
+    }
+
+    $message = trim((string) ($payload['message'] ?? ($payload['error'] ?? '')));
+    if ($message === '') {
+        $message = api_default_error_message($httpStatus);
+    }
+
+    $existingErrorCode = trim((string) ($payload['error_code'] ?? ''));
+    $errorCode = $existingErrorCode !== '' ? $existingErrorCode : api_resolve_error_code($message, $httpStatus, $payload);
+
+    $details = api_extract_error_details($payload);
+
+    $payload['success'] = false;
+    $payload['error_code'] = $errorCode;
+    $payload['message'] = $message;
+    $payload['error'] = $message;
+    $payload['details'] = !empty($details) ? $details : new \stdClass();
+
+    return $payload;
+}
+
+function api_default_error_message(int $httpStatus): string
+{
+    $map = [
+        400 => 'Bad request',
+        401 => 'Unauthorized',
+        402 => 'Payment required',
+        403 => 'Forbidden',
+        404 => 'Not found',
+        405 => 'Method not allowed',
+        409 => 'Conflict',
+        410 => 'Gone',
+        422 => 'Unprocessable entity',
+        429 => 'Rate limit exceeded',
+        500 => 'Internal server error',
+        502 => 'Upstream provider error',
+        503 => 'Service unavailable',
+    ];
+
+    return $map[$httpStatus] ?? 'Request failed';
+}
+
+function api_resolve_error_code(string $message, int $httpStatus, array $payload): string
+{
+    $reason = strtolower(trim((string) ($payload['reason'] ?? '')));
+    if ($reason !== '') {
+        if ($reason === 'limit_exceeded') {
+            return 'rate_limit_exceeded';
+        }
+        if ($reason === 'storage_error') {
+            return 'rate_limit_storage_error';
+        }
+    }
+
+    $normalized = strtolower(trim($message));
+    $contains = static function (array $patterns) use ($normalized): bool {
+        foreach ($patterns as $pattern) {
+            if ($pattern !== '' && strpos($normalized, $pattern) !== false) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if ($contains(['invalid api key', 'invalid api secret', 'missing api credentials'])) {
+        return 'auth_invalid_credentials';
+    }
+    if ($contains(['ip not allowed'])) {
+        return 'auth_ip_not_allowed';
+    }
+    if ($contains(['api access disabled'])) {
+        return 'api_access_disabled';
+    }
+    if ($contains(['rate limit'])) {
+        return 'rate_limit_exceeded';
+    }
+    if ($contains(['quota exceeded'])) {
+        return 'quota_exceeded';
+    }
+    if ($contains(['subdomain not found'])) {
+        return 'subdomain_not_found';
+    }
+    if ($contains(['record not found'])) {
+        return 'dns_record_not_found';
+    }
+    if ($contains(['key not found'])) {
+        return 'api_key_not_found';
+    }
+    if ($contains(['invalid domain'])) {
+        return 'invalid_domain';
+    }
+    if ($contains(['invalid parameters', 'subdomain_id required', 'record_id required', 'key id required'])) {
+        return 'invalid_parameters';
+    }
+    if ($contains(['provider unavailable'])) {
+        return 'provider_unavailable';
+    }
+    if ($contains(['provider delete failed', 'create failed', 'update failed'])) {
+        return 'provider_operation_failed';
+    }
+
+    $httpMap = [
+        400 => 'bad_request',
+        401 => 'unauthorized',
+        402 => 'payment_required',
+        403 => 'forbidden',
+        404 => 'not_found',
+        405 => 'method_not_allowed',
+        409 => 'conflict',
+        410 => 'gone',
+        422 => 'unprocessable_entity',
+        429 => 'rate_limit_exceeded',
+        500 => 'internal_error',
+        502 => 'provider_error',
+        503 => 'service_unavailable',
+    ];
+
+    return $httpMap[$httpStatus] ?? 'request_failed';
+}
+
+function api_extract_error_details(array $payload): array
+{
+    $ignore = [
+        'success',
+        'error',
+        'error_code',
+        'message',
+        'details',
+        'subdomains',
+        'records',
+        'keys',
+        'quota',
+        'pagination',
+        'count',
+    ];
+
+    if (isset($payload['details']) && is_array($payload['details'])) {
+        return $payload['details'];
+    }
+
+    $details = [];
+    foreach ($payload as $key => $value) {
+        if (in_array((string) $key, $ignore, true)) {
+            continue;
+        }
+        $details[$key] = $value;
+    }
+
+    return $details;
 }
 
 function api_get_header($name){
@@ -1821,6 +1991,75 @@ function cfmod_handle_public_whois(array $settings, string $method, array $data)
     api_json($payload, $status);
 }
 
+
+
+function api_current_base_url(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host = trim((string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+    if ($host === '') {
+        $host = 'localhost';
+    }
+    $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
+    $dir = trim(str_replace('\', '/', dirname($scriptName)));
+    if ($dir === '.' || $dir === '/') {
+        $dir = '';
+    }
+
+    return $scheme . '://' . $host . $dir;
+}
+
+function api_docs_spec_url(): string
+{
+    $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
+    $query = [
+        'm' => defined('CF_MODULE_NAME') ? CF_MODULE_NAME : 'domain_hub',
+        'endpoint' => 'docs',
+        'format' => 'openapi',
+    ];
+
+    return $scriptName . '?' . http_build_query($query);
+}
+
+function api_render_swagger_ui(string $specUrl): void
+{
+    $encodedSpecUrl = json_encode($specUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($encodedSpecUrl) || $encodedSpecUrl === '') {
+        $encodedSpecUrl = '""';
+    }
+
+    http_response_code(200);
+    header('Content-Type: text/html; charset=utf-8');
+    echo '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">';
+    echo '<title>Domain Hub API Docs</title>';
+    echo '<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css">';
+    echo '<style>html,body{margin:0;padding:0;background:#f7f8fa}#swagger-ui{max-width:1200px;margin:0 auto;padding:24px}</style>';
+    echo '</head><body><div id="swagger-ui"></div>';
+    echo '<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>';
+    echo '<script>window.onload=function(){window.ui=SwaggerUIBundle({url:' . $encodedSpecUrl . ',dom_id:"#swagger-ui",deepLinking:true,presets:[SwaggerUIBundle.presets.apis],layout:"BaseLayout"});};</script>';
+    echo '</body></html>';
+}
+
+function api_handle_docs_request(string $method, string $action, array $data = []): void
+{
+    if (strtoupper($method) !== 'GET') {
+        api_json(['error' => 'method not allowed'], 405);
+        return;
+    }
+
+    $format = strtolower(trim((string) ($_GET['format'] ?? ($data['format'] ?? 'openapi'))));
+    $action = strtolower(trim($action));
+
+    if ($action === 'swagger' || $format === 'swagger' || $format === 'ui') {
+        api_render_swagger_ui(api_docs_spec_url());
+        return;
+    }
+
+    $baseUrl = api_current_base_url();
+    $spec = CfOpenApiSpec::build($baseUrl, __FILE__);
+    api_json($spec, 200);
+}
+
 function handleApiRequest(){
     $t0 = microtime(true);
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -1830,6 +2069,11 @@ function handleApiRequest(){
     $endpoint = $_GET['endpoint'] ?? ($data['endpoint'] ?? '');
     $action = $_GET['action'] ?? ($data['action'] ?? '');
     $settings = api_load_settings();
+
+    if ($endpoint === 'docs') {
+        api_handle_docs_request($method, (string) $action, is_array($data) ? $data : []);
+        return;
+    }
 
     if ($endpoint === 'whois' && !api_setting_enabled($settings['whois_require_api_key'] ?? '0')) {
         cfmod_handle_public_whois($settings, $method, $data);
