@@ -835,3 +835,24 @@ $_LANG['github_star_reward.already'] = 'You have already claimed the star reward
 $_LANG['github_star_reward.quota_error'] = 'Failed to load quota information. Please try again later.';
 $_LANG['github_star_reward.invalid_user'] = 'Unable to detect the logged-in user. Please refresh and try again.';
 $_LANG['github_star_reward.error'] = 'Claim failed: %s';
+
+$_LANG['cfclient.feature.expiry_telegram.title'] = 'Telegram Expiry Reminder';
+$_LANG['cfclient.feature.expiry_telegram.enabled'] = 'Enabled';
+$_LANG['cfclient.feature.expiry_telegram.disabled'] = 'Disabled';
+$_LANG['cfclient.feature.expiry_telegram.desc'] = 'Bind your Telegram account to receive automatic reminders before domain expiration.';
+$_LANG['cfclient.feature.expiry_telegram.days'] = 'Reminder days: %s';
+$_LANG['cfclient.feature.expiry_telegram.bound'] = 'Bound account: %s';
+$_LANG['cfclient.feature.expiry_telegram.button'] = 'Manage Telegram Reminder';
+$_LANG['cfclient.feature.expiry_telegram.misconfigured'] = 'Telegram reminder settings are incomplete. You can still disable existing reminders.';
+
+$_LANG['cfclient.expiry_telegram.modal.title'] = 'Telegram Expiry Reminder';
+$_LANG['cfclient.expiry_telegram.modal.days'] = 'Reminder days: %s (sent automatically before expiration)';
+$_LANG['cfclient.expiry_telegram.modal.account'] = 'Bound account';
+$_LANG['cfclient.expiry_telegram.modal.no_account'] = 'Not bound yet';
+$_LANG['cfclient.expiry_telegram.modal.enable'] = 'Enable Telegram expiry reminders';
+$_LANG['cfclient.expiry_telegram.modal.bound_hint'] = 'Telegram is bound: %s. You can save directly or re-authorize.';
+$_LANG['cfclient.expiry_telegram.modal.auth_hint'] = 'Please complete Telegram authorization before enabling reminders.';
+$_LANG['cfclient.expiry_telegram.modal.domain_hint'] = 'If you see "Bot domain invalid", add this site domain to the bot whitelist in BotFather.';
+$_LANG['cfclient.expiry_telegram.modal.not_configured'] = 'Telegram reminder settings are not complete yet, so authorization is unavailable.';
+$_LANG['cfclient.expiry_telegram.modal.submit'] = 'Save reminder settings';
+$_LANG['cfclient.expiry_telegram.modal.auth_required'] = 'Please complete Telegram authorization before enabling reminders.';
