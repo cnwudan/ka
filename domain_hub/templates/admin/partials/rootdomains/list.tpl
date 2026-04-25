@@ -481,6 +481,19 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                             <label class="form-check-label" for="pdns_export_source_local">本地缓存（应急导出，可能非最新）</label>
                         </div>
                     </div>
+                    <div class="mt-2">
+                        <label class="form-label mb-1">本地应急导出限制（仅本地缓存模式生效）</label>
+                        <div class="input-group input-group-sm">
+                            <select class="form-select" name="pdns_local_export_limit_mode">
+                                <option value="none" selected>不限制（导出全部本地缓存）</option>
+                                <option value="subdomain">仅前 N 个子域名的记录</option>
+                                <option value="record">仅前 N 条 DNS 记录</option>
+                            </select>
+                            <span class="input-group-text">N</span>
+                            <input type="number" class="form-control" name="pdns_local_export_limit_value" value="1000" min="100" max="50000">
+                        </div>
+                        <div class="form-text text-muted">适合记录量过大时应急导出，导出文件会标记为部分导出。</div>
+                    </div>
                     <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
                         <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>

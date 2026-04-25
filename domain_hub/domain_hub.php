@@ -1676,7 +1676,7 @@ function cfmod_collect_rootdomain_pdns_dataset(string $rootdomain): array {
     ];
 }
 
-function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): array {
+function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, array $options = []): array {
     $normalized = cfmod_normalize_rootdomain($rootdomain);
     if ($normalized === '') {
         throw new \InvalidArgumentException('根域名不能为空');
@@ -1685,6 +1685,18 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): a
     if (!cfmod_table_exists('mod_cloudflare_subdomain') || !cfmod_table_exists('mod_cloudflare_dns_records')) {
         throw new \RuntimeException('本地 DNS 数据表不存在，无法执行本地缓存导出');
     }
+
+    $limitMode = strtolower(trim((string) ($options['limit_mode'] ?? 'none')));
+    if (!in_array($limitMode, ['none', 'subdomain', 'record'], true)) {
+        $limitMode = 'none';
+    }
+    $limitValue = intval($options['limit_value'] ?? 1000);
+    if ($limitValue <= 0) {
+        $limitValue = 1000;
+    }
+    $limitValue = max(100, min(50000, $limitValue));
+    $partialExport = ($limitMode !== 'none');
+    $hasMore = false;
 
     $rootRow = null;
     if (cfmod_table_exists('mod_cloudflare_rootdomains')) {
@@ -1704,30 +1716,30 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): a
     }
 
     $subdomainIds = [];
-    try {
-        $subRows = Capsule::table('mod_cloudflare_subdomain')
-            ->whereRaw('LOWER(rootdomain) = ?', [$normalized])
-            ->select('id')
-            ->get();
-        foreach ($subRows as $subRow) {
-            $sid = intval($subRow->id ?? 0);
-            if ($sid > 0) {
-                $subdomainIds[] = $sid;
-            }
-        }
-    } catch (\Throwable $e) {
-        throw new \RuntimeException('读取本地子域名数据失败：' . $e->getMessage(), 0, $e);
-    }
-
     $rawRecords = [];
-    if (!empty($subdomainIds)) {
+
+    if ($limitMode === 'record') {
         try {
-            $dnsRows = Capsule::table('mod_cloudflare_dns_records')
-                ->whereIn('subdomain_id', $subdomainIds)
-                ->orderBy('subdomain_id', 'asc')
-                ->orderBy('id', 'asc')
+            $dnsRows = Capsule::table('mod_cloudflare_dns_records as d')
+                ->join('mod_cloudflare_subdomain as s', 's.id', '=', 'd.subdomain_id')
+                ->whereRaw('LOWER(s.rootdomain) = ?', [$normalized])
+                ->select('d.id', 'd.subdomain_id', 'd.record_id', 'd.name', 'd.type', 'd.content', 'd.ttl', 'd.priority', 'd.status')
+                ->orderBy('d.id', 'asc')
+                ->limit($limitValue + 1)
                 ->get();
+
+            $seenSubdomains = [];
+            $rowIndex = 0;
             foreach ($dnsRows as $row) {
+                if ($rowIndex >= $limitValue) {
+                    $hasMore = true;
+                    break;
+                }
+                $rowIndex++;
+                $sid = intval($row->subdomain_id ?? 0);
+                if ($sid > 0) {
+                    $seenSubdomains[$sid] = true;
+                }
                 $status = strtolower(trim((string) ($row->status ?? 'active')));
                 $rawRecords[] = [
                     'name' => (string) ($row->name ?? ''),
@@ -1739,14 +1751,76 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): a
                     'disabled' => ($status !== '' && $status !== 'active') ? 1 : 0,
                 ];
             }
+            $subdomainIds = array_map('intval', array_keys($seenSubdomains));
         } catch (\Throwable $e) {
             throw new \RuntimeException('读取本地 DNS 记录失败：' . $e->getMessage(), 0, $e);
+        }
+    } else {
+        try {
+            $subRowsQuery = Capsule::table('mod_cloudflare_subdomain')
+                ->whereRaw('LOWER(rootdomain) = ?', [$normalized])
+                ->select('id')
+                ->orderBy('id', 'asc');
+            if ($limitMode === 'subdomain') {
+                $subRowsQuery->limit($limitValue + 1);
+            }
+            $subRows = $subRowsQuery->get();
+            $selectedSubCount = 0;
+            foreach ($subRows as $subRow) {
+                $sid = intval($subRow->id ?? 0);
+                if ($sid <= 0) {
+                    continue;
+                }
+                if ($limitMode === 'subdomain' && $selectedSubCount >= $limitValue) {
+                    $hasMore = true;
+                    break;
+                }
+                $subdomainIds[] = $sid;
+                $selectedSubCount++;
+            }
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('读取本地子域名数据失败：' . $e->getMessage(), 0, $e);
+        }
+
+        if (!empty($subdomainIds)) {
+            try {
+                $dnsRows = Capsule::table('mod_cloudflare_dns_records')
+                    ->whereIn('subdomain_id', $subdomainIds)
+                    ->orderBy('subdomain_id', 'asc')
+                    ->orderBy('id', 'asc')
+                    ->get();
+                foreach ($dnsRows as $row) {
+                    $status = strtolower(trim((string) ($row->status ?? 'active')));
+                    $rawRecords[] = [
+                        'name' => (string) ($row->name ?? ''),
+                        'type' => (string) ($row->type ?? ''),
+                        'content' => (string) ($row->content ?? ''),
+                        'ttl' => intval($row->ttl ?? 600),
+                        'priority' => ($row->priority ?? null),
+                        'record_id' => (string) ($row->record_id ?? ''),
+                        'disabled' => ($status !== '' && $status !== 'active') ? 1 : 0,
+                    ];
+                }
+            } catch (\Throwable $e) {
+                throw new \RuntimeException('读取本地 DNS 记录失败：' . $e->getMessage(), 0, $e);
+            }
         }
     }
 
     $warnings = [
         '当前为本地缓存导出，仅用于应急，记录可能不是最新云端状态。',
     ];
+    if ($partialExport) {
+        if ($limitMode === 'subdomain') {
+            $warnings[] = '当前导出仅包含前 ' . $limitValue . ' 个子域名的记录。';
+        } elseif ($limitMode === 'record') {
+            $warnings[] = '当前导出仅包含前 ' . $limitValue . ' 条 DNS 记录。';
+        }
+        if ($hasMore) {
+            $warnings[] = '本次为部分导出，仍有更多记录未导出。';
+        }
+    }
+
     $normalizedRecords = [];
     $identitySet = [];
 
@@ -1783,9 +1857,16 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain): a
             'provider_type' => $providerAccount['provider_type'] ?? null,
         ],
         'export_source' => 'local_cache',
+        'partial_export' => $partialExport ? 1 : 0,
+        'partial_rule' => [
+            'mode' => $limitMode,
+            'limit_value' => $partialExport ? $limitValue : null,
+            'has_more' => $hasMore ? 1 : 0,
+        ],
         'rrsets' => $rrsets,
         'records' => $normalizedRecords,
         'counts' => [
+            'selected_subdomains' => count($subdomainIds),
             'raw_records' => count($rawRecords),
             'records' => count($normalizedRecords),
             'rrsets' => count($rrsets),
