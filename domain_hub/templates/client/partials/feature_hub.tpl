@@ -345,7 +345,7 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                                 <span class="badge bg-secondary"><?php echo $featureText('cfclient.feature.expiry_telegram.disabled', '未开启', 'Disabled'); ?></span>
                             <?php endif; ?>
                         </div>
-                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.expiry_telegram.desc', '绑定 Telegram 后可在域名到期前自动收到提醒消息。', 'Bind your Telegram account to receive automatic expiry reminders before domain expiration.'); ?></p>
+                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.expiry_telegram.desc', '绑定telegram账号后可设置域名到期即将消息提醒服务。', 'Bind your Telegram account to receive automatic expiry reminders before domain expiration.'); ?></p>
                         <p class="small mb-3"><?php echo $featureText('cfclient.feature.expiry_telegram.days', '提醒天数：%s', 'Reminder days: %s', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?></p>
                         <div class="d-flex flex-column gap-2 mt-auto">
                             <?php if ($expiryTelegramReminderDisplayName !== ''): ?>
