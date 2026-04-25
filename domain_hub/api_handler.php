@@ -1243,9 +1243,15 @@ function api_fetch_api_key_usage_stats(array $keyIds): array {
 }
 
 function api_auth(){
-    $apiKey = api_get_header('X-API-Key') ?: ($_GET['api_key'] ?? $_POST['api_key'] ?? null);
-    $apiSecret = api_get_header('X-API-Secret') ?: ($_GET['api_secret'] ?? $_POST['api_secret'] ?? null);
-    if (!$apiKey || !$apiSecret) { return [false, 'Missing API credentials']; }
+    $legacyApiKey = trim((string)($_GET['api_key'] ?? $_POST['api_key'] ?? ''));
+    $legacyApiSecret = trim((string)($_GET['api_secret'] ?? $_POST['api_secret'] ?? ''));
+    if ($legacyApiKey !== '' || $legacyApiSecret !== '') {
+        return [false, 'API credentials in URL/body are not allowed. Use X-API-Key and X-API-Secret headers'];
+    }
+
+    $apiKey = trim((string)api_get_header('X-API-Key'));
+    $apiSecret = trim((string)api_get_header('X-API-Secret'));
+    if ($apiKey === '' || $apiSecret === '') { return [false, 'Missing API credentials (use X-API-Key and X-API-Secret headers)']; }
     $row = Capsule::table('mod_cloudflare_api_keys')->where('api_key', $apiKey)->first();
     if (!$row) { return [false, 'Invalid API key']; }
     if (($row->status ?? '') !== 'active') { return [false, 'API key disabled']; }
