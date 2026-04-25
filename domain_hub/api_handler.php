@@ -2001,7 +2001,7 @@ function api_current_base_url(): string
         $host = 'localhost';
     }
     $scriptName = (string) ($_SERVER['SCRIPT_NAME'] ?? '/index.php');
-    $dir = trim(str_replace('\', '/', dirname($scriptName)));
+    $dir = trim(str_replace('\\', '/', dirname($scriptName)));
     if ($dir === '.' || $dir === '/') {
         $dir = '';
     }
