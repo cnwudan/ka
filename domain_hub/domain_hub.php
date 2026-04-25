@@ -1421,6 +1421,14 @@ function domain_hub_config() {
                 "Default" => "",
                 "Description" => "用于发送到期提醒消息。留空时优先复用社群奖励 Bot Token。",
             ],
+            "renewal_notice_telegram_template" => [
+                "FriendlyName" => "Telegram 提醒模板",
+                "Type" => "textarea",
+                "Rows" => "4",
+                "Cols" => "50",
+                "Default" => "【域名到期提醒】\n域名：{\$fqdn}\n到期时间：{\$expiry_datetime}\n剩余天数：{\$days_left} 天\n请及时续期，避免域名失效。",
+                "Description" => "支持变量 {\$domain}、{\$rootdomain}、{\$fqdn}、{\$expiry_date}、{\$expiry_datetime}、{\$days_left}、{\$reminder_days}。",
+            ],
             "renewal_notice_telegram_days" => [
                 "FriendlyName" => "Telegram 提醒天数",
                 "Type" => "text",

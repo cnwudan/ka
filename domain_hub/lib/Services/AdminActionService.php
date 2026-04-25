@@ -95,6 +95,7 @@ class CfAdminActionService
         'admin_adjust_expiry' => [self::class, 'handleAdminAdjustExpiry'],
         'save_renewal_notice_settings' => [self::class, 'handleSaveRenewalNoticeSettings'],
         'admin_test_renewal_notice' => [self::class, 'handleTestRenewalNotice'],
+        'admin_test_renewal_notice_telegram' => [self::class, 'handleTestRenewalTelegramNotice'],
         'reset_module' => [self::class, 'handleResetModule'],
         'batch_delete' => [self::class, 'handleBatchDelete'],
         'batch_adjust_expiry' => [self::class, 'handleBatchAdjustExpiry'],
@@ -3475,6 +3476,19 @@ class CfAdminActionService
 
         $telegramDaysInput = trim((string) ($_POST['renewal_notice_telegram_days']
             ?? ($settings['renewal_notice_telegram_days'] ?? '30,10')));
+        $telegramTemplate = trim((string) ($_POST['renewal_notice_telegram_template']
+            ?? ($settings['renewal_notice_telegram_template'] ?? '')));
+        if ($telegramTemplate === '') {
+            if (class_exists('CfTelegramExpiryReminderService')) {
+                $telegramTemplate = CfTelegramExpiryReminderService::defaultTemplate();
+            } else {
+                $telegramTemplate = "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。";
+            }
+        }
         $telegramAuthMaxAgeInput = intval($_POST['renewal_notice_telegram_auth_max_age_seconds']
             ?? ($settings['renewal_notice_telegram_auth_max_age_seconds'] ?? 86400));
         $telegramAuthMaxAge = max(60, min(604800, $telegramAuthMaxAgeInput));
@@ -3534,6 +3548,7 @@ class CfAdminActionService
                 'renewal_notice_telegram_enabled' => $telegramEnabled ? '1' : '0',
                 'renewal_notice_telegram_bot_username' => $telegramBotUsername,
                 'renewal_notice_telegram_bot_token' => $telegramTokenStored,
+                'renewal_notice_telegram_template' => $telegramTemplate,
                 'renewal_notice_telegram_days' => $telegramDaysInput,
                 'renewal_notice_telegram_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
             ]);
@@ -3546,6 +3561,9 @@ class CfAdminActionService
                     'days_secondary' => max(0, $day2),
                     'telegram_enabled' => $telegramEnabled ? 1 : 0,
                     'telegram_bot_username' => $telegramBotUsername,
+                    'telegram_template_length' => function_exists('mb_strlen')
+                        ? mb_strlen($telegramTemplate, 'UTF-8')
+                        : strlen($telegramTemplate),
                     'telegram_days' => $telegramDaysInput,
                     'telegram_auth_max_age' => $telegramAuthMaxAge,
                 ]);
@@ -3604,6 +3622,81 @@ class CfAdminActionService
                 throw new Exception($result['message'] ?? '发送失败');
             }
             self::flashSuccess('测试提醒邮件已发送（提前 ' . $days . ' 天）。');
+        } catch (Exception $e) {
+            self::flashError('测试发送失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
+        }
+
+        self::redirect(self::HASH_RUNTIME);
+    }
+
+
+    private static function handleTestRenewalTelegramNotice(): void
+    {
+        $settings = self::moduleSettings();
+        if (!class_exists('CfTelegramExpiryReminderService')) {
+            self::flashError('Telegram 到期提醒服务未加载，请检查模块文件。');
+            self::redirect(self::HASH_RUNTIME);
+        }
+
+        if (!CfTelegramExpiryReminderService::isConfigured($settings)) {
+            self::flashError('请先完成 Telegram Bot 用户名/Token 配置后再测试发送。');
+            self::redirect(self::HASH_RUNTIME);
+        }
+
+        $daysList = CfTelegramExpiryReminderService::parseConfiguredDays($settings);
+        $overrideDays = intval($_POST['test_telegram_notice_days'] ?? 0);
+        $overrideTelegramUserId = intval($_POST['test_override_telegram_user_id'] ?? 0);
+        $subdomainId = intval($_POST['test_telegram_subdomain_id'] ?? 0);
+        $subdomainLabel = trim((string) ($_POST['test_telegram_subdomain'] ?? ''));
+
+        if ($overrideDays > 0) {
+            $days = $overrideDays;
+        } elseif (!empty($daysList)) {
+            $days = intval($daysList[0]);
+        } else {
+            self::flashError('请先配置至少一个有效的 Telegram 提醒天数。');
+            self::redirect(self::HASH_RUNTIME);
+        }
+
+        if ($subdomainId <= 0 && $subdomainLabel === '') {
+            self::flashError('请填写目标子域名或 ID。');
+            self::redirect(self::HASH_RUNTIME);
+        }
+
+        try {
+            CfTelegramExpiryReminderService::ensureTables();
+
+            $query = Capsule::table('mod_cloudflare_subdomain');
+            if ($subdomainId > 0) {
+                $query->where('id', $subdomainId);
+            } else {
+                $query->where('subdomain', $subdomainLabel);
+            }
+            $record = $query->first();
+            if (!$record) {
+                throw new Exception('未找到对应的子域名记录');
+            }
+
+            $recordObj = is_array($record) ? (object) $record : $record;
+            if ($overrideTelegramUserId > 0) {
+                $recordObj->reminder_telegram_user_id = $overrideTelegramUserId;
+            }
+
+            $result = CfTelegramExpiryReminderService::sendReminderMessage($recordObj, $days, $settings);
+            if (empty($result['success'])) {
+                $message = (string) ($result['message'] ?? '发送失败');
+                if ($message === 'telegram_not_bound') {
+                    $message = '未找到可用的 Telegram 绑定，请先在前台完成绑定，或填写覆盖 Telegram 用户ID。';
+                }
+                throw new Exception($message);
+            }
+
+            $targetHint = $overrideTelegramUserId > 0
+                ? ('（目标 Telegram 用户ID：' . $overrideTelegramUserId . '）')
+                : '';
+            self::flashSuccess('测试 Telegram 到期提醒已发送（提前 ' . $days . ' 天）' . $targetHint . '。');
+        } catch (CfTelegramExpiryReminderException $e) {
+            self::flashError('测试发送失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
         } catch (Exception $e) {
             self::flashError('测试发送失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
         }

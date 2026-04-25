@@ -471,7 +471,7 @@ class CfTelegramExpiryReminderService
             return ['success' => false, 'message' => 'telegram_not_bound'];
         }
 
-        $message = self::buildReminderText($row, $days);
+        $message = self::buildReminderText($row, $days, $settings);
         $sendResult = self::telegramApiRequest($botToken, 'sendMessage', [
             'chat_id' => (string) $telegramUserId,
             'text' => $message,
@@ -494,8 +494,21 @@ class CfTelegramExpiryReminderService
 
         return ['success' => true, 'message' => 'sent'];
     }
+    public static function defaultTemplate(): string
+    {
+        return "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。";
+    }
+    private static function normalizeTemplateLineBreaks(string $template): string
+    {
+        $template = str_replace(["\r\n", "\r"], "\n", $template);
+        return str_replace(['\\r\\n', '\\n', '\\r'], "\n", $template);
+    }
 
-    private static function buildReminderText($row, int $days): string
+    private static function buildReminderText($row, int $days, array $settings = []): string
     {
         $subdomain = trim((string) ($row->subdomain ?? ''));
         $rootdomain = trim((string) ($row->rootdomain ?? ''));
@@ -504,24 +517,53 @@ class CfTelegramExpiryReminderService
             $fqdn = rtrim($subdomain, '.') . '.' . ltrim($rootdomain, '.');
         }
 
-        $expiry = trim((string) ($row->expires_at ?? ''));
+        $expiryRaw = trim((string) ($row->expires_at ?? ''));
         $expiryDate = '';
-        if ($expiry !== '') {
-            $expiryTs = strtotime($expiry);
+        $expiryDateTime = '';
+        if ($expiryRaw !== '') {
+            $expiryTs = strtotime($expiryRaw);
             if ($expiryTs !== false) {
-                $expiryDate = date('Y-m-d H:i:s', $expiryTs);
+                $expiryDate = date('Y-m-d', $expiryTs);
+                $expiryDateTime = date('Y-m-d H:i:s', $expiryTs);
             }
         }
 
-        $lines = [
-            '【域名到期提醒】',
-            '域名：' . ($fqdn !== '' ? $fqdn : '-'),
-            '到期时间：' . ($expiryDate !== '' ? $expiryDate : '-'),
-            '剩余天数：' . max(1, $days) . ' 天',
-            '请及时续期，避免域名失效。',
+        $daysLeft = max(1, $days);
+        $vars = [
+            '{$domain}' => $subdomain !== '' ? $subdomain : '-',
+            '{$rootdomain}' => $rootdomain !== '' ? $rootdomain : '-',
+            '{$fqdn}' => $fqdn !== '' ? $fqdn : '-',
+            '{$expiry_date}' => $expiryDate !== '' ? $expiryDate : '-',
+            '{$expiry_datetime}' => $expiryDateTime !== '' ? $expiryDateTime : '-',
+            '{$days_left}' => (string) $daysLeft,
+            '{$reminder_days}' => (string) $daysLeft,
         ];
 
-        return implode("\n", $lines);
+        $template = trim((string) ($settings['renewal_notice_telegram_template'] ?? ''));
+        if ($template === '') {
+            $template = self::defaultTemplate();
+        }
+        $template = self::normalizeTemplateLineBreaks($template);
+
+        $message = trim(strtr($template, $vars));
+        if ($message === '') {
+            $message = trim(strtr(self::defaultTemplate(), $vars));
+        }
+
+        $message = self::normalizeTemplateLineBreaks($message);
+        if ($message === '') {
+            $message = '域名到期提醒';
+        }
+
+        if (function_exists('mb_strlen') && function_exists('mb_substr')) {
+            if (mb_strlen($message, 'UTF-8') > 3900) {
+                $message = mb_substr($message, 0, 3900, 'UTF-8');
+            }
+        } elseif (strlen($message) > 3900) {
+            $message = substr($message, 0, 3900);
+        }
+
+        return $message;
     }
 
     private static function normalizeAuthPayload(array $authPayload): array
