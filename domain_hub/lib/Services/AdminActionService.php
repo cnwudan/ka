@@ -424,9 +424,16 @@ class CfAdminActionService
             }
             $zoneId = null;
             try {
-                $cf = new CloudflareAPI($providerAccount['access_key_id'] ?? '', $providerAccount['access_key_secret'] ?? '');
-                $zoneId = $cf->getZoneId($newDomain) ?: null;
-            } catch (Exception $e) {
+                $settingsSnapshot = self::moduleSettings();
+                $providerContext = cfmod_make_provider_client($providerAccountId, $newDomain, null, $settingsSnapshot, true);
+                $providerClient = is_array($providerContext) ? ($providerContext['client'] ?? null) : null;
+                if (is_object($providerClient) && method_exists($providerClient, 'getZoneId')) {
+                    $resolvedZone = $providerClient->getZoneId($newDomain);
+                    if ($resolvedZone !== false && $resolvedZone !== null && $resolvedZone !== '') {
+                        $zoneId = (string) $resolvedZone;
+                    }
+                }
+            } catch (\Throwable $e) {
                 $zoneId = null;
             }
             Capsule::table('mod_cloudflare_rootdomains')->insert([
@@ -603,6 +610,15 @@ class CfAdminActionService
     private static function handleRootdomainOrderUpdate(): void
     {
         $orders = $_POST['display_order'] ?? [];
+        if ((!is_array($orders) || empty($orders)) && isset($_POST['display_order_snapshot'])) {
+            $snapshotRaw = trim((string) $_POST['display_order_snapshot']);
+            if ($snapshotRaw !== '') {
+                $decodedSnapshot = json_decode($snapshotRaw, true);
+                if (is_array($decodedSnapshot)) {
+                    $orders = $decodedSnapshot;
+                }
+            }
+        }
         if (!is_array($orders) || empty($orders)) {
             self::flashError('未提交排序数据');
             self::redirect(self::HASH_ROOT_WHITELIST);
@@ -679,6 +695,21 @@ class CfAdminActionService
                 $defaultTermInput = 0;
             }
             $zoneIdInput = trim($_POST['cloudflare_zone_id'] ?? '');
+            if ($zoneIdInput === '') {
+                try {
+                    $settingsSnapshot = self::moduleSettings();
+                    $providerContext = cfmod_make_provider_client($providerIdForUpdate, (string) ($rootRow->domain ?? ''), null, $settingsSnapshot, true);
+                    $providerClient = is_array($providerContext) ? ($providerContext['client'] ?? null) : null;
+                    if (is_object($providerClient) && method_exists($providerClient, 'getZoneId')) {
+                        $resolvedZone = $providerClient->getZoneId((string) ($rootRow->domain ?? ''));
+                        if ($resolvedZone !== false && $resolvedZone !== null && $resolvedZone !== '') {
+                            $zoneIdInput = (string) $resolvedZone;
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    $zoneIdInput = '';
+                }
+            }
             $descriptionInput = trim($_POST['description'] ?? '');
             $requireInviteCode = (($_POST['require_invite_code'] ?? '0') === '1') ? 1 : 0;
             $updatePayload = [
@@ -761,10 +792,17 @@ class CfAdminActionService
             try {
                 $zoneProviderAccount = $fromRow ? self::resolveProviderAccount(intval($fromRow->provider_account_id ?? 0), true) : self::resolveProviderAccount(null, true);
                 if ($zoneProviderAccount) {
-                    $cf = new CloudflareAPI($zoneProviderAccount['access_key_id'] ?? '', $zoneProviderAccount['access_key_secret'] ?? '');
-                    $toZone = $cf->getZoneId($to) ?: null;
+                    $settingsSnapshot = self::moduleSettings();
+                    $providerContext = cfmod_make_provider_client(intval($zoneProviderAccount['id']), $to, null, $settingsSnapshot, true);
+                    $providerClient = is_array($providerContext) ? ($providerContext['client'] ?? null) : null;
+                    if (is_object($providerClient) && method_exists($providerClient, 'getZoneId')) {
+                        $resolvedZone = $providerClient->getZoneId($to);
+                        if ($resolvedZone !== false && $resolvedZone !== null && $resolvedZone !== '') {
+                            $toZone = (string) $resolvedZone;
+                        }
+                    }
                 }
-            } catch (Exception $e) {
+            } catch (\Throwable $e) {
                 $toZone = null;
             }
             if ($fromRow) {

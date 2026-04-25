@@ -67,6 +67,7 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
         
         <form method="post" id="rootdomain-order-form" class="d-flex align-items-center gap-2 mb-3">
             <input type="hidden" name="action" value="update_rootdomain_order">
+            <input type="hidden" name="display_order_snapshot" id="rootdomain-order-snapshot" value="">
             <button type="submit" class="btn btn-outline-primary btn-sm"><?php echo htmlspecialchars($orderSaveLabel); ?></button>
             <small class="text-muted"><?php echo htmlspecialchars($orderHint); ?></small>
         </form>
@@ -560,3 +561,26 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
         </div>
     </div>
 </div>
+
+<script>
+(function () {
+    var orderForm = document.getElementById('rootdomain-order-form');
+    if (!orderForm) {
+        return;
+    }
+    orderForm.addEventListener('submit', function () {
+        var payload = {};
+        document.querySelectorAll("input[name^='display_order[']").forEach(function (input) {
+            var match = (input.name || '').match(/^display_order\[(\d+)\]$/);
+            if (!match) {
+                return;
+            }
+            payload[match[1]] = input.value;
+        });
+        var snapshot = document.getElementById('rootdomain-order-snapshot');
+        if (snapshot) {
+            snapshot.value = JSON.stringify(payload);
+        }
+    });
+})();
+</script>
