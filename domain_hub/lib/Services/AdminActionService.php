@@ -1030,8 +1030,19 @@ class CfAdminActionService
             if ($targetRoot === '') {
                 throw new Exception('请选择要导出的根域名');
             }
-            $dataset = cfmod_collect_rootdomain_pdns_dataset($targetRoot);
-            cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export');
+            $useSegmented = (($_POST['pdns_segmented_export'] ?? '0') === '1');
+            $segmentSizeRaw = $_POST['pdns_export_segment_size'] ?? 10000;
+            $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
+                ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
+                : max(1000, min(50000, intval($segmentSizeRaw ?: 10000)));
+
+            if ($useSegmented && function_exists('cfmod_collect_rootdomain_pdns_dataset_segmented')) {
+                $dataset = cfmod_collect_rootdomain_pdns_dataset_segmented($targetRoot, $segmentSize);
+                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_segmented');
+            } else {
+                $dataset = cfmod_collect_rootdomain_pdns_dataset($targetRoot);
+                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export');
+            }
             exit;
         } catch (Exception $e) {
             self::flashError('PDNS 兼容导出失败：' . $e->getMessage());
@@ -1052,10 +1063,18 @@ class CfAdminActionService
 
             $overwriteSameNameType = (($_POST['pdns_overwrite_same_name_type'] ?? '1') === '1');
             $enqueueCalibration = (($_POST['pdns_enqueue_root_calibration'] ?? '1') === '1');
+            $useSegmentedImport = (($_POST['pdns_segmented_import'] ?? '1') === '1');
+            $segmentSizeRaw = $_POST['pdns_import_segment_size'] ?? 10000;
+            $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
+                ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
+                : max(1000, min(50000, intval($segmentSizeRaw ?: 10000)));
+
             $data = self::parseUploadedJsonFile('import_rootdomain_pdns_file');
 
             $summary = cfmod_import_rootdomain_pdns_dataset($data, $targetRoot, [
                 'overwrite_same_name_type' => $overwriteSameNameType ? 1 : 0,
+                'chunked_import' => $useSegmentedImport ? 1 : 0,
+                'segment_size' => $segmentSize,
             ]);
 
             if (function_exists('cfmod_clear_rootdomain_limits_cache')) {
@@ -1069,6 +1088,9 @@ class CfAdminActionService
 
             $parts = [];
             $parts[] = 'RRSet ' . intval($summary['rrsets_total'] ?? 0) . ' 组';
+            if (!empty($summary['segments_processed']) && intval($summary['segments_processed']) > 1) {
+                $parts[] = '分段 ' . intval($summary['segments_processed']) . '/' . intval($summary['segments_total'] ?? 0) . ' 段';
+            }
             $parts[] = '新增 ' . intval($summary['records_created'] ?? 0) . ' 条';
             if (!empty($summary['records_deleted_existing'])) {
                 $parts[] = '替换删除 ' . intval($summary['records_deleted_existing']) . ' 条';

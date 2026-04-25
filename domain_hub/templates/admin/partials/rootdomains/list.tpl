@@ -470,6 +470,14 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <?php endforeach; ?>
                     </select>
                     <div class="form-text text-muted mt-2">导出远端当前解析，输出为 PowerDNS RRSet 兼容 JSON，可用于跨平台迁移。</div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
+                        <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>
+                    </div>
+                    <div class="input-group input-group-sm mt-2">
+                        <span class="input-group-text">每段记录数</span>
+                        <input type="number" class="form-control" name="pdns_export_segment_size" value="10000" min="1000" max="50000">
+                    </div>
                     <button type="submit" class="btn btn-outline-success mt-3"><i class="fas fa-download me-1"></i> 导出 PDNS 兼容文件</button>
                 </form>
             </div>
@@ -490,10 +498,18 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <label class="form-check-label" for="pdns_overwrite_same_name_type">覆盖同名同类型记录（REPLACE 模式）</label>
                     </div>
                     <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="pdns_segmented_import" name="pdns_segmented_import" value="1" checked>
+                        <label class="form-check-label" for="pdns_segmented_import">分段导入（大规模记录推荐）</label>
+                    </div>
+                    <div class="input-group input-group-sm mt-2">
+                        <span class="input-group-text">每段记录数</span>
+                        <input type="number" class="form-control" name="pdns_import_segment_size" value="10000" min="1000" max="50000">
+                    </div>
+                    <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_enqueue_root_calibration" name="pdns_enqueue_root_calibration" value="1" checked>
                         <label class="form-check-label" for="pdns_enqueue_root_calibration">导入后自动提交根域校准任务</label>
                     </div>
-                    <div class="form-text text-muted">建议在大批量迁移后开启校准，自动同步本地与云端状态，降低前端编辑异常风险。</div>
+                    <div class="form-text text-muted">建议在大批量迁移后开启分段导入与校准，自动同步本地与云端状态，降低前端编辑异常风险。</div>
                     <button type="submit" class="btn btn-outline-primary mt-3"><i class="fas fa-upload me-1"></i> 一键导入到目标根域</button>
                 </form>
             </div>

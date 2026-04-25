@@ -1044,6 +1044,90 @@ function cfmod_pdns_is_blocked_type(string $type): bool {
     return in_array(strtoupper(trim($type)), cfmod_pdns_import_blocked_types(), true);
 }
 
+function cfmod_pdns_resolve_segment_size($segmentSize): int {
+    $size = intval($segmentSize);
+    if ($size <= 0) {
+        $size = 10000;
+    }
+    return max(1000, min(50000, $size));
+}
+
+function cfmod_pdns_build_segments_from_rrsets(array $rrsets, int $segmentSize): array {
+    $segmentSize = cfmod_pdns_resolve_segment_size($segmentSize);
+    $segments = [];
+    $buffer = [];
+    $bufferRecordCount = 0;
+    $segmentNo = 1;
+
+    foreach ($rrsets as $rrset) {
+        if (!is_array($rrset)) {
+            continue;
+        }
+        $records = isset($rrset['records']) && is_array($rrset['records']) ? $rrset['records'] : [];
+        $recordCount = count($records);
+        if ($recordCount <= 0) {
+            continue;
+        }
+
+        if (!empty($buffer) && ($bufferRecordCount + $recordCount) > $segmentSize) {
+            $segments[] = [
+                'segment_no' => $segmentNo++,
+                'records_count' => $bufferRecordCount,
+                'rrsets_count' => count($buffer),
+                'rrsets' => $buffer,
+            ];
+            $buffer = [];
+            $bufferRecordCount = 0;
+        }
+
+        $buffer[] = $rrset;
+        $bufferRecordCount += $recordCount;
+    }
+
+    if (!empty($buffer)) {
+        $segments[] = [
+            'segment_no' => $segmentNo,
+            'records_count' => $bufferRecordCount,
+            'rrsets_count' => count($buffer),
+            'rrsets' => $buffer,
+        ];
+    }
+
+    return $segments;
+}
+
+function cfmod_pdns_make_segmented_dataset(array $dataset, int $segmentSize): array {
+    $segmentSize = cfmod_pdns_resolve_segment_size($segmentSize);
+    $rrsets = isset($dataset['rrsets']) && is_array($dataset['rrsets']) ? $dataset['rrsets'] : [];
+    if (empty($rrsets) && isset($dataset['records']) && is_array($dataset['records'])) {
+        $rrsets = cfmod_pdns_group_records_to_rrsets($dataset['records']);
+    }
+
+    $segments = cfmod_pdns_build_segments_from_rrsets($rrsets, $segmentSize);
+
+    $dataset['segmented'] = 1;
+    $dataset['segment_size'] = $segmentSize;
+    $dataset['segment_count'] = count($segments);
+    $dataset['segments'] = $segments;
+
+    unset($dataset['records'], $dataset['rrsets']);
+
+    if (!isset($dataset['counts']) || !is_array($dataset['counts'])) {
+        $dataset['counts'] = [];
+    }
+    $dataset['counts']['segment_count'] = count($segments);
+
+    return $dataset;
+}
+
+function cfmod_collect_rootdomain_pdns_dataset_segmented(string $rootdomain, int $segmentSize = 10000): array {
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+    $dataset = cfmod_collect_rootdomain_pdns_dataset($rootdomain);
+    return cfmod_pdns_make_segmented_dataset($dataset, $segmentSize);
+}
+
 function cfmod_pdns_ends_with(string $haystack, string $needle): bool {
     if ($needle == '') {
         return true;
@@ -1600,6 +1684,12 @@ function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRoot
 
     $overwriteSameNameType = !array_key_exists('overwrite_same_name_type', $options)
         || !empty($options['overwrite_same_name_type']);
+    $chunkedImport = !empty($options['chunked_import']);
+    $segmentSize = cfmod_pdns_resolve_segment_size($options['segment_size'] ?? 10000);
+
+    if ($chunkedImport && function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
 
     $warnings = [];
     $desiredRecords = [];
@@ -1609,6 +1699,32 @@ function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRoot
             $desiredRecords,
             cfmod_pdns_parse_rrsets_to_records($dataset['rrsets'], $targetRootdomain, $warnings)
         );
+    }
+
+    if (isset($dataset['segments']) && is_array($dataset['segments'])) {
+        foreach ($dataset['segments'] as $segment) {
+            if (!is_array($segment)) {
+                continue;
+            }
+            if (isset($segment['rrsets']) && is_array($segment['rrsets'])) {
+                $desiredRecords = array_merge(
+                    $desiredRecords,
+                    cfmod_pdns_parse_rrsets_to_records($segment['rrsets'], $targetRootdomain, $warnings)
+                );
+            }
+            if (isset($segment['records']) && is_array($segment['records'])) {
+                foreach ($segment['records'] as $record) {
+                    if (!is_array($record)) {
+                        continue;
+                    }
+                    $normalized = cfmod_pdns_normalize_record($record, $targetRootdomain, $warnings, true);
+                    if ($normalized === null) {
+                        continue;
+                    }
+                    $desiredRecords[] = $normalized;
+                }
+            }
+        }
     }
 
     if (isset($dataset['records']) && is_array($dataset['records'])) {
@@ -1724,11 +1840,35 @@ function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRoot
     }
     ksort($desiredByRrset);
 
+    $batches = [];
+    $batchBuffer = [];
+    $batchRecordCount = 0;
+    foreach ($desiredByRrset as $rrsetKey => $records) {
+        $recordCountForRrset = count($records);
+        if ($chunkedImport && !empty($batchBuffer) && ($batchRecordCount + $recordCountForRrset) > $segmentSize) {
+            $batches[] = $batchBuffer;
+            $batchBuffer = [];
+            $batchRecordCount = 0;
+        }
+        $batchBuffer[$rrsetKey] = $records;
+        $batchRecordCount += $recordCountForRrset;
+    }
+    if (!empty($batchBuffer)) {
+        $batches[] = $batchBuffer;
+    }
+    if (empty($batches)) {
+        $batches[] = [];
+    }
+
     $summary = [
         'rootdomain' => $targetRootdomain,
         'zone_id' => (string) $zoneId,
         'source_rootdomain' => isset($dataset['rootdomain']) ? cfmod_normalize_rootdomain((string) $dataset['rootdomain']) : null,
         'overwrite_same_name_type' => $overwriteSameNameType ? 1 : 0,
+        'chunked_import' => $chunkedImport ? 1 : 0,
+        'segment_size' => $segmentSize,
+        'segments_total' => count($batches),
+        'segments_processed' => 0,
         'rrsets_total' => count($desiredByRrset),
         'records_total' => 0,
         'records_created' => 0,
@@ -1738,53 +1878,59 @@ function cfmod_import_rootdomain_pdns_dataset(array $dataset, string $targetRoot
         'warnings' => [],
     ];
 
-    foreach ($desiredByRrset as $rrsetKey => $records) {
-        if ($overwriteSameNameType && !empty($existingByRrset[$rrsetKey])) {
-            foreach ($existingByRrset[$rrsetKey] as $existingRecord) {
-                $deleteRes = cfmod_pdns_delete_record_on_provider($providerClient, $zoneId, $existingRecord);
-                if ($deleteRes['success'] ?? false) {
-                    $summary['records_deleted_existing']++;
-                    $identityKey = cfmod_pdns_record_identity_key($existingRecord);
-                    if ($identityKey !== null && isset($existingIdentity[$identityKey])) {
-                        unset($existingIdentity[$identityKey]);
+    foreach ($batches as $batch) {
+        if ($chunkedImport && function_exists('set_time_limit')) {
+            @set_time_limit(60);
+        }
+        foreach ($batch as $rrsetKey => $records) {
+            if ($overwriteSameNameType && !empty($existingByRrset[$rrsetKey])) {
+                foreach ($existingByRrset[$rrsetKey] as $existingRecord) {
+                    $deleteRes = cfmod_pdns_delete_record_on_provider($providerClient, $zoneId, $existingRecord);
+                    if ($deleteRes['success'] ?? false) {
+                        $summary['records_deleted_existing']++;
+                        $identityKey = cfmod_pdns_record_identity_key($existingRecord);
+                        if ($identityKey !== null && isset($existingIdentity[$identityKey])) {
+                            unset($existingIdentity[$identityKey]);
+                        }
+                    } else {
+                        $summary['records_failed']++;
+                        $errors = $deleteRes['errors'] ?? [];
+                        $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
+                        if ($errorText === '') {
+                            $errorText = '删除失败';
+                        }
+                        $warnings[] = '删除失败 ' . ($existingRecord['name'] ?? '') . ' ' . ($existingRecord['type'] ?? '') . '：' . $errorText;
+                    }
+                }
+                unset($existingByRrset[$rrsetKey]);
+            }
+
+            foreach ($records as $record) {
+                $summary['records_total']++;
+                $identityKey = cfmod_pdns_record_identity_key($record);
+                if (!$overwriteSameNameType && $identityKey !== null && isset($existingIdentity[$identityKey])) {
+                    $summary['records_skipped_existing']++;
+                    continue;
+                }
+
+                $createRes = cfmod_pdns_create_record_on_provider($providerClient, $zoneId, $record);
+                if ($createRes['success'] ?? false) {
+                    $summary['records_created']++;
+                    if ($identityKey !== null) {
+                        $existingIdentity[$identityKey] = true;
                     }
                 } else {
                     $summary['records_failed']++;
-                    $errors = $deleteRes['errors'] ?? [];
+                    $errors = $createRes['errors'] ?? [];
                     $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
                     if ($errorText === '') {
-                        $errorText = '删除失败';
+                        $errorText = '写入失败';
                     }
-                    $warnings[] = '删除失败 ' . ($existingRecord['name'] ?? '') . ' ' . ($existingRecord['type'] ?? '') . '：' . $errorText;
+                    $warnings[] = '写入失败 ' . ($record['name'] ?? '') . ' ' . ($record['type'] ?? '') . '：' . $errorText;
                 }
-            }
-            unset($existingByRrset[$rrsetKey]);
-        }
-
-        foreach ($records as $record) {
-            $summary['records_total']++;
-            $identityKey = cfmod_pdns_record_identity_key($record);
-            if (!$overwriteSameNameType && $identityKey !== null && isset($existingIdentity[$identityKey])) {
-                $summary['records_skipped_existing']++;
-                continue;
-            }
-
-            $createRes = cfmod_pdns_create_record_on_provider($providerClient, $zoneId, $record);
-            if ($createRes['success'] ?? false) {
-                $summary['records_created']++;
-                if ($identityKey !== null) {
-                    $existingIdentity[$identityKey] = true;
-                }
-            } else {
-                $summary['records_failed']++;
-                $errors = $createRes['errors'] ?? [];
-                $errorText = is_array($errors) ? implode('; ', array_map('strval', $errors)) : (string) $errors;
-                if ($errorText === '') {
-                    $errorText = '写入失败';
-                }
-                $warnings[] = '写入失败 ' . ($record['name'] ?? '') . ' ' . ($record['type'] ?? '') . '：' . $errorText;
             }
         }
+        $summary['segments_processed']++;
     }
 
     if ($rootRow) {
