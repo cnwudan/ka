@@ -380,7 +380,13 @@ class CfTelegramExpiryReminderService
 
         $rows = Capsule::table('mod_cloudflare_subdomain as s')
             ->join(self::TABLE_SUBSCRIPTIONS . ' as t', 't.userid', '=', 's.userid')
-            ->select('s.*', 't.telegram_user_id as reminder_telegram_user_id', 't.telegram_username as reminder_telegram_username')
+            ->leftJoin('tblclients as c', 'c.id', '=', 's.userid')
+            ->select(
+                's.*',
+                't.telegram_user_id as reminder_telegram_user_id',
+                't.telegram_username as reminder_telegram_username',
+                'c.language as client_language'
+            )
             ->where('t.enabled', 1)
             ->whereNotNull('t.telegram_user_id')
             ->where('t.telegram_user_id', '>', 0)
@@ -502,22 +508,104 @@ class CfTelegramExpiryReminderService
 剩余天数：{\$days_left} 天
 请及时续期，避免域名失效。";
     }
+
+    public static function defaultEnglishTemplate(): string
+    {
+        return "[Domain Expiry Reminder]
+Domain: {\$fqdn}
+Expiry Time: {\$expiry_datetime}
+Days Left: {\$days_left}
+Please renew in time to avoid domain suspension.";
+    }
+
     private static function normalizeTemplateLineBreaks(string $template): string
     {
         $template = str_replace(["\r\n", "\r"], "\n", $template);
         return str_replace(['\\r\\n', '\\n', '\\r'], "\n", $template);
     }
 
+    private static function normalizeClientLanguage(?string $language): string
+    {
+        if (function_exists('cfmod_normalize_language_code')) {
+            $normalized = trim((string) cfmod_normalize_language_code($language));
+            if ($normalized === 'chinese' || $normalized === 'english') {
+                return $normalized;
+            }
+        }
+
+        $value = strtolower(trim((string) $language));
+        if ($value === '') {
+            return 'english';
+        }
+
+        if ($value === 'cn' || strpos($value, 'zh') === 0 || strpos($value, 'chinese') === 0) {
+            return 'chinese';
+        }
+
+        if (strpos($value, 'en') === 0 || strpos($value, 'english') === 0) {
+            return 'english';
+        }
+
+        return 'english';
+    }
+
+    private static function resolveRecordLanguage($row): string
+    {
+        $item = is_array($row) ? (object) $row : $row;
+        if (!$item) {
+            return 'english';
+        }
+
+        $language = trim((string) ($item->client_language ?? ($item->language ?? '')));
+        if ($language === '') {
+            $userId = (int) ($item->userid ?? 0);
+            if ($userId > 0) {
+                try {
+                    $client = Capsule::table('tblclients')->select('language')->where('id', $userId)->first();
+                    $language = trim((string) ($client->language ?? ''));
+                } catch (\Throwable $e) {
+                    $language = '';
+                }
+            }
+        }
+
+        return self::normalizeClientLanguage($language);
+    }
+
+    private static function resolveTemplateByLanguage(array $settings, string $language): string
+    {
+        $legacyTemplate = trim((string) ($settings['renewal_notice_telegram_template'] ?? ''));
+        $zhTemplate = trim((string) ($settings['renewal_notice_telegram_template_zh'] ?? ''));
+        $enTemplate = trim((string) ($settings['renewal_notice_telegram_template_en'] ?? ''));
+
+        $defaultTemplate = $legacyTemplate !== ''
+            ? $legacyTemplate
+            : ($zhTemplate !== '' ? $zhTemplate : self::defaultTemplate());
+
+        if ($language === 'chinese') {
+            $template = $zhTemplate !== '' ? $zhTemplate : $defaultTemplate;
+            return $template !== '' ? $template : self::defaultTemplate();
+        }
+
+        if ($language === 'english') {
+            $template = $enTemplate !== '' ? $enTemplate : $defaultTemplate;
+            return $template !== '' ? $template : self::defaultEnglishTemplate();
+        }
+
+        return $defaultTemplate !== '' ? $defaultTemplate : self::defaultTemplate();
+    }
+
     private static function buildReminderText($row, int $days, array $settings = []): string
     {
-        $subdomain = trim((string) ($row->subdomain ?? ''));
-        $rootdomain = trim((string) ($row->rootdomain ?? ''));
+        $item = is_array($row) ? (object) $row : $row;
+        $subdomain = trim((string) ($item->subdomain ?? ''));
+        $rootdomain = trim((string) ($item->rootdomain ?? ''));
         $fqdn = $subdomain;
         if ($fqdn !== '' && $rootdomain !== '' && stripos($fqdn, $rootdomain) === false) {
             $fqdn = rtrim($subdomain, '.') . '.' . ltrim($rootdomain, '.');
         }
 
-        $expiryRaw = trim((string) ($row->expires_at ?? ''));
+        $expiryRaw = trim((string) ($item->expires_at ?? ''));
         $expiryDate = '';
         $expiryDateTime = '';
         if ($expiryRaw !== '') {
@@ -539,20 +627,19 @@ class CfTelegramExpiryReminderService
             '{$reminder_days}' => (string) $daysLeft,
         ];
 
-        $template = trim((string) ($settings['renewal_notice_telegram_template'] ?? ''));
-        if ($template === '') {
-            $template = self::defaultTemplate();
-        }
+        $language = self::resolveRecordLanguage($item);
+        $template = self::resolveTemplateByLanguage($settings, $language);
         $template = self::normalizeTemplateLineBreaks($template);
 
         $message = trim(strtr($template, $vars));
         if ($message === '') {
-            $message = trim(strtr(self::defaultTemplate(), $vars));
+            $fallbackTemplate = $language === 'chinese' ? self::defaultTemplate() : self::defaultEnglishTemplate();
+            $message = trim(strtr($fallbackTemplate, $vars));
         }
 
         $message = self::normalizeTemplateLineBreaks($message);
         if ($message === '') {
-            $message = '域名到期提醒';
+            $message = $language === 'chinese' ? '域名到期提醒' : 'Domain expiry reminder';
         }
 
         if (function_exists('mb_strlen') && function_exists('mb_substr')) {

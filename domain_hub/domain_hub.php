@@ -1422,12 +1422,36 @@ function domain_hub_config() {
                 "Description" => "用于发送到期提醒消息。留空时优先复用社群奖励 Bot Token。",
             ],
             "renewal_notice_telegram_template" => [
-                "FriendlyName" => "Telegram 提醒模板",
+                "FriendlyName" => "Telegram 默认提醒模板（回退）",
                 "Type" => "textarea",
                 "Rows" => "4",
                 "Cols" => "50",
-                "Default" => "【域名到期提醒】\n域名：{\$fqdn}\n到期时间：{\$expiry_datetime}\n剩余天数：{\$days_left} 天\n请及时续期，避免域名失效。",
-                "Description" => "支持变量 {\$domain}、{\$rootdomain}、{\$fqdn}、{\$expiry_date}、{\$expiry_datetime}、{\$days_left}、{\$reminder_days}。",
+                "Default" => "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。",
+                "Description" => "默认回退模板。支持变量 {\$domain}、{\$rootdomain}、{\$fqdn}、{\$expiry_date}、{\$expiry_datetime}、{\$days_left}、{\$reminder_days}。",
+            ],
+            "renewal_notice_telegram_template_zh" => [
+                "FriendlyName" => "Telegram 中文提醒模板",
+                "Type" => "textarea",
+                "Rows" => "4",
+                "Cols" => "50",
+                "Default" => "【域名到期提醒】
+域名：{\$fqdn}
+到期时间：{\$expiry_datetime}
+剩余天数：{\$days_left} 天
+请及时续期，避免域名失效。",
+                "Description" => "用户语言为中文时优先使用此模板。留空则回退到默认模板。",
+            ],
+            "renewal_notice_telegram_template_en" => [
+                "FriendlyName" => "Telegram 英文提醒模板",
+                "Type" => "textarea",
+                "Rows" => "4",
+                "Cols" => "50",
+                "Default" => "[Domain Expiry Reminder]\nDomain: {\$fqdn}\nExpiry Time: {\$expiry_datetime}\nDays Left: {\$days_left}\nPlease renew in time to avoid domain suspension.",
+                "Description" => "用户语言为英文时优先使用此模板。留空则回退到默认模板。",
             ],
             "renewal_notice_telegram_days" => [
                 "FriendlyName" => "Telegram 提醒天数",

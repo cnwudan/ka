@@ -3473,22 +3473,30 @@ class CfAdminActionService
         }
 
         $telegramBotToken = $postedTelegramBotToken !== '' ? $postedTelegramBotToken : $existingTelegramBotToken;
-
         $telegramDaysInput = trim((string) ($_POST['renewal_notice_telegram_days']
             ?? ($settings['renewal_notice_telegram_days'] ?? '30,10')));
-        $telegramTemplate = trim((string) ($_POST['renewal_notice_telegram_template']
-            ?? ($settings['renewal_notice_telegram_template'] ?? '')));
-        if ($telegramTemplate === '') {
+        $legacyTelegramTemplate = trim((string) ($settings['renewal_notice_telegram_template'] ?? ''));
+        $telegramTemplateZh = trim((string) ($_POST['renewal_notice_telegram_template_zh']
+            ?? ($settings['renewal_notice_telegram_template_zh'] ?? $legacyTelegramTemplate)));
+        $telegramTemplateEn = trim((string) ($_POST['renewal_notice_telegram_template_en']
+            ?? ($settings['renewal_notice_telegram_template_en'] ?? '')));
+
+        if ($telegramTemplateZh === '') {
+            $telegramTemplateZh = $legacyTelegramTemplate;
+        }
+        if ($telegramTemplateZh === '') {
             if (class_exists('CfTelegramExpiryReminderService')) {
-                $telegramTemplate = CfTelegramExpiryReminderService::defaultTemplate();
+                $telegramTemplateZh = CfTelegramExpiryReminderService::defaultTemplate();
             } else {
-                $telegramTemplate = "【域名到期提醒】
+                $telegramTemplateZh = "【域名到期提醒】
 域名：{\$fqdn}
 到期时间：{\$expiry_datetime}
 剩余天数：{\$days_left} 天
 请及时续期，避免域名失效。";
             }
         }
+
+        $telegramTemplate = $telegramTemplateZh;
         $telegramAuthMaxAgeInput = intval($_POST['renewal_notice_telegram_auth_max_age_seconds']
             ?? ($settings['renewal_notice_telegram_auth_max_age_seconds'] ?? 86400));
         $telegramAuthMaxAge = max(60, min(604800, $telegramAuthMaxAgeInput));
@@ -3549,6 +3557,8 @@ class CfAdminActionService
                 'renewal_notice_telegram_bot_username' => $telegramBotUsername,
                 'renewal_notice_telegram_bot_token' => $telegramTokenStored,
                 'renewal_notice_telegram_template' => $telegramTemplate,
+                'renewal_notice_telegram_template_zh' => $telegramTemplateZh,
+                'renewal_notice_telegram_template_en' => $telegramTemplateEn,
                 'renewal_notice_telegram_days' => $telegramDaysInput,
                 'renewal_notice_telegram_auth_max_age_seconds' => (string) $telegramAuthMaxAge,
             ]);
@@ -3564,6 +3574,12 @@ class CfAdminActionService
                     'telegram_template_length' => function_exists('mb_strlen')
                         ? mb_strlen($telegramTemplate, 'UTF-8')
                         : strlen($telegramTemplate),
+                    'telegram_template_zh_length' => function_exists('mb_strlen')
+                        ? mb_strlen($telegramTemplateZh, 'UTF-8')
+                        : strlen($telegramTemplateZh),
+                    'telegram_template_en_length' => function_exists('mb_strlen')
+                        ? mb_strlen($telegramTemplateEn, 'UTF-8')
+                        : strlen($telegramTemplateEn),
                     'telegram_days' => $telegramDaysInput,
                     'telegram_auth_max_age' => $telegramAuthMaxAge,
                 ]);
