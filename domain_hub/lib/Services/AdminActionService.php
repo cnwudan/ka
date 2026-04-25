@@ -88,6 +88,7 @@ class CfAdminActionService
         'admin_upsert_invite_reward' => [self::class, 'handleAdminUpsertInviteReward'],
         'admin_rebuild_invite_rewards' => [self::class, 'handleAdminRebuildInviteRewards'],
         'admin_settle_last_period' => [self::class, 'handleAdminSettleLastPeriod'],
+        'migrate_invite_registration_existing_users' => [self::class, 'handleMigrateInviteRegistrationExistingUsers'],
         'generate_invite_snapshot' => [self::class, 'handleGenerateInviteSnapshot'],
         'remove_leaderboard_user' => [self::class, 'handleRemoveLeaderboardUser'],
         'admin_edit_leaderboard_user' => [self::class, 'handleAdminEditLeaderboardUser'],
