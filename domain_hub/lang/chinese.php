@@ -150,6 +150,7 @@ $_LANG['cfclient.redeem.error.not_started'] = '兑换尚未开始';
 $_LANG['cfclient.redeem.error.expired'] = '兑换码已过期';
 $_LANG['cfclient.redeem.error.exhausted'] = '兑换次数已用完';
 $_LANG['cfclient.redeem.error.per_user_limit'] = '您已使用过该兑换码';
+$_LANG['cfclient.redeem.error.same_type_limit'] = '您已兑换过同类型限制兑换码，无法重复兑换';
 $_LANG['cfclient.redeem.error.invalid_grant'] = '兑换码配置异常，请联系客服';
 $_LANG['cfclient.redeem.error.quota_unavailable'] = '当前无法更新您的额度，请稍后重试';
 $_LANG['cfclient.redeem.error.generic'] = '兑换失败，请稍后再试。';

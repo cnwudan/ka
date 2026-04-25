@@ -151,6 +151,7 @@ $_LANG['cfclient.redeem.error.not_started'] = 'The redemption period has not sta
 $_LANG['cfclient.redeem.error.expired'] = 'The redemption code has expired.';
 $_LANG['cfclient.redeem.error.exhausted'] = 'This redemption code has reached its usage limit.';
 $_LANG['cfclient.redeem.error.per_user_limit'] = 'You have already used this redemption code.';
+$_LANG['cfclient.redeem.error.same_type_limit'] = 'You already redeemed a mutually exclusive code of this type.';
 $_LANG['cfclient.redeem.error.invalid_grant'] = 'The redemption code is misconfigured. Please contact support.';
 $_LANG['cfclient.redeem.error.quota_unavailable'] = 'Unable to update your quota right now. Please try again later.';
 $_LANG['cfclient.redeem.error.generic'] = 'Redemption failed. Please try again later.';

@@ -152,6 +152,8 @@ class CfModuleInstaller
                         $table->string('mode', 20)->default('single_use');
                         $table->integer('max_total_uses')->unsigned()->default(1);
                         $table->integer('per_user_limit')->unsigned()->default(1);
+                        $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0);
+                        $table->string('same_type_key', 64)->nullable();
                         $table->integer('redeemed_total')->unsigned()->default(0);
                         $table->dateTime('valid_from')->nullable();
                         $table->dateTime('valid_to')->nullable();
@@ -163,6 +165,7 @@ class CfModuleInstaller
                         $table->index('status');
                         $table->index('valid_to');
                         $table->index('batch_tag');
+                        $table->index(['same_type_limit_enabled', 'same_type_key'], 'idx_quota_codes_same_type');
                     });
                 }
 
@@ -177,6 +180,8 @@ class CfModuleInstaller
                         $table->text('message')->nullable();
                         $table->bigInteger('before_quota')->default(0);
                         $table->bigInteger('after_quota')->default(0);
+                        $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0);
+                        $table->string('same_type_key', 64)->nullable();
                         $table->string('client_ip', 45)->nullable();
                         $table->timestamps();
                         $table->index('code_id');
@@ -184,7 +189,45 @@ class CfModuleInstaller
                         $table->index('code');
                         $table->index('status');
                         $table->index('created_at');
+                        $table->index(['userid', 'same_type_limit_enabled', 'same_type_key'], 'idx_quota_redeems_same_type');
                     });
+                }
+
+                try {
+                    if (Capsule::schema()->hasTable('mod_cloudflare_quota_codes')) {
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_codes', 'same_type_limit_enabled')) {
+                            Capsule::schema()->table('mod_cloudflare_quota_codes', function ($table) {
+                                $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0)->after('per_user_limit');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_codes', 'same_type_key')) {
+                            Capsule::schema()->table('mod_cloudflare_quota_codes', function ($table) {
+                                $table->string('same_type_key', 64)->nullable()->after('same_type_limit_enabled');
+                            });
+                        }
+                        try {
+                            Capsule::statement('ALTER TABLE `mod_cloudflare_quota_codes` ADD INDEX `idx_quota_codes_same_type` (`same_type_limit_enabled`, `same_type_key`)');
+                        } catch (\Throwable $ignored) {
+                        }
+                    }
+
+                    if (Capsule::schema()->hasTable('mod_cloudflare_quota_redemptions')) {
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_redemptions', 'same_type_limit_enabled')) {
+                            Capsule::schema()->table('mod_cloudflare_quota_redemptions', function ($table) {
+                                $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0)->after('after_quota');
+                            });
+                        }
+                        if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_redemptions', 'same_type_key')) {
+                            Capsule::schema()->table('mod_cloudflare_quota_redemptions', function ($table) {
+                                $table->string('same_type_key', 64)->nullable()->after('same_type_limit_enabled');
+                            });
+                        }
+                        try {
+                            Capsule::statement('ALTER TABLE `mod_cloudflare_quota_redemptions` ADD INDEX `idx_quota_redeems_same_type` (`userid`, `same_type_limit_enabled`, `same_type_key`)');
+                        } catch (\Throwable $ignored) {
+                        }
+                    }
+                } catch (\Throwable $ignored) {
                 }
         
                 // 特权用户表（如果不存在）

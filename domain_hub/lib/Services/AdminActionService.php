@@ -26,6 +26,8 @@ class CfAdminActionService
     private const HASH_PRIVILEGED = '#privileged';
     private const HASH_QUOTAS = '#quotas';
     private const HASH_SUBDOMAINS = '#subdomains';
+    private const REDEEM_SAME_TYPE_DEFAULT_KEY = 'global';
+    private const REDEEM_SAME_TYPE_KEY_MAX_LENGTH = 64;
 
     /**
      * @var array<string, callable>
@@ -2956,6 +2958,7 @@ class CfAdminActionService
                 $validTo = date('Y-m-d H:i:s', $ts);
             }
             $notes = trim((string) ($_POST['notes'] ?? ''));
+            [$sameTypeLimitEnabled, $sameTypeKey] = self::resolveRedeemSameTypeConfigFromPost();
             $now = date('Y-m-d H:i:s');
             Capsule::table('mod_cloudflare_quota_codes')->insert([
                 'code' => $code,
@@ -2963,6 +2966,8 @@ class CfAdminActionService
                 'mode' => $mode,
                 'max_total_uses' => $maxTotal,
                 'per_user_limit' => $perUserLimit,
+                'same_type_limit_enabled' => $sameTypeLimitEnabled ? 1 : 0,
+                'same_type_key' => $sameTypeLimitEnabled ? $sameTypeKey : null,
                 'redeemed_total' => 0,
                 'valid_from' => $now,
                 'valid_to' => $validTo,
@@ -2994,6 +2999,7 @@ class CfAdminActionService
             $validDays = max(0, intval($_POST['valid_days'] ?? 0));
             $batchTag = trim((string) ($_POST['batch_tag'] ?? ''));
             $notes = trim((string) ($_POST['notes'] ?? ''));
+            [$sameTypeLimitEnabled, $sameTypeKey] = self::resolveRedeemSameTypeConfigFromPost();
             if ($mode === 'single_use') {
                 $maxTotal = 1;
                 $perUserLimit = 1;
@@ -3019,6 +3025,8 @@ class CfAdminActionService
                     'mode' => $mode,
                     'max_total_uses' => $maxTotal,
                     'per_user_limit' => $perUserLimit,
+                    'same_type_limit_enabled' => $sameTypeLimitEnabled ? 1 : 0,
+                    'same_type_key' => $sameTypeLimitEnabled ? $sameTypeKey : null,
                     'redeemed_total' => 0,
                     'valid_from' => $now,
                     'valid_to' => $validTo,
@@ -3036,6 +3044,40 @@ class CfAdminActionService
             self::flashError('❌ 批量生成失败：' . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8'));
         }
         self::redirect(self::HASH_QUOTAS);
+    }
+
+    private static function resolveRedeemSameTypeConfigFromPost(): array
+    {
+        $enabled = (($_POST['same_type_limit_enabled'] ?? '') === '1');
+        if (!$enabled) {
+            return [false, null];
+        }
+
+        $rawKey = trim((string) ($_POST['same_type_key'] ?? ''));
+        $normalizedKey = self::normalizeRedeemSameTypeKey($rawKey);
+        if ($normalizedKey === '') {
+            $normalizedKey = self::REDEEM_SAME_TYPE_DEFAULT_KEY;
+        }
+
+        return [true, $normalizedKey];
+    }
+
+    private static function normalizeRedeemSameTypeKey(string $rawKey): string
+    {
+        $rawKey = trim($rawKey);
+        if ($rawKey === '') {
+            return '';
+        }
+
+        $normalized = strtolower($rawKey);
+        $normalized = preg_replace('/\s+/u', '_', $normalized) ?? $normalized;
+        $normalized = preg_replace('/[^a-z0-9._-]/', '', $normalized) ?? $normalized;
+        $normalized = trim($normalized, '._-');
+        if ($normalized === '') {
+            return '';
+        }
+
+        return substr($normalized, 0, self::REDEEM_SAME_TYPE_KEY_MAX_LENGTH);
     }
 
     private static function handleToggleRedeemCodeStatus(): void

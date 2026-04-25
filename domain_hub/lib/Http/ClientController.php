@@ -1721,6 +1721,8 @@ class CfClientController
                 return self::actionText('cfclient.redeem.error.exhausted', '兑换次数已用完');
             case 'per_user_limit':
                 return self::actionText('cfclient.redeem.error.per_user_limit', '您已使用过该兑换码');
+            case 'same_type_limit':
+                return self::actionText('cfclient.redeem.error.same_type_limit', '您已兑换过同类型限制兑换码，无法重复兑换');
             case 'grant_invalid':
                 return self::actionText('cfclient.redeem.error.invalid_grant', '兑换码配置异常，请联系客服');
             case 'quota_unavailable':
