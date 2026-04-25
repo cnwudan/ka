@@ -1690,13 +1690,17 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
     if (!in_array($limitMode, ['none', 'subdomain', 'record'], true)) {
         $limitMode = 'none';
     }
+
     $limitValue = intval($options['limit_value'] ?? 1000);
     if ($limitValue <= 0) {
         $limitValue = 1000;
     }
     $limitValue = max(100, min(50000, $limitValue));
+
+    $cursor = max(0, intval($options['cursor'] ?? 0));
     $partialExport = ($limitMode !== 'none');
     $hasMore = false;
+    $nextCursor = null;
 
     $rootRow = null;
     if (cfmod_table_exists('mod_cloudflare_rootdomains')) {
@@ -1720,11 +1724,15 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
 
     if ($limitMode === 'record') {
         try {
-            $dnsRows = Capsule::table('mod_cloudflare_dns_records as d')
+            $dnsRowsQuery = Capsule::table('mod_cloudflare_dns_records as d')
                 ->join('mod_cloudflare_subdomain as s', 's.id', '=', 'd.subdomain_id')
                 ->whereRaw('LOWER(s.rootdomain) = ?', [$normalized])
                 ->select('d.id', 'd.subdomain_id', 'd.record_id', 'd.name', 'd.type', 'd.content', 'd.ttl', 'd.priority', 'd.status')
-                ->orderBy('d.id', 'asc')
+                ->orderBy('d.id', 'asc');
+            if ($cursor > 0) {
+                $dnsRowsQuery->where('d.id', '>', $cursor);
+            }
+            $dnsRows = $dnsRowsQuery
                 ->limit($limitValue + 1)
                 ->get();
 
@@ -1736,6 +1744,12 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
                     break;
                 }
                 $rowIndex++;
+
+                $recordCursor = intval($row->id ?? 0);
+                if ($recordCursor > 0) {
+                    $nextCursor = $recordCursor;
+                }
+
                 $sid = intval($row->subdomain_id ?? 0);
                 if ($sid > 0) {
                     $seenSubdomains[$sid] = true;
@@ -1761,6 +1775,9 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
                 ->whereRaw('LOWER(rootdomain) = ?', [$normalized])
                 ->select('id')
                 ->orderBy('id', 'asc');
+            if ($cursor > 0) {
+                $subRowsQuery->where('id', '>', $cursor);
+            }
             if ($limitMode === 'subdomain') {
                 $subRowsQuery->limit($limitValue + 1);
             }
@@ -1777,6 +1794,7 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
                 }
                 $subdomainIds[] = $sid;
                 $selectedSubCount++;
+                $nextCursor = $sid;
             }
         } catch (\Throwable $e) {
             throw new \RuntimeException('读取本地子域名数据失败：' . $e->getMessage(), 0, $e);
@@ -1815,6 +1833,9 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
             $warnings[] = '当前导出仅包含前 ' . $limitValue . ' 个子域名的记录。';
         } elseif ($limitMode === 'record') {
             $warnings[] = '当前导出仅包含前 ' . $limitValue . ' 条 DNS 记录。';
+        }
+        if ($cursor > 0) {
+            $warnings[] = '本次导出为连续导出中的续传分段（cursor=' . $cursor . '）。';
         }
         if ($hasMore) {
             $warnings[] = '本次为部分导出，仍有更多记录未导出。';
@@ -1861,6 +1882,8 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
         'partial_rule' => [
             'mode' => $limitMode,
             'limit_value' => $partialExport ? $limitValue : null,
+            'cursor' => $partialExport ? $cursor : null,
+            'next_cursor' => ($partialExport && $nextCursor !== null) ? intval($nextCursor) : null,
             'has_more' => $hasMore ? 1 : 0,
         ],
         'rrsets' => $rrsets,
@@ -1869,6 +1892,137 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local(string $rootdomain, ar
             'selected_subdomains' => count($subdomainIds),
             'raw_records' => count($rawRecords),
             'records' => count($normalizedRecords),
+            'rrsets' => count($rrsets),
+        ],
+        'warnings' => array_values(array_unique(array_filter($warnings))),
+    ];
+}
+
+function cfmod_collect_rootdomain_pdns_dataset_from_local_auto(string $rootdomain, array $options = []): array {
+    $limitMode = strtolower(trim((string) ($options['limit_mode'] ?? 'none')));
+    if (!in_array($limitMode, ['subdomain', 'record'], true)) {
+        throw new \InvalidArgumentException('自动连续导出仅支持子域名或记录数限制模式');
+    }
+
+    $limitValue = intval($options['limit_value'] ?? 1000);
+    if ($limitValue <= 0) {
+        $limitValue = 1000;
+    }
+    $limitValue = max(100, min(50000, $limitValue));
+
+    $sleepSeconds = intval($options['sleep_seconds'] ?? 10);
+    $sleepSeconds = max(0, min(60, $sleepSeconds));
+
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(0);
+    }
+
+    $cursor = 0;
+    $chunks = 0;
+    $interrupted = false;
+    $warnings = [];
+    $records = [];
+    $identitySet = [];
+    $meta = [];
+    $selectedSubdomainsTotal = 0;
+    $rawRecordsTotal = 0;
+
+    while (true) {
+        $chunks++;
+        if ($chunks > 5000) {
+            $interrupted = true;
+            $warnings[] = '自动连续导出已达到最大分段次数，任务提前终止。';
+            break;
+        }
+
+        $chunkDataset = cfmod_collect_rootdomain_pdns_dataset_from_local($rootdomain, [
+            'limit_mode' => $limitMode,
+            'limit_value' => $limitValue,
+            'cursor' => $cursor,
+        ]);
+
+        if (empty($meta)) {
+            $meta = $chunkDataset;
+        }
+
+        $selectedSubdomainsTotal += intval($chunkDataset['counts']['selected_subdomains'] ?? 0);
+        $rawRecordsTotal += intval($chunkDataset['counts']['raw_records'] ?? 0);
+
+        if (!empty($chunkDataset['warnings']) && is_array($chunkDataset['warnings'])) {
+            $warnings = array_merge($warnings, $chunkDataset['warnings']);
+        }
+
+        $chunkRecords = isset($chunkDataset['records']) && is_array($chunkDataset['records'])
+            ? $chunkDataset['records']
+            : [];
+        foreach ($chunkRecords as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $identityKey = cfmod_pdns_record_identity_key($record);
+            if ($identityKey !== null && isset($identitySet[$identityKey])) {
+                continue;
+            }
+            if ($identityKey !== null) {
+                $identitySet[$identityKey] = true;
+            }
+            $records[] = $record;
+        }
+
+        $rule = isset($chunkDataset['partial_rule']) && is_array($chunkDataset['partial_rule'])
+            ? $chunkDataset['partial_rule']
+            : [];
+        $hasMore = !empty($rule['has_more']);
+        if (!$hasMore) {
+            break;
+        }
+
+        $nextCursor = intval($rule['next_cursor'] ?? 0);
+        if ($nextCursor <= $cursor) {
+            $interrupted = true;
+            $warnings[] = '自动连续导出游标推进异常，任务提前终止。';
+            break;
+        }
+
+        $cursor = $nextCursor;
+        if ($sleepSeconds > 0) {
+            sleep($sleepSeconds);
+        }
+    }
+
+    $normalizedRoot = cfmod_normalize_rootdomain($rootdomain);
+    $rrsets = cfmod_pdns_group_records_to_rrsets($records);
+    $warnings[] = '自动连续导出共执行 ' . $chunks . ' 段，每段间隔 ' . $sleepSeconds . ' 秒。';
+
+    return [
+        'schema_version' => 1,
+        'format' => 'pdns-rrset-json',
+        'generated_at' => date('c'),
+        'module' => CF_MODULE_NAME,
+        'rootdomain' => (string) ($meta['rootdomain'] ?? $normalizedRoot),
+        'zone_id' => (string) ($meta['zone_id'] ?? ''),
+        'source_provider' => is_array($meta['source_provider'] ?? null) ? $meta['source_provider'] : [
+            'id' => 0,
+            'name' => null,
+            'provider_type' => null,
+        ],
+        'export_source' => 'local_cache_auto',
+        'auto_continuous_export' => 1,
+        'partial_export' => $interrupted ? 1 : 0,
+        'partial_rule' => [
+            'mode' => $limitMode,
+            'limit_value' => $limitValue,
+            'cursor' => 0,
+            'next_cursor' => $cursor > 0 ? $cursor : null,
+            'has_more' => $interrupted ? 1 : 0,
+        ],
+        'rrsets' => $rrsets,
+        'records' => $records,
+        'counts' => [
+            'chunks' => $chunks,
+            'selected_subdomains' => $selectedSubdomainsTotal,
+            'raw_records' => $rawRecordsTotal,
+            'records' => count($records),
             'rrsets' => count($rrsets),
         ],
         'warnings' => array_values(array_unique(array_filter($warnings))),

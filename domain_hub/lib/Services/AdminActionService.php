@@ -1052,10 +1052,27 @@ class CfAdminActionService
                 if ($localLimitValue <= 0) {
                     $localLimitValue = 1000;
                 }
-                $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local($targetRoot, [
-                    'limit_mode' => $localLimitMode,
-                    'limit_value' => $localLimitValue,
-                ]);
+                $autoContinuousExport = isset($_POST['pdns_local_auto_continue'])
+                    && (string) $_POST['pdns_local_auto_continue'] === '1';
+
+                if ($autoContinuousExport) {
+                    if (!in_array($localLimitMode, ['subdomain', 'record'], true)) {
+                        throw new Exception('自动连续导出需选择“仅前 N 个子域名的记录”或“仅前 N 条 DNS 记录”限制模式');
+                    }
+                    if (!function_exists('cfmod_collect_rootdomain_pdns_dataset_from_local_auto')) {
+                        throw new Exception('当前环境不支持自动连续导出');
+                    }
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local_auto($targetRoot, [
+                        'limit_mode' => $localLimitMode,
+                        'limit_value' => $localLimitValue,
+                        'sleep_seconds' => 10,
+                    ]);
+                } else {
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local($targetRoot, [
+                        'limit_mode' => $localLimitMode,
+                        'limit_value' => $localLimitValue,
+                    ]);
+                }
                 if ($useSegmented && function_exists('cfmod_pdns_make_segmented_dataset')) {
                     $dataset = cfmod_pdns_make_segmented_dataset($dataset, $segmentSize);
                     cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_local_segmented');

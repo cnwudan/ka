@@ -495,6 +495,11 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <div class="form-text text-muted">适合记录量过大时应急导出，导出文件会标记为部分导出。</div>
                     </div>
                     <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_auto_continue" name="pdns_local_auto_continue" value="1">
+                        <label class="form-check-label" for="pdns_local_auto_continue">自动连续导出（每段导出后间隔 10 秒继续，直到导完）</label>
+                    </div>
+                    <div class="form-text text-muted">仅本地缓存模式生效，且需配合“仅前 N 个子域名的记录”或“仅前 N 条 DNS 记录”使用。</div>
+                    <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
                         <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>
                     </div>
