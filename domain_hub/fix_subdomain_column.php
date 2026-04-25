@@ -7,11 +7,12 @@
  * 2. 或通过 CLI: php fix_subdomain_column.php
  */
 
+use WHMCS\Database\Capsule;
+
 // 尝试在 WHMCS 环境中运行
 $whmcsInit = dirname(dirname(dirname(__DIR__))) . '/init.php';
 if (file_exists($whmcsInit)) {
     require_once $whmcsInit;
-    use WHMCS\Database\Capsule;
 } else {
     die("错误: 无法找到 WHMCS init.php 文件\n请确保此脚本位于 modules/addons/domain_hub/ 目录下\n");
 }

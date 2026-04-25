@@ -457,8 +457,8 @@ $apiMaskKey = static function (string $plainKey): string {
                     <p><strong><?php echo $cfApiText('cfclient.api.docs.section1.method_header', '方式1：HTTP Header（推荐使用）', [], true); ?></strong></p>
                     <pre><code>X-API-Key: cfsd_xxxxxxxxxx
 X-API-Secret: yyyyyyyyyyyy</code></pre>
-                    <p><strong><?php echo $cfApiText('cfclient.api.docs.section1.method_query', '方式2：URL参数（已废弃）', [], true); ?></strong></p>
-                    <pre><code>?api_key=cfsd_xxxxxxxxxx&amp;api_secret=yyyyyyyyyyyy</code></pre>
+                    <p class="text-danger mb-0"><strong><?php echo $cfApiText('cfclient.api.docs.section1.method_query', '方式2：URL/Body 参数（已禁用）', [], true); ?></strong></p>
+                    <p class="text-muted small"><?php echo $cfApiText('cfclient.api.docs.section1.method_query_notice', '出于安全原因，api_key/api_secret 仅支持通过 X-API-Key / X-API-Secret 请求头传递。', [], true); ?></p>
                 </div>
 
                 <div class="mb-4">

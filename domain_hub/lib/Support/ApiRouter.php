@@ -9,9 +9,7 @@ class CfApiRouter
         if (isset($_GET['api']) || isset($_POST['api'])) {
             return true;
         }
-        if (isset($_REQUEST['api_key']) || isset($_REQUEST['api_secret'])) {
-            return true;
-        }
+
         if (!empty($_SERVER['HTTP_X_API_KEY']) || !empty($_SERVER['HTTP_X_API_SECRET'])) {
             return true;
         }

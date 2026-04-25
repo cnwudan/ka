@@ -31,11 +31,10 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=subdomains&act
   -H "X-API-Secret: yyyyyyyyyyyy"
 ```
 
-#### 方式2：URL参数
+#### 方式2：URL/Body 参数（已禁用）
 
-```bash
-curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=subdomains&action=list&api_key=cfsd_xxxxxxxxxx&api_secret=yyyyyyyyyyyy"
-```
+出于安全原因，`api_key` / `api_secret` 不再支持通过 URL Query 或请求体传递。
+请仅使用 `X-API-Key` 和 `X-API-Secret` 请求头认证。
 
 ---
 
@@ -62,7 +61,7 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=subdomains&act
 | created_to | string | 否 | - | 创建时间结束（YYYY-MM-DD） |
 | sort_by | string | 否 | id | 排序字段（id/created_at/updated_at/expires_at/subdomain） |
 | sort_dir | string | 否 | desc | 排序方向（asc/desc） |
-| fields | string | 否 | all | 返回字段（逗号分隔，如：id,subdomain,status） |
+| fields | string | 否 | all | 返回字段（逗号分隔）。可选：id,subdomain,rootdomain,full_domain,status,created_at,updated_at,expires_at,never_expires,cloudflare_zone_id,provider_account_id；自定义 fields 时会自动补充 id |
 
 **基础请求示例：**
 ```bash
@@ -616,7 +615,7 @@ curl -X GET "https://您的域名/index.php?m=domain_hub&endpoint=keys&action=li
 | 参数 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | key_name | string | 是 | 密钥名称 |
-| ip_whitelist | string | 否 | IP白名单（逗号分隔） |
+| ip_whitelist | string | 否 | IP白名单（逗号/换行/分号分隔，支持单IP或CIDR；需后台开启“启用API IP白名单”） |
 
 **请求示例：**
 ```bash
