@@ -51,6 +51,8 @@ class CfAdminActionService
         'replace_rootdomain' => [self::class, 'handleRootdomainReplace'],
         'export_rootdomain' => [self::class, 'handleRootdomainExport'],
         'import_rootdomain' => [self::class, 'handleRootdomainImport'],
+        'export_rootdomain_pdns' => [self::class, 'handleRootdomainPdnsExport'],
+        'import_rootdomain_pdns' => [self::class, 'handleRootdomainPdnsImport'],
         'purge_rootdomain_local' => [self::class, 'handleRootdomainPurgeLocal'],
         'add_forbidden' => [self::class, 'handleForbiddenAdd'],
         'delete_forbidden' => [self::class, 'handleForbiddenDelete'],
@@ -981,30 +983,7 @@ class CfAdminActionService
             if (!function_exists('cfmod_import_rootdomain_dataset')) {
                 throw new Exception('当前环境不支持数据导入');
             }
-            if (!isset($_FILES['import_rootdomain_file'])) {
-                throw new Exception('请上传导出文件');
-            }
-            $fileInfo = $_FILES['import_rootdomain_file'];
-            if (($fileInfo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
-                throw new Exception('文件上传失败');
-            }
-            $content = file_get_contents($fileInfo['tmp_name']);
-            if ($content === '' || $content === false) {
-                throw new Exception('文件内容为空');
-            }
-            if (function_exists('gzdecode') && substr($content, 0, 2) === "\x1f\x8b") {
-                $decoded = @gzdecode($content);
-                if ($decoded !== false) {
-                    $content = $decoded;
-                }
-            }
-            $data = json_decode($content, true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new Exception('解析 JSON 失败：' . json_last_error_msg());
-            }
-            if (!is_array($data)) {
-                throw new Exception('导入文件格式不正确');
-            }
+            $data = self::parseUploadedJsonFile('import_rootdomain_file');
             $summary = cfmod_import_rootdomain_dataset($data);
             if (function_exists('cfmod_clear_rootdomain_limits_cache')) {
                 cfmod_clear_rootdomain_limits_cache();
@@ -1039,6 +1018,173 @@ class CfAdminActionService
             self::flashError('导入失败：' . $e->getMessage());
         }
         self::redirect(self::HASH_ROOT_WHITELIST);
+    }
+
+    private static function handleRootdomainPdnsExport(): void
+    {
+        try {
+            if (!function_exists('cfmod_collect_rootdomain_pdns_dataset') || !function_exists('cfmod_stream_export_dataset')) {
+                throw new Exception('当前环境不支持 PDNS 兼容导出');
+            }
+            $targetRoot = trim($_POST['export_rootdomain_pdns_value'] ?? '');
+            if ($targetRoot === '') {
+                throw new Exception('请选择要导出的根域名');
+            }
+            $useSegmented = (($_POST['pdns_segmented_export'] ?? '0') === '1');
+            $segmentSizeRaw = $_POST['pdns_export_segment_size'] ?? 10000;
+            $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
+                ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
+                : max(1000, min(50000, intval($segmentSizeRaw ?: 10000)));
+
+            if ($useSegmented && function_exists('cfmod_collect_rootdomain_pdns_dataset_segmented')) {
+                $dataset = cfmod_collect_rootdomain_pdns_dataset_segmented($targetRoot, $segmentSize);
+                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_segmented');
+            } else {
+                $dataset = cfmod_collect_rootdomain_pdns_dataset($targetRoot);
+                cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export');
+            }
+            exit;
+        } catch (Exception $e) {
+            self::flashError('PDNS 兼容导出失败：' . $e->getMessage());
+            self::redirect(self::HASH_ROOT_WHITELIST);
+        }
+    }
+
+    private static function handleRootdomainPdnsImport(): void
+    {
+        try {
+            if (!function_exists('cfmod_import_rootdomain_pdns_dataset')) {
+                throw new Exception('当前环境不支持 PDNS 兼容导入');
+            }
+            $targetRoot = trim($_POST['import_rootdomain_pdns_target'] ?? '');
+            if ($targetRoot === '') {
+                throw new Exception('请选择目标根域名');
+            }
+
+            $overwriteSameNameType = (($_POST['pdns_overwrite_same_name_type'] ?? '1') === '1');
+            $enqueueCalibration = (($_POST['pdns_enqueue_root_calibration'] ?? '1') === '1');
+            $useSegmentedImport = (($_POST['pdns_segmented_import'] ?? '1') === '1');
+            $segmentSizeRaw = $_POST['pdns_import_segment_size'] ?? 10000;
+            $segmentSize = function_exists('cfmod_pdns_resolve_segment_size')
+                ? cfmod_pdns_resolve_segment_size($segmentSizeRaw)
+                : max(1000, min(50000, intval($segmentSizeRaw ?: 10000)));
+
+            $data = self::parseUploadedJsonFile('import_rootdomain_pdns_file');
+
+            $summary = cfmod_import_rootdomain_pdns_dataset($data, $targetRoot, [
+                'overwrite_same_name_type' => $overwriteSameNameType ? 1 : 0,
+                'chunked_import' => $useSegmentedImport ? 1 : 0,
+                'segment_size' => $segmentSize,
+            ]);
+
+            if (function_exists('cfmod_clear_rootdomain_limits_cache')) {
+                cfmod_clear_rootdomain_limits_cache();
+            }
+
+            $calibrationJobId = null;
+            if ($enqueueCalibration) {
+                $calibrationJobId = self::enqueueRootCalibrationJob((string) ($summary['rootdomain'] ?? $targetRoot));
+            }
+
+            $parts = [];
+            $parts[] = 'RRSet ' . intval($summary['rrsets_total'] ?? 0) . ' 组';
+            if (!empty($summary['segments_processed']) && intval($summary['segments_processed']) > 1) {
+                $parts[] = '分段 ' . intval($summary['segments_processed']) . '/' . intval($summary['segments_total'] ?? 0) . ' 段';
+            }
+            $parts[] = '新增 ' . intval($summary['records_created'] ?? 0) . ' 条';
+            if (!empty($summary['records_deleted_existing'])) {
+                $parts[] = '替换删除 ' . intval($summary['records_deleted_existing']) . ' 条';
+            }
+            if (!empty($summary['records_skipped_existing'])) {
+                $parts[] = '跳过已存在 ' . intval($summary['records_skipped_existing']) . ' 条';
+            }
+            if (!empty($summary['records_failed'])) {
+                $parts[] = '失败 ' . intval($summary['records_failed']) . ' 条';
+            }
+
+            $message = 'PDNS 兼容导入完成（根域：' . ($summary['rootdomain'] ?? $targetRoot) . '）：' . implode('，', $parts);
+            if ($calibrationJobId !== null) {
+                $message .= '。已自动提交校准任务（Job ID: ' . intval($calibrationJobId) . '）。';
+            }
+            if (!empty($summary['warnings']) && is_array($summary['warnings'])) {
+                $preview = array_slice($summary['warnings'], 0, 3);
+                if (!empty($preview)) {
+                    $message .= ' 注意：' . implode('；', $preview);
+                    if (count($summary['warnings']) > 3) {
+                        $message .= ' 等。';
+                    }
+                }
+            }
+
+            $flashType = !empty($summary['records_failed']) ? 'warning' : 'success';
+            self::flash($message, $flashType);
+        } catch (Exception $e) {
+            self::flashError('PDNS 兼容导入失败：' . $e->getMessage());
+        }
+        self::redirect(self::HASH_ROOT_WHITELIST);
+    }
+
+    private static function parseUploadedJsonFile(string $fieldName): array
+    {
+        if (!isset($_FILES[$fieldName])) {
+            throw new Exception('请上传导出文件');
+        }
+        $fileInfo = $_FILES[$fieldName];
+        if (($fileInfo['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new Exception('文件上传失败');
+        }
+        $content = file_get_contents($fileInfo['tmp_name']);
+        if ($content === '' || $content === false) {
+            throw new Exception('文件内容为空');
+        }
+        if (function_exists('gzdecode') && substr($content, 0, 2) === "\x1f\x8b") {
+            $decoded = @gzdecode($content);
+            if ($decoded !== false) {
+                $content = $decoded;
+            }
+        }
+        $data = json_decode($content, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new Exception('解析 JSON 失败：' . json_last_error_msg());
+        }
+        if (!is_array($data)) {
+            throw new Exception('导入文件格式不正确');
+        }
+        return $data;
+    }
+
+    private static function enqueueRootCalibrationJob(string $rootdomain): ?int
+    {
+        $rootdomain = strtolower(trim($rootdomain));
+        if ($rootdomain === '') {
+            return null;
+        }
+        if (function_exists('cfmod_table_exists') && !cfmod_table_exists('mod_cloudflare_jobs')) {
+            return null;
+        }
+        $payload = [
+            'mode' => 'check_and_fix',
+            'rootdomain' => $rootdomain,
+            'fix_ttl' => 1,
+            'fix_missing' => 1,
+            'fix_extra' => 0,
+        ];
+        $now = date('Y-m-d H:i:s');
+        $jobId = Capsule::table('mod_cloudflare_jobs')->insertGetId([
+            'type' => 'calibrate_all',
+            'payload_json' => json_encode($payload, JSON_UNESCAPED_UNICODE),
+            'priority' => 5,
+            'status' => 'pending',
+            'attempts' => 0,
+            'next_run_at' => null,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+        self::triggerQueueInBackground();
+        if (function_exists('cloudflare_subdomain_log')) {
+            cloudflare_subdomain_log('admin_enqueue_root_calibration', $payload + ['job_id' => $jobId]);
+        }
+        return $jobId > 0 ? intval($jobId) : null;
     }
 
     private static function handleRootdomainPurgeLocal(): void
