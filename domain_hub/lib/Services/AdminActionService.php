@@ -791,6 +791,66 @@ class CfAdminActionService
         self::redirect(self::HASH_ROOT_REPLACE);
     }
 
+    private static function normalizeTransferMigrationMode(string $mode): string
+    {
+        $mode = strtolower(trim($mode));
+        if (in_array($mode, ['local', 'local-only', 'local_only'], true)) {
+            return 'local_only';
+        }
+        if (in_array($mode, ['cloud', 'cloud-only', 'remote', 'cloud_only'], true)) {
+            return 'cloud_only';
+        }
+        return 'mixed';
+    }
+
+    private static function inspectLocalTransferIntegrity(string $rootdomain): array
+    {
+        $rootdomain = strtolower(trim($rootdomain));
+        if ($rootdomain === '') {
+            return [
+                'total_subdomains' => 0,
+                'subdomains_with_local_records' => 0,
+                'missing_subdomains' => 0,
+                'missing_rate' => 0.0,
+            ];
+        }
+
+        $totalSubdomains = intval(Capsule::table('mod_cloudflare_subdomain')
+            ->whereRaw('LOWER(rootdomain) = ?', [$rootdomain])
+            ->count());
+
+        if ($totalSubdomains <= 0) {
+            return [
+                'total_subdomains' => 0,
+                'subdomains_with_local_records' => 0,
+                'missing_subdomains' => 0,
+                'missing_rate' => 0.0,
+            ];
+        }
+
+        $withLocalRecords = intval(Capsule::table('mod_cloudflare_dns_records as d')
+            ->join('mod_cloudflare_subdomain as s', 's.id', '=', 'd.subdomain_id')
+            ->whereRaw('LOWER(s.rootdomain) = ?', [$rootdomain])
+            ->distinct()
+            ->count('d.subdomain_id'));
+
+        if ($withLocalRecords > $totalSubdomains) {
+            $withLocalRecords = $totalSubdomains;
+        }
+
+        $missingSubdomains = max(0, $totalSubdomains - $withLocalRecords);
+        $missingRate = $totalSubdomains > 0
+            ? round(($missingSubdomains / $totalSubdomains) * 100, 2)
+            : 0.0;
+
+        return [
+            'total_subdomains' => $totalSubdomains,
+            'subdomains_with_local_records' => $withLocalRecords,
+            'missing_subdomains' => $missingSubdomains,
+            'missing_rate' => $missingRate,
+        ];
+    }
+
     private static function handleRootdomainTransfer(): void
     {
         $rootdomain = strtolower(trim($_POST['transfer_rootdomain'] ?? ''));
@@ -800,6 +860,18 @@ class CfAdminActionService
             $batchSize = 200;
         }
         $batchSize = max(25, min(5000, $batchSize));
+        $transferMode = self::normalizeTransferMigrationMode((string) ($_POST['transfer_migration_mode'] ?? 'mixed'));
+        $transferModeLabels = [
+            'local_only' => '仅本地',
+            'mixed' => '混合',
+            'cloud_only' => '仅云端',
+        ];
+        $transferModeLabel = $transferModeLabels[$transferMode] ?? '混合';
+        $localMissingThreshold = floatval($_POST['transfer_local_missing_threshold'] ?? 30);
+        if (!is_finite($localMissingThreshold)) {
+            $localMissingThreshold = 30;
+        }
+        $localMissingThreshold = max(0.0, min(100.0, $localMissingThreshold));
         $deleteOld = ($_POST['transfer_delete_old'] ?? '') === '1';
         $pauseRegistration = ($_POST['transfer_pause_registration'] ?? '') === '1';
         $autoResume = ($_POST['transfer_auto_resume'] ?? '1') === '1';
@@ -822,6 +894,18 @@ class CfAdminActionService
                 throw new Exception('未找到该根域名');
             }
 
+            $localIntegrityInfo = null;
+            if ($transferMode !== 'cloud_only') {
+                $localIntegrityInfo = self::inspectLocalTransferIntegrity($rootdomain);
+                $missingRate = floatval($localIntegrityInfo['missing_rate'] ?? 0);
+                $totalSubdomains = intval($localIntegrityInfo['total_subdomains'] ?? 0);
+                if ($totalSubdomains > 0 && $missingRate > $localMissingThreshold) {
+                    throw new Exception(
+                        '本地完整性检查未通过：缺失率 ' . $missingRate . '% 超过阈值 ' . $localMissingThreshold . '%（共 ' . $totalSubdomains . ' 个子域）'
+                    );
+                }
+            }
+
             $targetAccount = self::resolveProviderAccount($targetProviderId, true);
             if (!$targetAccount) {
                 throw new Exception('目标供应商账号不可用或已停用');
@@ -842,12 +926,17 @@ class CfAdminActionService
                 'target_provider_id' => intval($targetAccount['id']),
                 'target_zone_identifier' => $targetZoneId,
                 'batch_size' => $batchSize,
+                'transfer_mode' => $transferMode,
+                'local_missing_threshold' => $localMissingThreshold,
                 'delete_old_records' => $deleteOld ? 1 : 0,
                 'cursor_id' => 0,
                 'resume_status' => $rootRow->status ?? 'active',
                 'auto_resume' => $autoResume ? 1 : 0,
                 'pause_registration' => $pauseRegistration ? 1 : 0,
             ];
+            if (is_array($localIntegrityInfo)) {
+                $payload['local_integrity'] = $localIntegrityInfo;
+            }
 
             $now = date('Y-m-d H:i:s');
             if ($pauseRegistration && ($rootRow->status ?? '') === 'active') {
@@ -871,7 +960,7 @@ class CfAdminActionService
                     'updated_at' => $now,
                 ]);
                 self::triggerQueueInBackground();
-                self::flashSuccess('迁移任务已加入队列，稍后将在后台逐批处理。');
+                self::flashSuccess('迁移任务已加入队列（模式：' . $transferModeLabel . '），稍后将在后台逐批处理。');
             } else {
                 $jobStub = (object) ['id' => 0, 'priority' => 5];
                 $round = 0;
@@ -885,6 +974,8 @@ class CfAdminActionService
                     'records_deleted_on_cf' => 0,
                     'records_updated_local' => 0,
                     'records_imported_local' => 0,
+                    'remote_rate_limit_hits' => 0,
+                    'rate_limit_backoffs' => 0,
                 ];
                 $warningCount = 0;
                 $lastMessage = '迁移已完成';
@@ -927,6 +1018,12 @@ class CfAdminActionService
                 if (intval($summaryStats['records_imported_local']) > 0 || intval($summaryStats['records_updated_local']) > 0) {
                     $summaryParts[] = '本地同步 ' . (intval($summaryStats['records_imported_local']) + intval($summaryStats['records_updated_local'])) . ' 条';
                 }
+                if (intval($summaryStats['remote_rate_limit_hits']) > 0) {
+                    $summaryParts[] = '云端限流 ' . intval($summaryStats['remote_rate_limit_hits']) . ' 次';
+                }
+                if (intval($summaryStats['rate_limit_backoffs']) > 0) {
+                    $summaryParts[] = '指数退避 ' . intval($summaryStats['rate_limit_backoffs']) . ' 次';
+                }
                 if ($warningCount > 0) {
                     $summaryParts[] = '警告 ' . $warningCount . ' 条';
                 }
@@ -946,6 +1043,9 @@ class CfAdminActionService
                     'rootdomain' => $rootdomain,
                     'target_provider_id' => intval($targetAccount['id']),
                     'batch_size' => $batchSize,
+                    'transfer_mode' => $transferMode,
+                    'local_missing_threshold' => $localMissingThreshold,
+                    'local_integrity' => $localIntegrityInfo,
                     'delete_old_records' => $deleteOld ? 1 : 0,
                     'run_mode' => $runMode,
                     'pause_registration' => $pauseRegistration ? 1 : 0,

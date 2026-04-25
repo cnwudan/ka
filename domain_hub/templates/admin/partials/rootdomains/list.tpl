@@ -97,6 +97,7 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         $rdProviderStatus = $rdProvider ? strtolower($rdProvider->status ?? '') : '';
                         $rdProviderLabel = $rdProvider ? ($rdProvider->name ?: ('ID ' . $rdProvider->id)) : null;
                         $rdMaintenance = intval($rd->maintenance ?? 0) === 1;
+                        $rdDefaultTerm = intval($rd->default_term_years ?? 0);
                     ?>
                     <tr>
                         <td><?php echo $rd->id; ?></td>
@@ -286,6 +287,20 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                     <label class="form-label">批次大小</label>
                     <input type="number" class="form-control" name="transfer_batch_size" value="200" min="25" max="5000">
                     <div class="form-text">每批处理的子域数量，建议 50-200，特殊场景可提升至 5,000。</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">迁移模式</label>
+                    <select name="transfer_migration_mode" class="form-select">
+                        <option value="local_only">仅本地迁移（Local-only）</option>
+                        <option value="mixed" selected>混合迁移（Mixed，推荐）</option>
+                        <option value="cloud_only">仅云端迁移（Cloud-only）</option>
+                    </select>
+                    <div class="form-text">混合模式会优先结合本地记录与云端权威记录，遇到云端限流会自动回落到 Local-only。</div>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">本地完整性阻断阈值（%）</label>
+                    <input type="number" class="form-control" name="transfer_local_missing_threshold" value="30" min="0" max="100" step="1">
+                    <div class="form-text">当“本地缺失率”超过该值时阻断迁移（Cloud-only 模式不检查）。</div>
                 </div>
                 <div class="col-md-6">
                     <div class="form-check">

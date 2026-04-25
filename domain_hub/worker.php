@@ -405,6 +405,86 @@ function cfmod_worker_provider_not_found($result): bool {
         || strpos($message, '不存在') !== false;
 }
 
+function cfmod_worker_normalize_transfer_mode($mode): string {
+    $mode = strtolower(trim((string) $mode));
+    if (in_array($mode, ['local', 'local-only', 'local_only'], true)) {
+        return 'local_only';
+    }
+    if (in_array($mode, ['cloud', 'cloud-only', 'remote', 'cloud_only'], true)) {
+        return 'cloud_only';
+    }
+    return 'mixed';
+}
+
+function cfmod_worker_is_rate_limited_text(string $text): bool {
+    $text = strtolower(trim($text));
+    if ($text === '') {
+        return false;
+    }
+
+    $keywords = [
+        'http:429',
+        ' 429',
+        'too many requests',
+        'rate limit',
+        'throttl',
+        'over limit',
+        'quota exceeded',
+        'frequency limit',
+        '请求过于频繁',
+        '限流',
+        '频率超限',
+        '配额超限',
+    ];
+
+    foreach ($keywords as $keyword) {
+        if (strpos($text, $keyword) !== false) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+function cfmod_worker_is_rate_limited_response($response): bool {
+    if (is_array($response)) {
+        $httpCode = intval($response['http_code'] ?? ($response['code'] ?? 0));
+        if ($httpCode === 429) {
+            return true;
+        }
+        $errors = $response['errors'] ?? null;
+        if (is_array($errors)) {
+            $encoded = json_encode($errors, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+            if (is_string($encoded) && cfmod_worker_is_rate_limited_text($encoded)) {
+                return true;
+            }
+        } elseif (is_string($errors) && cfmod_worker_is_rate_limited_text($errors)) {
+            return true;
+        }
+    }
+
+    return cfmod_worker_is_rate_limited_text(cfmod_worker_provider_error_text($response));
+}
+
+function cfmod_worker_is_rate_limited_exception($exception): bool {
+    if (!($exception instanceof \Throwable)) {
+        return false;
+    }
+    if (intval($exception->getCode()) === 429) {
+        return true;
+    }
+    return cfmod_worker_is_rate_limited_text((string) $exception->getMessage());
+}
+
+function cfmod_worker_rate_limit_backoff_seconds(int $attempt): int {
+    $attempt = max(1, $attempt);
+    $seconds = 1;
+    if ($attempt > 1) {
+        $seconds = 1 << ($attempt - 1);
+    }
+    return max(1, min(16, $seconds));
+}
+
 function cfmod_worker_consume_remote_match(array &$remoteIndex, string $name, string $type, string $content): ?array {
     $n = strtolower($name);
     $t = strtoupper($type);
@@ -2084,6 +2164,19 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     $cloneFullZone = array_key_exists('clone_full_zone', $payload)
         ? !empty($payload['clone_full_zone'])
         : in_array($cloneSettingRaw, ['1', 'yes', 'true', 'on'], true);
+    $transferMode = cfmod_worker_normalize_transfer_mode($payload['transfer_mode'] ?? 'mixed');
+    $allowLocalSource = $transferMode !== 'cloud_only';
+    $allowRemoteSource = $transferMode !== 'local_only';
+    $remoteSourceEnabled = $allowRemoteSource;
+    $localMissingThreshold = floatval($payload['local_missing_threshold'] ?? 30);
+    if (!is_finite($localMissingThreshold)) {
+        $localMissingThreshold = 30;
+    }
+    $localMissingThreshold = max(0.0, min(100.0, $localMissingThreshold));
+    if ($transferMode === 'local_only') {
+        $cloneFullZone = false;
+    }
+
     $sourceProviderId = intval($payload['source_provider_id'] ?? 0);
     if ($sourceProviderId <= 0) {
         try {
@@ -2116,6 +2209,8 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         'source_provider_id' => $sourceProviderId,
         'batch_size' => $batchSize,
         'cursor_start' => $cursor,
+        'transfer_mode' => $transferMode,
+        'local_missing_threshold' => $localMissingThreshold,
         'processed_subdomains' => 0,
         'records_created_on_cf' => 0,
         'records_updated_on_cf' => 0,
@@ -2124,6 +2219,9 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         'records_failed_on_cf' => 0,
         'records_updated_local' => 0,
         'records_imported_local' => 0,
+        'remote_rate_limit_hits' => 0,
+        'rate_limit_backoffs' => 0,
+        'degraded_to_local_only' => 0,
         'clone_full_zone' => $cloneFullZone ? 1 : 0,
         'full_zone_created' => 0,
         'full_zone_exists' => 0,
@@ -2155,7 +2253,7 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
     }
 
     $allLocalRecords = [];
-    if (!empty($subdomainIds)) {
+    if ($allowLocalSource && !empty($subdomainIds)) {
         try {
             $localRecords = Capsule::table('mod_cloudflare_dns_records')
                 ->whereIn('subdomain_id', $subdomainIds)
@@ -2236,25 +2334,68 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 }
             }
 
-            if ($sourceCf) {
-                try {
-                    $remote = $sourceCf->getDnsRecords($s->cloudflare_zone_id ?: $rootdomain, $subdomainName, ['per_page' => 1000]);
-                    if (($remote['success'] ?? false)) {
-                        foreach (($remote['result'] ?? []) as $rr) {
-                            $appendRecord([
-                                'name' => strtolower($rr['name'] ?? $subdomainName),
-                                'type' => strtoupper($rr['type'] ?? ''),
-                                'content' => (string) ($rr['content'] ?? ''),
-                                'ttl' => intval($rr['ttl'] ?? 600),
-                                'priority' => isset($rr['priority']) ? intval($rr['priority']) : null,
-                            ]);
+            if ($sourceCf && $remoteSourceEnabled) {
+                $remoteAttempts = 0;
+                $maxRemoteAttempts = $allowLocalSource ? 1 : 4;
+                while ($remoteAttempts < $maxRemoteAttempts) {
+                    $remoteAttempts++;
+                    try {
+                        $remote = $sourceCf->getDnsRecords($s->cloudflare_zone_id ?: $rootdomain, $subdomainName, ['per_page' => 1000]);
+                        if (($remote['success'] ?? false)) {
+                            foreach (($remote['result'] ?? []) as $rr) {
+                                $appendRecord([
+                                    'name' => strtolower($rr['name'] ?? $subdomainName),
+                                    'type' => strtoupper($rr['type'] ?? ''),
+                                    'content' => (string) ($rr['content'] ?? ''),
+                                    'ttl' => intval($rr['ttl'] ?? 600),
+                                    'priority' => isset($rr['priority']) ? intval($rr['priority']) : null,
+                                ]);
+                            }
+                            break;
                         }
-                    } else {
+
+                        if (cfmod_worker_is_rate_limited_response($remote)) {
+                            $stats['remote_rate_limit_hits']++;
+                            if ($allowLocalSource) {
+                                $remoteSourceEnabled = false;
+                                $stats['degraded_to_local_only'] = 1;
+                                $stats['warnings'][] = 'remote_rate_limited_fallback_local_only';
+                                break;
+                            }
+                            if ($remoteAttempts < $maxRemoteAttempts) {
+                                $sleepSeconds = cfmod_worker_rate_limit_backoff_seconds($remoteAttempts);
+                                $stats['rate_limit_backoffs']++;
+                                $stats['warnings'][] = 'remote_rate_limited_backoff:' . $sleepSeconds . 's';
+                                cfmod_worker_touch_progress();
+                                sleep($sleepSeconds);
+                                continue;
+                            }
+                        }
+
                         $stats['warnings'][] = 'remote_records_unavailable:' . $sid;
+                        break;
+                    } catch (\Throwable $e) {
+                        if (cfmod_worker_is_rate_limited_exception($e)) {
+                            $stats['remote_rate_limit_hits']++;
+                            if ($allowLocalSource) {
+                                $remoteSourceEnabled = false;
+                                $stats['degraded_to_local_only'] = 1;
+                                $stats['warnings'][] = 'remote_rate_limited_fallback_local_only';
+                                break;
+                            }
+                            if ($remoteAttempts < $maxRemoteAttempts) {
+                                $sleepSeconds = cfmod_worker_rate_limit_backoff_seconds($remoteAttempts);
+                                $stats['rate_limit_backoffs']++;
+                                $stats['warnings'][] = 'remote_rate_limited_backoff:' . $sleepSeconds . 's';
+                                cfmod_worker_touch_progress();
+                                sleep($sleepSeconds);
+                                continue;
+                            }
+                        }
+                        $stats['warnings'][] = 'remote_records_error:' . $sid;
+                        cfmod_report_exception('transfer_root_provider_remote_fetch', $e);
+                        break;
                     }
-                } catch (\Throwable $e) {
-                    $stats['warnings'][] = 'remote_records_error:' . $sid;
-                    cfmod_report_exception('transfer_root_provider_remote_fetch', $e);
                 }
             }
 
@@ -2262,6 +2403,10 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
 
             if (empty($records)) {
                 $stats['warnings'][] = 'no_records:' . $sid;
+                if ($transferMode === 'cloud_only') {
+                    $stats['records_failed_on_cf']++;
+                    continue;
+                }
             }
 
             foreach ($records as $rec) {
@@ -2273,11 +2418,45 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                     $ttl = 600;
                 }
                 try {
-                    $res = cfmod_worker_transfer_create_on_target($targetCf, $targetZone, $name, $type, $rec, $ttl);
+                    $createAttempts = 0;
+                    $maxCreateAttempts = 4;
+                    $res = ['success' => false, 'errors' => ['create not started']];
+                    while ($createAttempts < $maxCreateAttempts) {
+                        $createAttempts++;
+                        try {
+                            $res = cfmod_worker_transfer_create_on_target($targetCf, $targetZone, $name, $type, $rec, $ttl);
+                        } catch (\Throwable $e) {
+                            if (cfmod_worker_is_rate_limited_exception($e) && $createAttempts < $maxCreateAttempts) {
+                                $sleepSeconds = cfmod_worker_rate_limit_backoff_seconds($createAttempts);
+                                $stats['remote_rate_limit_hits']++;
+                                $stats['rate_limit_backoffs']++;
+                                $stats['warnings'][] = 'target_rate_limited_backoff:' . $sleepSeconds . 's';
+                                cfmod_worker_touch_progress();
+                                sleep($sleepSeconds);
+                                continue;
+                            }
+                            throw $e;
+                        }
+
+                        if ($res['success'] ?? false) {
+                            break;
+                        }
+                        if (!cfmod_worker_is_rate_limited_response($res) || $createAttempts >= $maxCreateAttempts) {
+                            break;
+                        }
+                        $sleepSeconds = cfmod_worker_rate_limit_backoff_seconds($createAttempts);
+                        $stats['remote_rate_limit_hits']++;
+                        $stats['rate_limit_backoffs']++;
+                        $stats['warnings'][] = 'target_rate_limited_backoff:' . $sleepSeconds . 's';
+                        cfmod_worker_touch_progress();
+                        sleep($sleepSeconds);
+                    }
+
                     if ($res['success'] ?? false) {
                         $stats['records_created_on_cf']++;
                         continue;
                     }
+
                     $existing = $targetCf->getDnsRecords($targetZone, $name, ['type' => $type, 'per_page' => 1000]);
                     if (($existing['success'] ?? false) && cfmod_worker_transfer_remote_record_exists($existing['result'] ?? [], $rec)) {
                         $stats['records_exists_on_cf']++;
@@ -2371,6 +2550,11 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
         }
     }
 
+    if (!empty($stats['degraded_to_local_only'])) {
+        $cloneFullZone = false;
+        $stats['clone_full_zone'] = 0;
+    }
+
     $stats['cursor_end'] = $lastId;
     $stats['message'] = $stats['processed_subdomains'] > 0
         ? ('migrated ' . $stats['processed_subdomains'] . ' subdomains to provider #' . $targetProviderId)
@@ -2385,6 +2569,10 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 $nextPayload['target_zone_identifier'] = $targetZone;
                 $nextPayload['source_provider_id'] = $sourceProviderId;
                 $nextPayload['clone_full_zone'] = $cloneFullZone ? 1 : 0;
+                if (!empty($stats['degraded_to_local_only']) && $transferMode === 'mixed') {
+                    $nextPayload['transfer_mode'] = 'local_only';
+                    $nextPayload['clone_full_zone'] = 0;
+                }
                 Capsule::table('mod_cloudflare_jobs')->insert([
                     'type' => 'transfer_root_provider',
                     'payload_json' => json_encode($nextPayload, JSON_UNESCAPED_UNICODE),
@@ -2458,6 +2646,10 @@ function cfmod_job_transfer_root_provider($job, array $payload = []): array {
                 'rootdomain' => $rootdomain,
                 'source_provider_id' => $sourceProviderId,
                 'target_provider_id' => $targetProviderId,
+                'transfer_mode' => $transferMode,
+                'degraded_to_local_only' => intval($stats['degraded_to_local_only'] ?? 0),
+                'remote_rate_limit_hits' => intval($stats['remote_rate_limit_hits'] ?? 0),
+                'rate_limit_backoffs' => intval($stats['rate_limit_backoffs'] ?? 0),
                 'processed_subdomains' => $stats['processed_subdomains'],
                 'records_failed_on_cf' => $stats['records_failed_on_cf'] ?? 0,
                 'full_zone_failed' => $stats['full_zone_failed'] ?? 0,
