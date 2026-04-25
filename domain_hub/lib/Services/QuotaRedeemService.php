@@ -30,6 +30,8 @@ class CfQuotaRedeemException extends \RuntimeException
 class CfQuotaRedeemService
 {
     private const CLIENT_HISTORY_PER_PAGE = 5;
+    private const SAME_TYPE_DEFAULT_KEY = 'global';
+    private const SAME_TYPE_KEY_MAX_LENGTH = 64;
 
     private static ?self $instance = null;
 
@@ -137,6 +139,27 @@ class CfQuotaRedeemService
                 throw new CfQuotaRedeemException('quota_unavailable');
             }
 
+            $sameTypeLimitEnabled = intval($codeRow->same_type_limit_enabled ?? 0) === 1;
+            $sameTypeKey = null;
+            if ($sameTypeLimitEnabled) {
+                $sameTypeKey = $this->normalizeSameTypeKey((string) ($codeRow->same_type_key ?? ''));
+                if ($sameTypeKey === '') {
+                    $sameTypeKey = self::SAME_TYPE_DEFAULT_KEY;
+                }
+
+                $sameTypeRedeemCount = Capsule::table('mod_cloudflare_quota_redemptions')
+                    ->where('userid', $userid)
+                    ->where('status', 'success')
+                    ->where('same_type_limit_enabled', 1)
+                    ->where('same_type_key', $sameTypeKey)
+                    ->count();
+                if ($sameTypeRedeemCount > 0) {
+                    throw new CfQuotaRedeemException('same_type_limit', '', [
+                        'same_type_key' => $sameTypeKey,
+                    ]);
+                }
+            }
+
             $beforeQuota = (int) ($quota->max_count ?? 0);
             $afterQuota = $beforeQuota + $grantAmount;
 
@@ -154,6 +177,8 @@ class CfQuotaRedeemService
                 'message' => null,
                 'before_quota' => $beforeQuota,
                 'after_quota' => $afterQuota,
+                'same_type_limit_enabled' => $sameTypeLimitEnabled ? 1 : 0,
+                'same_type_key' => $sameTypeLimitEnabled ? $sameTypeKey : null,
                 'client_ip' => $clientIp !== '' ? $clientIp : null,
                 'created_at' => $nowStr,
                 'updated_at' => $nowStr,
@@ -239,6 +264,8 @@ class CfQuotaRedeemService
                     $table->string('mode', 20)->default('single_use');
                     $table->integer('max_total_uses')->unsigned()->default(1);
                     $table->integer('per_user_limit')->unsigned()->default(1);
+                    $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0);
+                    $table->string('same_type_key', 64)->nullable();
                     $table->integer('redeemed_total')->unsigned()->default(0);
                     $table->dateTime('valid_from')->nullable();
                     $table->dateTime('valid_to')->nullable();
@@ -250,7 +277,25 @@ class CfQuotaRedeemService
                     $table->index('status');
                     $table->index('valid_to');
                     $table->index('batch_tag');
+                    $table->index(['same_type_limit_enabled', 'same_type_key'], 'idx_quota_codes_same_type');
                 });
+            }
+
+            if (Capsule::schema()->hasTable('mod_cloudflare_quota_codes')) {
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_codes', 'same_type_limit_enabled')) {
+                    Capsule::schema()->table('mod_cloudflare_quota_codes', function ($table) {
+                        $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0)->after('per_user_limit');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_codes', 'same_type_key')) {
+                    Capsule::schema()->table('mod_cloudflare_quota_codes', function ($table) {
+                        $table->string('same_type_key', 64)->nullable()->after('same_type_limit_enabled');
+                    });
+                }
+                try {
+                    Capsule::statement('ALTER TABLE `mod_cloudflare_quota_codes` ADD INDEX `idx_quota_codes_same_type` (`same_type_limit_enabled`, `same_type_key`)');
+                } catch (\Throwable $ignored) {
+                }
             }
 
             if (!Capsule::schema()->hasTable('mod_cloudflare_quota_redemptions')) {
@@ -264,6 +309,8 @@ class CfQuotaRedeemService
                     $table->text('message')->nullable();
                     $table->bigInteger('before_quota')->default(0);
                     $table->bigInteger('after_quota')->default(0);
+                    $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0);
+                    $table->string('same_type_key', 64)->nullable();
                     $table->string('client_ip', 45)->nullable();
                     $table->timestamps();
                     $table->index('code_id');
@@ -271,7 +318,25 @@ class CfQuotaRedeemService
                     $table->index('code');
                     $table->index('status');
                     $table->index('created_at');
+                    $table->index(['userid', 'same_type_limit_enabled', 'same_type_key'], 'idx_quota_redeems_same_type');
                 });
+            }
+
+            if (Capsule::schema()->hasTable('mod_cloudflare_quota_redemptions')) {
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_redemptions', 'same_type_limit_enabled')) {
+                    Capsule::schema()->table('mod_cloudflare_quota_redemptions', function ($table) {
+                        $table->tinyInteger('same_type_limit_enabled')->unsigned()->default(0)->after('after_quota');
+                    });
+                }
+                if (!Capsule::schema()->hasColumn('mod_cloudflare_quota_redemptions', 'same_type_key')) {
+                    Capsule::schema()->table('mod_cloudflare_quota_redemptions', function ($table) {
+                        $table->string('same_type_key', 64)->nullable()->after('same_type_limit_enabled');
+                    });
+                }
+                try {
+                    Capsule::statement('ALTER TABLE `mod_cloudflare_quota_redemptions` ADD INDEX `idx_quota_redeems_same_type` (`userid`, `same_type_limit_enabled`, `same_type_key`)');
+                } catch (\Throwable $ignored) {
+                }
             }
         } catch (\Throwable $e) {
             // ignore schema errors to avoid blocking runtime
@@ -290,6 +355,25 @@ class CfQuotaRedeemService
             $result .= $alphabet[random_int(0, strlen($alphabet) - 1)];
         }
         return $result;
+    }
+
+    private function normalizeSameTypeKey(string $rawKey): string
+    {
+        $rawKey = trim($rawKey);
+        if ($rawKey === '') {
+            return '';
+        }
+
+        $normalized = strtolower($rawKey);
+        $normalized = preg_replace('/\s+/u', '_', $normalized) ?? $normalized;
+        $normalized = preg_replace('/[^a-z0-9._-]/', '', $normalized) ?? $normalized;
+        $normalized = trim($normalized, '._-');
+
+        if ($normalized === '') {
+            return '';
+        }
+
+        return substr($normalized, 0, self::SAME_TYPE_KEY_MAX_LENGTH);
     }
 
     private function resolveModuleSettings(?array $settings = null): array

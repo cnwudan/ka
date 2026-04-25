@@ -65,6 +65,16 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                             <label class="form-label">每位用户可用次数</label>
                             <input type="number" name="per_user_limit" class="form-control" min="1" value="1">
                         </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" name="same_type_limit_enabled" id="manualSameTypeLimit" value="1">
+                                <label class="form-check-label" for="manualSameTypeLimit">启用同类型互斥</label>
+                            </div>
+                        </div>
+                        <div class="col-md-8">
+                            <label class="form-label">互斥类型标识（留空默认 global）</label>
+                            <input type="text" name="same_type_key" class="form-control" placeholder="例如：spring-2026">
+                        </div>
                         <div class="col-md-4">
                             <label class="form-label">有效截止时间</label>
                             <input type="datetime-local" name="valid_to" class="form-control">
@@ -107,11 +117,21 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                             <label class="form-label">每人最多使用</label>
                             <input type="number" name="per_user_limit" class="form-control" min="1" value="1">
                         </div>
+                        <div class="col-md-4 d-flex align-items-end">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" name="same_type_limit_enabled" id="batchSameTypeLimit" value="1">
+                                <label class="form-check-label" for="batchSameTypeLimit">启用同类型互斥</label>
+                            </div>
+                        </div>
                         <div class="col-md-4">
                             <label class="form-label">有效天数（0=不限）</label>
                             <input type="number" name="valid_days" class="form-control" min="0" value="30">
                         </div>
-                        <div class="col-md-4">
+                        <div class="col-md-6">
+                            <label class="form-label">互斥类型标识（留空默认 global）</label>
+                            <input type="text" name="same_type_key" class="form-control" placeholder="例如：spring-2026">
+                        </div>
+                        <div class="col-md-6">
                             <label class="form-label">批次标签</label>
                             <input type="text" name="batch_tag" class="form-control" placeholder="例如：春季活动">
                         </div>
@@ -133,7 +153,7 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                     <h6 class="mb-0"><i class="fas fa-list-ul"></i> 兑换码列表</h6>
                     <form method="get" class="d-flex gap-2" action="">
                         <input type="hidden" name="module" value="<?php echo htmlspecialchars($moduleSlugAttr); ?>">
-                        <input type="text" name="redeem_code_search" class="form-control form-control-sm" placeholder="按兑换码/批次搜索" value="<?php echo htmlspecialchars($redeemCodeSearch); ?>">
+                        <input type="text" name="redeem_code_search" class="form-control form-control-sm" placeholder="按兑换码/批次/类型搜索" value="<?php echo htmlspecialchars($redeemCodeSearch); ?>">
                         <button type="submit" class="btn btn-sm btn-outline-secondary">搜索</button>
                     </form>
                 </div>
@@ -145,6 +165,7 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                                 <th>兑换码</th>
                                 <th>增加额度</th>
                                 <th>模式</th>
+                                <th>同类型互斥</th>
                                 <th>有效期</th>
                                 <th>使用情况</th>
                                 <th>状态</th>
@@ -165,12 +186,19 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                                         if ($status === 'disabled') { $statusBadge = 'secondary'; }
                                         elseif ($status === 'exhausted') { $statusBadge = 'warning'; }
                                         elseif ($status === 'expired') { $statusBadge = 'danger'; }
+                                        $sameTypeEnabled = intval($codeRow->same_type_limit_enabled ?? 0) === 1;
+                                        $sameTypeKey = trim((string) ($codeRow->same_type_key ?? ''));
+                                        if ($sameTypeEnabled && $sameTypeKey === '') {
+                                            $sameTypeKey = 'global';
+                                        }
+                                        $sameTypeLabel = $sameTypeEnabled ? ('是（' . $sameTypeKey . '）') : '否';
                                     ?>
                                     <tr>
                                         <td>#<?php echo intval($codeRow->id); ?></td>
                                         <td><code><?php echo htmlspecialchars($codeRow->code); ?></code><br><small class="text-muted"><?php echo htmlspecialchars($codeRow->batch_tag ?? ''); ?></small></td>
                                         <td>+<?php echo intval($codeRow->grant_amount ?? 0); ?></td>
                                         <td><?php echo htmlspecialchars($codeRow->mode === 'multi_use' ? '多人可用' : '单人专用'); ?></td>
+                                        <td><?php echo htmlspecialchars($sameTypeLabel); ?></td>
                                         <td><small class="text-muted"><?php echo $validFrom; ?> → <?php echo $validTo; ?></small></td>
                                         <td><?php echo $usageText; ?></td>
                                         <td><span class="badge bg-<?php echo $statusBadge; ?>"><?php echo htmlspecialchars($status); ?></span></td>
@@ -192,7 +220,7 @@ $redeemHistoryCodeFilter = $redeemHistoryFilters['code'] ?? '';
                                     </tr>
                                 <?php endforeach; ?>
                             <?php else: ?>
-                                <tr><td colspan="8" class="text-center text-muted">暂无兑换码</td></tr>
+                                <tr><td colspan="9" class="text-center text-muted">暂无兑换码</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
