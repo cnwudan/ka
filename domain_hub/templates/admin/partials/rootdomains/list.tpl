@@ -469,7 +469,36 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                             <option value="<?php echo htmlspecialchars($domain); ?>"><?php echo htmlspecialchars($domain); ?></option>
                         <?php endforeach; ?>
                     </select>
-                    <div class="form-text text-muted mt-2">导出远端当前解析，输出为 PowerDNS RRSet 兼容 JSON，可用于跨平台迁移。</div>
+                    <div class="form-text text-muted mt-2">默认导出远端当前解析（权威数据），输出为 PowerDNS RRSet 兼容 JSON，可用于跨平台迁移。</div>
+                    <div class="mt-2">
+                        <label class="form-label mb-1">导出来源</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" id="pdns_export_source_remote" name="pdns_export_source" value="remote" checked>
+                            <label class="form-check-label" for="pdns_export_source_remote">远端平台（默认，权威）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" id="pdns_export_source_local" name="pdns_export_source" value="local">
+                            <label class="form-check-label" for="pdns_export_source_local">本地缓存（应急导出，可能非最新）</label>
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <label class="form-label mb-1">本地应急导出限制（仅本地缓存模式生效）</label>
+                        <div class="input-group input-group-sm">
+                            <select class="form-select" name="pdns_local_export_limit_mode">
+                                <option value="none" selected>不限制（导出全部本地缓存）</option>
+                                <option value="subdomain">仅前 N 个子域名的记录</option>
+                                <option value="record">仅前 N 条 DNS 记录</option>
+                            </select>
+                            <span class="input-group-text">N</span>
+                            <input type="number" class="form-control" name="pdns_local_export_limit_value" value="1000" min="100" max="50000">
+                        </div>
+                        <div class="form-text text-muted">适合记录量过大时应急导出，导出文件会标记为部分导出。</div>
+                    </div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_auto_continue" name="pdns_local_auto_continue" value="1">
+                        <label class="form-check-label" for="pdns_local_auto_continue">自动连续导出（每段导出后间隔 10 秒继续，直到导完）</label>
+                    </div>
+                    <div class="form-text text-muted">仅本地缓存模式生效，且需配合“仅前 N 个子域名的记录”或“仅前 N 条 DNS 记录”使用。</div>
                     <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
                         <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>
