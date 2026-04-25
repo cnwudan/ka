@@ -1286,6 +1286,59 @@ function api_auth(){
     return [true, $row];
 }
 
+function api_validate_ip_or_cidr(string $value): bool {
+    $value = trim($value);
+    if ($value === '') {
+        return false;
+    }
+
+    if (strpos($value, '/') === false) {
+        return filter_var($value, FILTER_VALIDATE_IP) !== false;
+    }
+
+    $parts = explode('/', $value, 2);
+    if (count($parts) !== 2) {
+        return false;
+    }
+
+    $ip = trim($parts[0]);
+    $maskRaw = trim($parts[1]);
+    if ($ip === '' || $maskRaw === '' || !ctype_digit($maskRaw)) {
+        return false;
+    }
+
+    $mask = intval($maskRaw);
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+        return $mask >= 0 && $mask <= 32;
+    }
+    if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6)) {
+        return $mask >= 0 && $mask <= 128;
+    }
+
+    return false;
+}
+
+function api_normalize_ip_whitelist($raw, &$error = ''): string {
+    $error = '';
+    $items = preg_split('/[,;\r\n]+/', (string)$raw);
+    $normalized = [];
+
+    foreach ($items as $item) {
+        $candidate = trim((string)$item);
+        if ($candidate === '') {
+            continue;
+        }
+        if (!api_validate_ip_or_cidr($candidate)) {
+            $error = 'invalid ip_whitelist entry: ' . $candidate;
+            return '';
+        }
+        $normalized[] = $candidate;
+    }
+
+    $normalized = array_values(array_unique($normalized));
+    return implode(',', $normalized);
+}
+
 function api_rate_limit($keyRow, ?array $settings = null){
     if ($settings === null) {
         $settings = api_load_settings();
@@ -1902,14 +1955,28 @@ function handleApiRequest(){
 
                 // 字段选择
                 $fieldsParam = trim($_GET['fields'] ?? ($data['fields'] ?? ''));
-                $allowedFields = ['id', 'subdomain', 'rootdomain', 'status', 'created_at', 'updated_at', 'expires_at', 'never_expires', 'cloudflare_zone_id', 'provider_account_id'];
-                $selectFields = $allowedFields;
-                if ($fieldsParam !== '' && $fieldsParam !== 'all') {
-                    $requestedFields = array_map('trim', explode(',', $fieldsParam));
-                    $selectFields = array_intersect($requestedFields, $allowedFields);
-                    if (empty($selectFields) || !in_array('id', $selectFields)) {
-                        $selectFields = ['id'];
+                $allowedFields = ['id', 'subdomain', 'rootdomain', 'full_domain', 'status', 'created_at', 'updated_at', 'expires_at', 'never_expires', 'cloudflare_zone_id', 'provider_account_id'];
+                $dbSelectableFields = ['id', 'subdomain', 'rootdomain', 'status', 'created_at', 'updated_at', 'expires_at', 'never_expires', 'cloudflare_zone_id', 'provider_account_id'];
+                $responseFields = $allowedFields;
+                if ($fieldsParam !== '' && strtolower($fieldsParam) !== 'all') {
+                    $requestedFields = array_values(array_filter(array_map('trim', explode(',', $fieldsParam)), static function ($value) {
+                        return $value !== '';
+                    }));
+                    $responseFields = array_values(array_intersect($requestedFields, $allowedFields));
+                    if (empty($responseFields)) {
+                        $responseFields = ['id'];
                     }
+                    if (!in_array('id', $responseFields, true)) {
+                        array_unshift($responseFields, 'id');
+                    }
+                }
+
+                $selectFields = array_values(array_intersect($responseFields, $dbSelectableFields));
+                if (in_array('full_domain', $responseFields, true) && !in_array('subdomain', $selectFields, true)) {
+                    $selectFields[] = 'subdomain';
+                }
+                if (empty($selectFields)) {
+                    $selectFields = ['id'];
                 }
 
                 // 排序选项
@@ -1935,15 +2002,32 @@ function handleApiRequest(){
                 $subsLimited = $hasMore ? $subsCollection->slice(0, $perPage)->values() : $subsCollection->values();
                 $rows = [];
                 foreach ($subsLimited as $s) {
-                    $rows[] = [
-                        'id' => $s->id,
-                        'subdomain' => $s->subdomain,
-                        'rootdomain' => $s->rootdomain,
-                        'full_domain' => $s->subdomain,
-                        'status' => $s->status,
-                        'created_at' => $s->created_at,
-                        'updated_at' => $s->updated_at
+                    $providerAccountId = $s->provider_account_id ?? null;
+                    if ($providerAccountId !== null && $providerAccountId !== '') {
+                        $providerAccountId = intval($providerAccountId);
+                    }
+
+                    $fieldValues = [
+                        'id' => intval($s->id ?? 0),
+                        'subdomain' => $s->subdomain ?? null,
+                        'rootdomain' => $s->rootdomain ?? null,
+                        'full_domain' => $s->subdomain ?? null,
+                        'status' => $s->status ?? null,
+                        'created_at' => $s->created_at ?? null,
+                        'updated_at' => $s->updated_at ?? null,
+                        'expires_at' => $s->expires_at ?? null,
+                        'never_expires' => intval($s->never_expires ?? 0),
+                        'cloudflare_zone_id' => $s->cloudflare_zone_id ?? null,
+                        'provider_account_id' => $providerAccountId,
                     ];
+
+                    $row = [];
+                    foreach ($responseFields as $fieldName) {
+                        if (array_key_exists($fieldName, $fieldValues)) {
+                            $row[$fieldName] = $fieldValues[$fieldName];
+                        }
+                    }
+                    $rows[] = $row;
                 }
                 $meta = [
                     'page' => $page,
@@ -2449,47 +2533,69 @@ function handleApiRequest(){
                     api_emit_scope_rate_limit_error($e);
                 }
                 $keyName = trim((string)($data['key_name'] ?? ''));
+                $ipWhitelistRaw = trim((string)($data['ip_whitelist'] ?? ''));
+                $ipWhitelist = '';
 
                 if ($keyName === '') {
                     $code = 400;
                     $result = ['error' => 'key_name required'];
                 } else {
-                    try {
-                        $existingCount = Capsule::table('mod_cloudflare_api_keys')
-                            ->where('userid', $keyRow->userid)
-                            ->count();
-                        $maxKeys = intval($settings['api_keys_per_user'] ?? 3);
-                        if ($existingCount >= $maxKeys) {
+                    if ($ipWhitelistRaw !== '') {
+                        if (!api_setting_enabled($settings['api_enable_ip_whitelist'] ?? '0')) {
                             $code = 403;
-                            $result = ['error' => 'key limit exceeded'];
+                            $result = ['error' => 'ip whitelist disabled'];
                         } else {
-                            $apiKey = 'cfsd_' . bin2hex(random_bytes(16));
-                            $apiSecret = bin2hex(random_bytes(32));
-                            $hashedSecret = password_hash($apiSecret, PASSWORD_DEFAULT);
-                            $now = date('Y-m-d H:i:s');
-                            $rateLimit = max(1, intval($settings['api_rate_limit'] ?? 60));
-                            Capsule::table('mod_cloudflare_api_keys')->insert([
-                                'userid' => $keyRow->userid,
-                                'key_name' => $keyName,
-                                'api_key' => $apiKey,
-                                'api_secret' => $hashedSecret,
-                                'status' => 'active',
-                                'rate_limit' => $rateLimit,
-                                'request_count' => 0,
-                                'created_at' => $now,
-                                'updated_at' => $now
-                            ]);
-                            $result = [
-                                'success' => true,
-                                'message' => 'API key created successfully',
-                                'api_key' => $apiKey,
-                                'api_secret' => $apiSecret,
-                                'rate_limit' => $rateLimit
-                            ];
+                            $ipWhitelistError = '';
+                            $ipWhitelist = api_normalize_ip_whitelist($ipWhitelistRaw, $ipWhitelistError);
+                            if ($ipWhitelistError !== '') {
+                                $code = 400;
+                                $result = ['error' => $ipWhitelistError];
+                            }
                         }
-                    } catch (\Throwable $e) {
-                        $code = 500;
-                        $result = ['error' => 'create failed'];
+                    }
+
+                    if ($code === 200) {
+                        try {
+                            $existingCount = Capsule::table('mod_cloudflare_api_keys')
+                                ->where('userid', $keyRow->userid)
+                                ->count();
+                            $maxKeys = intval($settings['api_keys_per_user'] ?? 3);
+                            if ($existingCount >= $maxKeys) {
+                                $code = 403;
+                                $result = ['error' => 'key limit exceeded'];
+                            } else {
+                                $apiKey = 'cfsd_' . bin2hex(random_bytes(16));
+                                $apiSecret = bin2hex(random_bytes(32));
+                                $hashedSecret = password_hash($apiSecret, PASSWORD_DEFAULT);
+                                $now = date('Y-m-d H:i:s');
+                                $rateLimit = max(1, intval($settings['api_rate_limit'] ?? 60));
+                                Capsule::table('mod_cloudflare_api_keys')->insert([
+                                    'userid' => $keyRow->userid,
+                                    'key_name' => $keyName,
+                                    'api_key' => $apiKey,
+                                    'api_secret' => $hashedSecret,
+                                    'status' => 'active',
+                                    'ip_whitelist' => $ipWhitelist !== '' ? $ipWhitelist : null,
+                                    'rate_limit' => $rateLimit,
+                                    'request_count' => 0,
+                                    'created_at' => $now,
+                                    'updated_at' => $now
+                                ]);
+                                $result = [
+                                    'success' => true,
+                                    'message' => 'API key created successfully',
+                                    'api_key' => $apiKey,
+                                    'api_secret' => $apiSecret,
+                                    'rate_limit' => $rateLimit
+                                ];
+                                if ($ipWhitelist !== '') {
+                                    $result['ip_whitelist'] = $ipWhitelist;
+                                }
+                            }
+                        } catch (\Throwable $e) {
+                            $code = 500;
+                            $result = ['error' => 'create failed'];
+                        }
                     }
                 }
             }
