@@ -279,6 +279,8 @@ class CfSettingsRepository
         $defaults = [
             'domain_registration_term_years' => '1',
             'domain_free_renew_window_days' => '30',
+            'enable_domain_permanent_upgrade' => '0',
+            'domain_permanent_upgrade_price' => '0',
             'domain_grace_period_days' => '45',
             'domain_redemption_days' => '0',
             'domain_redemption_mode' => 'manual',

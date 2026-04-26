@@ -1966,6 +1966,9 @@ class CfAdminActionService
         $dnsUnlockPurchaseEnabledSetting = (($_POST['dns_unlock_purchase_enabled'] ?? '') === '1');
         $dnsUnlockPurchasePriceInput = (float) ($_POST['dns_unlock_purchase_price'] ?? ($moduleSettings['dns_unlock_purchase_price'] ?? 0));
         $dnsUnlockPurchasePrice = round(max(0, $dnsUnlockPurchasePriceInput), 2);
+        $enableDomainPermanentUpgrade = (($_POST['enable_domain_permanent_upgrade'] ?? '') === '1');
+        $domainPermanentUpgradePriceInput = (float) ($_POST['domain_permanent_upgrade_price'] ?? ($moduleSettings['domain_permanent_upgrade_price'] ?? 0));
+        $domainPermanentUpgradePrice = round(max(0, $domainPermanentUpgradePriceInput), 2);
         $clientSupportTicketUrl = trim((string) ($_POST['client_support_ticket_url'] ?? ($moduleSettings['client_support_ticket_url'] ?? 'submitticket.php')));
         $clientSupportGroupUrl = trim((string) ($_POST['client_support_group_url'] ?? ($moduleSettings['client_support_group_url'] ?? 'https://t.me/+l9I5TNRDLP5lZDBh')));
         if ($clientSupportTicketUrl === '') {
@@ -2093,6 +2096,8 @@ class CfAdminActionService
                 'dns_unlock_share_enabled' => $dnsUnlockShareEnabledSetting ? '1' : '0',
                 'dns_unlock_purchase_enabled' => $dnsUnlockPurchaseEnabledSetting ? '1' : '0',
                 'dns_unlock_purchase_price' => number_format($dnsUnlockPurchasePrice, 2, '.', ''),
+                'enable_domain_permanent_upgrade' => $enableDomainPermanentUpgrade ? '1' : '0',
+                'domain_permanent_upgrade_price' => number_format($domainPermanentUpgradePrice, 2, '.', ''),
                 'client_support_ticket_url' => $clientSupportTicketUrl,
                 'client_support_group_url' => $clientSupportGroupUrl,
                 'enable_help_ai_search' => $helpAiSearchEnabled ? '1' : '0',
@@ -2144,6 +2149,8 @@ class CfAdminActionService
                     'dns_unlock_share_enabled' => $dnsUnlockShareEnabledSetting ? 1 : 0,
                     'dns_unlock_purchase_enabled' => $dnsUnlockPurchaseEnabledSetting ? 1 : 0,
                     'dns_unlock_purchase_price' => $dnsUnlockPurchasePrice,
+                    'enable_domain_permanent_upgrade' => $enableDomainPermanentUpgrade ? 1 : 0,
+                    'domain_permanent_upgrade_price' => $domainPermanentUpgradePrice,
                     'client_support_ticket_url' => $clientSupportTicketUrl,
                     'client_support_group_url' => $clientSupportGroupUrl,
                     'enable_help_ai_search' => $helpAiSearchEnabled ? 1 : 0,

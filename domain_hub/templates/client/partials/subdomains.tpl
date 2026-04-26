@@ -84,6 +84,8 @@
                                     if ($redemptionDaysSetting < 0) { $redemptionDaysSetting = 0; }
                                     $redemptionSecondsSetting = $redemptionDaysSetting * 86400;
                                     $rootMaintenanceMap = $rootMaintenanceMap ?? [];
+                                    $permanentUpgradeEnabledSetting = in_array($module_settings['enable_domain_permanent_upgrade'] ?? '0', ['1','on','yes','true'], true);
+                                    $permanentUpgradePriceSetting = round(max(0, (float) ($module_settings['domain_permanent_upgrade_price'] ?? 0)), 2);
                                     foreach($existing as $e):
                                         $neverExpires = intval($e->never_expires ?? 0) === 1;
                                         $expiresRaw = $e->expires_at ?? null;
@@ -153,6 +155,9 @@
                                             $canRenew = true;
                                             $canRedeemWithCharge = true;
                                         }
+                                        $canUpgradePermanent = $permanentUpgradeEnabledSetting
+                                            && !$neverExpires
+                                            && in_array($statusLower, ['active', 'pending'], true);
                                     ?>
                                     <tr>
                                         <td>
@@ -265,6 +270,23 @@
                                             <a class="btn btn-outline-success btn-sm ms-2" href="<?php echo htmlspecialchars($redeemTicketUrl, ENT_QUOTES); ?>" target="_blank" rel="noopener noreferrer">
                                                 <i class="fas fa-life-ring"></i> <?php echo cfclient_lang('cfclient.subdomains.button.redeem_ticket', '申请恢复域名', [], true); ?>
                                             </a>
+                                            <?php endif; ?>
+
+                                            <?php if ($canUpgradePermanent): ?>
+                                            <?php
+                                                $upgradePermanentText = $permanentUpgradePriceSetting > 0
+                                                    ? cfclient_lang('cfclient.subdomains.button.upgrade_permanent.paid', '升级永久（扣费￥%s）', [number_format($permanentUpgradePriceSetting, 2)], true)
+                                                    : cfclient_lang('cfclient.subdomains.button.upgrade_permanent.free', '升级为永久', [], true);
+                                                $upgradePermanentConfirm = cfclient_lang('cfclient.subdomains.confirm.upgrade_permanent', '确认将域名 %s 升级为永久有效？此操作提交后不可撤销。', [$e->subdomain], false);
+                                            ?>
+                                            <form method="post" class="mt-2" onsubmit="return confirm('<?php echo htmlspecialchars($upgradePermanentConfirm, ENT_QUOTES); ?>');">
+                                                <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
+                                                <input type="hidden" name="action" value="upgrade_permanent">
+                                                <input type="hidden" name="subdomain_id" value="<?php echo intval($e->id); ?>">
+                                                <button type="submit" class="btn btn-outline-dark btn-sm">
+                                                    <i class="fas fa-infinity"></i> <?php echo $upgradePermanentText; ?>
+                                                </button>
+                                            </form>
                                             <?php endif; ?>
                                         </td>
                                     </tr>

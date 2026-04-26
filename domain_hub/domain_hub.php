@@ -2545,6 +2545,19 @@ function domain_hub_config() {
                 "Default" => "30",
                 "Description" => "到期前多少天向用户开放免费续期操作",
             ],
+            "enable_domain_permanent_upgrade" => [
+                "FriendlyName" => "启用域名升级永久",
+                "Type" => "yesno",
+                "Default" => "no",
+                "Description" => "开启后，用户可在前台将符合条件的域名升级为永久有效。",
+            ],
+            "domain_permanent_upgrade_price" => [
+                "FriendlyName" => "域名升级永久费用",
+                "Type" => "text",
+                "Size" => "8",
+                "Default" => "0",
+                "Description" => "升级为永久域名时扣除的账户余额金额（0 表示免费升级）。",
+            ],
             "domain_grace_period_days" => [
                 "FriendlyName" => "宽限期（天）",
                 "Type" => "text",

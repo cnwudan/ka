@@ -236,6 +236,10 @@ return [
     'dns_unlock_share_hint' => '关闭后仅保留付费解锁入口，前台将隐藏解锁码与输入框。',
     'dns_unlock_purchase_label' => '启用余额付费解锁',
     'dns_unlock_purchase_hint' => '允许用户通过账户余额购买解锁权限',
+    'runtime_permanent_upgrade_enable' => '启用域名升级永久',
+    'runtime_permanent_upgrade_enable_hint' => '开启后，用户可在域名列表将域名升级为永久有效。',
+    'runtime_permanent_upgrade_price' => '域名升级永久费用（账户币种）',
+    'runtime_permanent_upgrade_price_hint' => '设置为 0 表示免费升级。',
 
 
     'runtime_save_button' => '保存设置',

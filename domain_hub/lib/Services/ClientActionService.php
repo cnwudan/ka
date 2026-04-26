@@ -52,6 +52,8 @@ class CfClientActionService
         $dnsUnlockPurchaseEnabled = cfmod_setting_enabled($module_settings['dns_unlock_purchase_enabled'] ?? '0');
         $dnsUnlockShareEnabled = cfmod_setting_enabled($module_settings['dns_unlock_share_enabled'] ?? '1');
         $dnsUnlockPurchasePrice = round(max(0, (float)($module_settings['dns_unlock_purchase_price'] ?? 0)), 2);
+        $enablePermanentUpgrade = cfmod_setting_enabled($module_settings['enable_domain_permanent_upgrade'] ?? '0');
+        $domainPermanentUpgradePrice = round(max(0, (float) ($module_settings['domain_permanent_upgrade_price'] ?? 0)), 2);
         $msg = $globals['msg'] ?? '';
         $msg_type = $globals['msg_type'] ?? '';
         $registerError = $globals['registerError'] ?? '';
@@ -1453,6 +1455,169 @@ if($_POST['action'] == "renew" && isset($_POST['subdomain_id'])) {
                 unset($_SESSION['cfmod_last_renew_sig'], $_SESSION['cfmod_last_renew_time']);
                 $errorText = cfmod_format_provider_error($e->getMessage(), self::actionText('renew.failed_default', '续期失败，请稍后再试。'));
                 $msg = self::actionText('renew.failed_detail', '续期失败：%s', [$errorText]);
+                $msg_type = 'danger';
+            }
+        }
+    }
+}
+
+
+// 处理升级永久请求
+if($_POST['action'] == "upgrade_permanent" && isset($_POST['subdomain_id'])) {
+    if (!$enablePermanentUpgrade) {
+        $msg = self::actionText('permanent_upgrade.disabled', '管理员暂未开启域名升级永久功能。');
+        $msg_type = 'warning';
+    } elseif ($userid <= 0) {
+        $msg = self::actionText('permanent_upgrade.invalid_user', '未找到登录信息，请刷新页面后重试。');
+        $msg_type = 'danger';
+    } else {
+        $subdomainId = intval($_POST['subdomain_id']);
+        $nowTs = time();
+        try {
+            if (session_status() !== PHP_SESSION_ACTIVE) { @session_start(); }
+        } catch (Exception $e) {}
+
+        $upgradeSig = 'upgrade_permanent|' . $subdomainId;
+        if (!empty($_SESSION['cfmod_last_permanent_upgrade_sig'])
+            && $_SESSION['cfmod_last_permanent_upgrade_sig'] === $upgradeSig
+            && isset($_SESSION['cfmod_last_permanent_upgrade_time'])
+            && ($nowTs - intval($_SESSION['cfmod_last_permanent_upgrade_time'])) < 5
+        ) {
+            $msg = self::actionText('common.duplicate_submit', '操作已提交，请勿重复点击');
+            $msg_type = 'warning';
+        } else {
+            $_SESSION['cfmod_last_permanent_upgrade_sig'] = $upgradeSig;
+            $_SESSION['cfmod_last_permanent_upgrade_time'] = $nowTs;
+
+            try {
+                $upgradeResult = Capsule::transaction(function () use ($subdomainId, $userid, $domainPermanentUpgradePrice, $nowTs) {
+                    $nowStr = date('Y-m-d H:i:s', $nowTs);
+                    $subdomain = Capsule::table('mod_cloudflare_subdomain')
+                        ->where('id', $subdomainId)
+                        ->where('userid', $userid)
+                        ->lockForUpdate()
+                        ->first();
+
+                    if (!$subdomain) {
+                        throw new \RuntimeException(self::actionText('permanent_upgrade.not_found', '未找到该域名或无权操作'));
+                    }
+
+                    if (intval($subdomain->never_expires ?? 0) === 1) {
+                        throw new \RuntimeException(self::actionText('permanent_upgrade.already', '该域名已经是永久有效，无需重复升级'));
+                    }
+
+                    $statusLower = strtolower($subdomain->status ?? '');
+                    if (!in_array($statusLower, ['active', 'pending'], true)) {
+                        throw new \RuntimeException(self::actionText('permanent_upgrade.status_invalid', '当前状态不允许升级为永久域名'));
+                    }
+
+                    $chargeAmount = 0.0;
+                    if ($domainPermanentUpgradePrice > 0) {
+                        $clientRow = Capsule::table('tblclients')
+                            ->where('id', $userid)
+                            ->lockForUpdate()
+                            ->first();
+                        if (!$clientRow) {
+                            throw new \RuntimeException(self::actionText('permanent_upgrade.balance_unavailable', '无法读取账户余额信息，请稍后重试'));
+                        }
+
+                        $currentCredit = (float) ($clientRow->credit ?? 0.0);
+                        if ($currentCredit + 1e-8 < $domainPermanentUpgradePrice) {
+                            throw new \RuntimeException(self::actionText('permanent_upgrade.insufficient_balance', '升级永久域名需要 ￥%s，账户余额不足，请先充值后再试。', [number_format($domainPermanentUpgradePrice, 2)]));
+                        }
+
+                        $newCredit = round($currentCredit - $domainPermanentUpgradePrice, 2);
+                        Capsule::table('tblclients')
+                            ->where('id', $userid)
+                            ->update([
+                                'credit' => number_format($newCredit, 2, '.', ''),
+                            ]);
+
+                        static $creditSchemaInfoPermanentUpgrade = null;
+                        if ($creditSchemaInfoPermanentUpgrade === null) {
+                            $creditSchemaInfoPermanentUpgrade = [
+                                'has_table' => false,
+                                'has_relid' => false,
+                                'has_refundid' => false,
+                            ];
+                            try {
+                                $creditSchemaInfoPermanentUpgrade['has_table'] = Capsule::schema()->hasTable('tblcredit');
+                                if ($creditSchemaInfoPermanentUpgrade['has_table']) {
+                                    $creditSchemaInfoPermanentUpgrade['has_relid'] = Capsule::schema()->hasColumn('tblcredit', 'relid');
+                                    $creditSchemaInfoPermanentUpgrade['has_refundid'] = Capsule::schema()->hasColumn('tblcredit', 'refundid');
+                                }
+                            } catch (\Throwable $ignored) {
+                                $creditSchemaInfoPermanentUpgrade = [
+                                    'has_table' => false,
+                                    'has_relid' => false,
+                                    'has_refundid' => false,
+                                ];
+                            }
+                        }
+
+                        if ($creditSchemaInfoPermanentUpgrade['has_table']) {
+                            $creditInsert = [
+                                'clientid' => $userid,
+                                'date' => date('Y-m-d H:i:s', $nowTs),
+                                'description' => self::actionText('permanent_upgrade.credit_desc', '域名升级永久有效'),
+                                'amount' => 0 - $domainPermanentUpgradePrice,
+                            ];
+                            if ($creditSchemaInfoPermanentUpgrade['has_relid']) {
+                                $creditInsert['relid'] = 0;
+                            }
+                            if ($creditSchemaInfoPermanentUpgrade['has_refundid']) {
+                                $creditInsert['refundid'] = 0;
+                            }
+                            Capsule::table('tblcredit')->insert($creditInsert);
+                        }
+
+                        $chargeAmount = $domainPermanentUpgradePrice;
+                    }
+
+                    Capsule::table('mod_cloudflare_subdomain')
+                        ->where('id', $subdomainId)
+                        ->update([
+                            'expires_at' => null,
+                            'renewed_at' => $nowStr,
+                            'never_expires' => 1,
+                            'auto_deleted_at' => null,
+                            'updated_at' => $nowStr,
+                        ]);
+
+                    return [
+                        'subdomain' => $subdomain->subdomain,
+                        'previous_expires_at' => $subdomain->expires_at ?? null,
+                        'charged_amount' => $chargeAmount,
+                    ];
+                });
+
+                if (function_exists('cloudflare_subdomain_log')) {
+                    cloudflare_subdomain_log('client_upgrade_subdomain_permanent', [
+                        'subdomain' => $upgradeResult['subdomain'],
+                        'previous_expires_at' => $upgradeResult['previous_expires_at'],
+                        'charged_amount' => $upgradeResult['charged_amount'] ?? 0,
+                    ], $userid, $subdomainId);
+                }
+
+                $existing = Capsule::table('mod_cloudflare_subdomain')
+                    ->where('userid', $userid)
+                    ->where('status', 'active')
+                    ->orderBy('created_at', 'desc')
+                    ->get();
+                if (!is_array($existing)) {
+                    $existing = [];
+                }
+
+                $chargedAmount = isset($upgradeResult['charged_amount']) ? (float) $upgradeResult['charged_amount'] : 0.0;
+                $msg = self::actionText('permanent_upgrade.success', '升级成功，该域名已永久有效。');
+                if ($chargedAmount > 0) {
+                    $msg .= self::actionText('permanent_upgrade.success_charge_suffix', '（已扣除 ￥%s）', [number_format($chargedAmount, 2)]);
+                }
+                $msg_type = 'success';
+            } catch (\Throwable $e) {
+                unset($_SESSION['cfmod_last_permanent_upgrade_sig'], $_SESSION['cfmod_last_permanent_upgrade_time']);
+                $errorText = cfmod_format_provider_error($e->getMessage(), self::actionText('permanent_upgrade.failed_default', '升级失败，请稍后再试。'));
+                $msg = self::actionText('permanent_upgrade.failed_detail', '升级失败：%s', [$errorText]);
                 $msg_type = 'danger';
             }
         }
@@ -2963,7 +3128,7 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
     private static function resolveClientRateLimitScope(string $action): ?string
     {
         static $dnsActions = ['create_dns', 'update_dns', 'delete_dns_record', 'toggle_cdn', 'toggle_record_cdn', 'delete_subdomain'];
-        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'update_expiry_telegram_reminder', 'submit_partner_application'];
+        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'update_expiry_telegram_reminder', 'submit_partner_application', 'upgrade_permanent'];
         if ($action === 'register') {
             return CfRateLimiter::SCOPE_REGISTER;
         }
