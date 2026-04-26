@@ -8,9 +8,11 @@ $rootdomains = $rootdomainsView['rootdomains'] ?? [];
 $providerAccountMap = $rootdomainsView['providerAccountMap'] ?? [];
 $forbiddenDomains = $rootdomainsView['forbiddenDomains'] ?? [];
 $allKnownRootdomains = $rootdomainsView['allKnownRootdomains'] ?? [];
+$pdnsLocalExportCursorStates = $rootdomainsView['pdnsLocalExportCursorStates'] ?? [];
 $orderHeader = $lang['rootdomain_order_header'] ?? '排序';
 $orderHint = $lang['rootdomain_order_hint'] ?? '数值越小越靠前';
 $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
+$cfmodAdminCsrfTokenLocal = (string) ($_SESSION['cfmod_admin_csrf'] ?? '');
 ?>
 
 <!-- 根域名白名单管理 -->
@@ -65,11 +67,32 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
             </div>
         </form>
         
-        <form method="post" id="rootdomain-order-form" class="d-flex align-items-center gap-2 mb-3">
+        <form method="post" id="rootdomain-order-form" class="mb-3">
             <input type="hidden" name="action" value="update_rootdomain_order">
-            <input type="hidden" name="display_order_snapshot" id="rootdomain-order-snapshot" value="">
-            <button type="submit" class="btn btn-outline-primary btn-sm"><?php echo htmlspecialchars($orderSaveLabel); ?></button>
-            <small class="text-muted"><?php echo htmlspecialchars($orderHint); ?></small>
+            <input type="hidden" name="cfmod_admin_csrf" value="<?php echo htmlspecialchars($cfmodAdminCsrfTokenLocal, ENT_QUOTES); ?>">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button type="submit" class="btn btn-outline-primary btn-sm"><?php echo htmlspecialchars($orderSaveLabel); ?></button>
+                <small class="text-muted"><?php echo htmlspecialchars($orderHint); ?></small>
+            </div>
+            <div class="row g-2">
+                <?php foreach($rootdomains as $rdOrder): ?>
+                    <div class="col-sm-6 col-md-4 col-lg-3">
+                        <label class="form-label mb-1" for="display_order_<?php echo intval($rdOrder->id); ?>">
+                            <code><?php echo htmlspecialchars($rdOrder->domain ?? ''); ?></code>
+                        </label>
+                        <input
+                            type="number"
+                            class="form-control form-control-sm"
+                            id="display_order_<?php echo intval($rdOrder->id); ?>"
+                            name="display_order[<?php echo intval($rdOrder->id); ?>]"
+                            value="<?php echo intval($rdOrder->display_order ?? 0); ?>"
+                            min="-2147483648"
+                            max="2147483647"
+                            step="1"
+                        >
+                    </div>
+                <?php endforeach; ?>
+            </div>
         </form>
         
         <div class="table-responsive">
@@ -104,7 +127,7 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <td><?php echo $rd->id; ?></td>
                         <td><code><?php echo htmlspecialchars($rd->domain); ?></code></td>
                         <td style="width:110px;">
-                            <input type="number" class="form-control form-control-sm" name="display_order[<?php echo intval($rd->id); ?>]" value="<?php echo intval($rd->display_order ?? 0); ?>" form="rootdomain-order-form">
+                            <span class="badge bg-light text-dark"><?php echo intval($rd->display_order ?? 0); ?></span>
                         </td>
                         <td><small class="text-muted"><?php echo htmlspecialchars($rd->cloudflare_zone_id ?? ''); ?></small></td>
                         <td>
@@ -516,6 +539,35 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                     </div>
                     <div class="form-text text-muted">仅本地缓存模式生效，且需配合“仅前 N 个子域名的记录”或“仅前 N 条 DNS 记录”使用。</div>
                     <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_resume_cursor" name="pdns_local_resume_cursor" value="1" checked>
+                        <label class="form-check-label" for="pdns_local_resume_cursor">从上次游标续传（按根域名 + 限制模式 + N 自动匹配）</label>
+                    </div>
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_reset_cursor" name="pdns_local_reset_cursor" value="1">
+                        <label class="form-check-label" for="pdns_local_reset_cursor">本次重置续传游标，从头开始导出</label>
+                    </div>
+                    <?php if (!empty($pdnsLocalExportCursorStates)): ?>
+                    <div class="alert alert-secondary small mt-2 mb-0">
+                        <div class="fw-bold mb-1">当前本地导出续传游标（未完成）</div>
+                        <ul class="mb-0 ps-3">
+                            <?php foreach (array_slice($pdnsLocalExportCursorStates, 0, 8) as $cursorState): ?>
+                                <?php
+                                    $cursorRoot = htmlspecialchars((string) ($cursorState['rootdomain'] ?? '-'));
+                                    $cursorModeRaw = (string) ($cursorState['limit_mode'] ?? '');
+                                    $cursorMode = $cursorModeRaw === 'record' ? '记录数' : '子域名数';
+                                    $cursorLimit = intval($cursorState['limit_value'] ?? 0);
+                                    $cursorNext = intval($cursorState['next_cursor'] ?? 0);
+                                    $cursorUpdatedAt = htmlspecialchars((string) ($cursorState['updated_at'] ?? '-'));
+                                ?>
+                                <li><code><?php echo $cursorRoot; ?></code> / <?php echo htmlspecialchars($cursorMode); ?> N=<?php echo $cursorLimit; ?> / next_cursor=<?php echo $cursorNext; ?> <span class="text-muted">(更新时间 <?php echo $cursorUpdatedAt; ?>)</span></li>
+                            <?php endforeach; ?>
+                            <?php if (count($pdnsLocalExportCursorStates) > 8): ?>
+                                <li class="text-muted">…… 其余 <?php echo intval(count($pdnsLocalExportCursorStates) - 8); ?> 条已省略</li>
+                            <?php endif; ?>
+                        </ul>
+                    </div>
+                    <?php endif; ?>
+                    <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
                         <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>
                     </div>
@@ -562,25 +614,4 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
     </div>
 </div>
 
-<script>
-(function () {
-    var orderForm = document.getElementById('rootdomain-order-form');
-    if (!orderForm) {
-        return;
-    }
-    orderForm.addEventListener('submit', function () {
-        var payload = {};
-        document.querySelectorAll("input[name^='display_order[']").forEach(function (input) {
-            var match = (input.name || '').match(/^display_order\[(\d+)\]$/);
-            if (!match) {
-                return;
-            }
-            payload[match[1]] = input.value;
-        });
-        var snapshot = document.getElementById('rootdomain-order-snapshot');
-        if (snapshot) {
-            snapshot.value = JSON.stringify(payload);
-        }
-    });
-})();
-</script>
+

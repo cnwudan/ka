@@ -28,6 +28,7 @@ class CfAdminActionService
     private const HASH_SUBDOMAINS = '#subdomains';
     private const REDEEM_SAME_TYPE_DEFAULT_KEY = 'global';
     private const REDEEM_SAME_TYPE_KEY_MAX_LENGTH = 64;
+    private const PDNS_LOCAL_EXPORT_CURSOR_SETTING_KEY = 'pdns_local_export_cursor_state';
 
     /**
      * @var array<string, callable>
@@ -88,6 +89,7 @@ class CfAdminActionService
         'admin_upsert_invite_reward' => [self::class, 'handleAdminUpsertInviteReward'],
         'admin_rebuild_invite_rewards' => [self::class, 'handleAdminRebuildInviteRewards'],
         'admin_settle_last_period' => [self::class, 'handleAdminSettleLastPeriod'],
+        'migrate_invite_registration_existing_users' => [self::class, 'handleMigrateInviteRegistrationExistingUsers'],
         'generate_invite_snapshot' => [self::class, 'handleGenerateInviteSnapshot'],
         'remove_leaderboard_user' => [self::class, 'handleRemoveLeaderboardUser'],
         'admin_edit_leaderboard_user' => [self::class, 'handleAdminEditLeaderboardUser'],
@@ -624,15 +626,18 @@ class CfAdminActionService
             self::redirect(self::HASH_ROOT_WHITELIST);
         }
         $sanitized = [];
+        $orderMin = -2147483648;
+        $orderMax = 2147483647;
         foreach ($orders as $id => $value) {
             if (!is_numeric($id)) {
                 continue;
             }
-            $orderValue = is_numeric($value) ? (int) $value : 0;
-            if ($orderValue < -1000000) {
-                $orderValue = -1000000;
-            } elseif ($orderValue > 1000000) {
-                $orderValue = 1000000;
+            $raw = trim((string) $value);
+            $orderValue = ($raw !== '' && is_numeric($raw)) ? (int) $raw : 0;
+            if ($orderValue < $orderMin) {
+                $orderValue = $orderMin;
+            } elseif ($orderValue > $orderMax) {
+                $orderValue = $orderMax;
             }
             $sanitized[(int) $id] = $orderValue;
         }
@@ -651,14 +656,22 @@ class CfAdminActionService
                 self::flashError('未找到对应的根域名');
                 self::redirect(self::HASH_ROOT_WHITELIST);
             }
+            $updatedCount = 0;
             foreach ($existingIds as $id) {
                 $orderValue = $sanitized[(int) $id] ?? 0;
-                Capsule::table('mod_cloudflare_rootdomains')->where('id', $id)->update([
+                $affected = Capsule::table('mod_cloudflare_rootdomains')->where('id', $id)->update([
                     'display_order' => $orderValue,
                     'updated_at' => $now,
                 ]);
+                if ($affected > 0) {
+                    $updatedCount++;
+                }
             }
-            self::flashSuccess('根域名排序已更新');
+            if ($updatedCount > 0) {
+                self::flashSuccess('根域名排序已更新（' . $updatedCount . ' 项）');
+            } else {
+                self::flash('未检测到排序变更，请确认输入值是否与当前一致。', 'warning');
+            }
         } catch (\Throwable $e) {
             self::flashError('更新排序失败：' . $e->getMessage());
         }
@@ -1192,6 +1205,32 @@ class CfAdminActionService
                 }
                 $autoContinuousExport = isset($_POST['pdns_local_auto_continue'])
                     && (string) $_POST['pdns_local_auto_continue'] === '1';
+                $resumeCursor = isset($_POST['pdns_local_resume_cursor'])
+                    && (string) $_POST['pdns_local_resume_cursor'] === '1';
+                $resetCursor = isset($_POST['pdns_local_reset_cursor'])
+                    && (string) $_POST['pdns_local_reset_cursor'] === '1';
+
+                $exportOptions = [
+                    'limit_mode' => $localLimitMode,
+                    'limit_value' => $localLimitValue,
+                ];
+
+                if (in_array($localLimitMode, ['subdomain', 'record'], true)) {
+                    if ($resetCursor) {
+                        self::clearPdnsLocalExportCursorState($targetRoot, $localLimitMode, $localLimitValue);
+                    }
+                    if ($resumeCursor) {
+                        $cursorState = self::getPdnsLocalExportCursorState($targetRoot, $localLimitMode, $localLimitValue);
+                        if (is_array($cursorState) && !empty($cursorState['has_more'])) {
+                            $resumeFromCursor = max(0, intval($cursorState['next_cursor'] ?? 0));
+                            if ($resumeFromCursor > 0) {
+                                $exportOptions['cursor'] = $resumeFromCursor;
+                            }
+                        }
+                    }
+                } else {
+                    self::clearPdnsLocalExportCursorState($targetRoot);
+                }
 
                 if ($autoContinuousExport) {
                     if (!in_array($localLimitMode, ['subdomain', 'record'], true)) {
@@ -1200,16 +1239,14 @@ class CfAdminActionService
                     if (!function_exists('cfmod_collect_rootdomain_pdns_dataset_from_local_auto')) {
                         throw new Exception('当前环境不支持自动连续导出');
                     }
-                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local_auto($targetRoot, [
-                        'limit_mode' => $localLimitMode,
-                        'limit_value' => $localLimitValue,
-                        'sleep_seconds' => 10,
-                    ]);
+                    $exportOptions['sleep_seconds'] = 10;
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local_auto($targetRoot, $exportOptions);
                 } else {
-                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local($targetRoot, [
-                        'limit_mode' => $localLimitMode,
-                        'limit_value' => $localLimitValue,
-                    ]);
+                    $dataset = cfmod_collect_rootdomain_pdns_dataset_from_local($targetRoot, $exportOptions);
+                }
+
+                if (in_array($localLimitMode, ['subdomain', 'record'], true)) {
+                    self::syncPdnsLocalExportCursorState($targetRoot, $localLimitMode, $localLimitValue, $dataset);
                 }
                 if ($useSegmented && function_exists('cfmod_pdns_make_segmented_dataset')) {
                     $dataset = cfmod_pdns_make_segmented_dataset($dataset, $segmentSize);
@@ -1218,6 +1255,7 @@ class CfAdminActionService
                     cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_local');
                 }
             } else {
+                self::clearPdnsLocalExportCursorState($targetRoot);
                 if ($useSegmented && function_exists('cfmod_collect_rootdomain_pdns_dataset_segmented')) {
                     $dataset = cfmod_collect_rootdomain_pdns_dataset_segmented($targetRoot, $segmentSize);
                     cfmod_stream_export_dataset($dataset, $targetRoot, 'domain_hub_pdns_export_segmented');
@@ -4681,6 +4719,201 @@ class CfAdminActionService
             'default' => intval($map[self::ORPHAN_CURSOR_DEFAULT_KEY] ?? 0),
             'list' => $list,
         ];
+    }
+
+
+    private static function normalizePdnsCursorRootdomain(string $rootdomain): string
+    {
+        if (function_exists('cfmod_normalize_rootdomain')) {
+            return (string) cfmod_normalize_rootdomain($rootdomain);
+        }
+        return strtolower(trim($rootdomain));
+    }
+
+    private static function pdnsLocalExportCursorStateKey(string $rootdomain, string $limitMode, int $limitValue): string
+    {
+        $root = self::normalizePdnsCursorRootdomain($rootdomain);
+        $mode = strtolower(trim($limitMode));
+        return $root . '|' . $mode . '|' . max(1, $limitValue);
+    }
+
+    private static function loadPdnsLocalExportCursorStateMap(): array
+    {
+        $settings = self::moduleSettings();
+        $raw = trim((string) ($settings[self::PDNS_LOCAL_EXPORT_CURSOR_SETTING_KEY] ?? ''));
+        if ($raw === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $map = [];
+        foreach ($decoded as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $rootdomain = self::normalizePdnsCursorRootdomain((string) ($item['rootdomain'] ?? ''));
+            $limitMode = strtolower(trim((string) ($item['limit_mode'] ?? '')));
+            if (!in_array($limitMode, ['subdomain', 'record'], true)) {
+                continue;
+            }
+            $limitValue = max(1, intval($item['limit_value'] ?? 0));
+            $nextCursor = max(0, intval($item['next_cursor'] ?? 0));
+            $hasMore = !empty($item['has_more']) ? 1 : 0;
+            if ($rootdomain === '' || $nextCursor <= 0 || $hasMore !== 1) {
+                continue;
+            }
+            $key = self::pdnsLocalExportCursorStateKey($rootdomain, $limitMode, $limitValue);
+            $map[$key] = [
+                'rootdomain' => $rootdomain,
+                'limit_mode' => $limitMode,
+                'limit_value' => $limitValue,
+                'next_cursor' => $nextCursor,
+                'has_more' => 1,
+                'updated_at' => trim((string) ($item['updated_at'] ?? '')),
+                'updated_by_admin' => intval($item['updated_by_admin'] ?? 0),
+            ];
+        }
+
+        return $map;
+    }
+
+    private static function savePdnsLocalExportCursorStateMap(array $map): void
+    {
+        if (empty($map)) {
+            self::persistModuleSetting(self::PDNS_LOCAL_EXPORT_CURSOR_SETTING_KEY, '');
+            return;
+        }
+
+        uasort($map, static function (array $a, array $b): int {
+            $timeA = (string) ($a['updated_at'] ?? '');
+            $timeB = (string) ($b['updated_at'] ?? '');
+            if ($timeA === $timeB) {
+                return strcmp((string) ($a['rootdomain'] ?? ''), (string) ($b['rootdomain'] ?? ''));
+            }
+            return strcmp($timeB, $timeA);
+        });
+
+        if (count($map) > 200) {
+            $map = array_slice($map, 0, 200, true);
+        }
+
+        $encoded = json_encode(array_values($map), JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            return;
+        }
+
+        self::persistModuleSetting(self::PDNS_LOCAL_EXPORT_CURSOR_SETTING_KEY, $encoded);
+    }
+
+    private static function getPdnsLocalExportCursorState(string $rootdomain, string $limitMode, int $limitValue): ?array
+    {
+        $root = self::normalizePdnsCursorRootdomain($rootdomain);
+        if ($root === '') {
+            return null;
+        }
+        $mode = strtolower(trim($limitMode));
+        if (!in_array($mode, ['subdomain', 'record'], true)) {
+            return null;
+        }
+        $key = self::pdnsLocalExportCursorStateKey($root, $mode, max(1, $limitValue));
+        $map = self::loadPdnsLocalExportCursorStateMap();
+        $item = $map[$key] ?? null;
+        return is_array($item) ? $item : null;
+    }
+
+    private static function clearPdnsLocalExportCursorState(string $rootdomain, ?string $limitMode = null, ?int $limitValue = null): void
+    {
+        $root = self::normalizePdnsCursorRootdomain($rootdomain);
+        if ($root === '') {
+            return;
+        }
+
+        $map = self::loadPdnsLocalExportCursorStateMap();
+        if (empty($map)) {
+            return;
+        }
+
+        if ($limitMode !== null && $limitValue !== null) {
+            $mode = strtolower(trim($limitMode));
+            if (in_array($mode, ['subdomain', 'record'], true)) {
+                $key = self::pdnsLocalExportCursorStateKey($root, $mode, max(1, intval($limitValue)));
+                if (isset($map[$key])) {
+                    unset($map[$key]);
+                    self::savePdnsLocalExportCursorStateMap($map);
+                }
+                return;
+            }
+        }
+
+        $changed = false;
+        foreach ($map as $key => $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            if ((string) ($item['rootdomain'] ?? '') === $root) {
+                unset($map[$key]);
+                $changed = true;
+            }
+        }
+
+        if ($changed) {
+            self::savePdnsLocalExportCursorStateMap($map);
+        }
+    }
+
+    private static function syncPdnsLocalExportCursorState(string $rootdomain, string $limitMode, int $limitValue, array $dataset): void
+    {
+        $root = self::normalizePdnsCursorRootdomain($rootdomain);
+        $mode = strtolower(trim($limitMode));
+        $limit = max(1, intval($limitValue));
+        if ($root === '' || !in_array($mode, ['subdomain', 'record'], true)) {
+            self::clearPdnsLocalExportCursorState($root);
+            return;
+        }
+
+        $rule = isset($dataset['partial_rule']) && is_array($dataset['partial_rule']) ? $dataset['partial_rule'] : [];
+        $hasMore = !empty($rule['has_more']);
+        $nextCursor = max(0, intval($rule['next_cursor'] ?? 0));
+
+        if (!$hasMore || $nextCursor <= 0) {
+            self::clearPdnsLocalExportCursorState($root, $mode, $limit);
+            return;
+        }
+
+        $map = self::loadPdnsLocalExportCursorStateMap();
+        $key = self::pdnsLocalExportCursorStateKey($root, $mode, $limit);
+        $map[$key] = [
+            'rootdomain' => $root,
+            'limit_mode' => $mode,
+            'limit_value' => $limit,
+            'next_cursor' => $nextCursor,
+            'has_more' => 1,
+            'updated_at' => date('Y-m-d H:i:s'),
+            'updated_by_admin' => intval($_SESSION['adminid'] ?? 0),
+        ];
+        self::savePdnsLocalExportCursorStateMap($map);
+    }
+
+    public static function getPdnsLocalExportCursorSummaryForView(): array
+    {
+        $map = self::loadPdnsLocalExportCursorStateMap();
+        if (empty($map)) {
+            return [];
+        }
+        $list = array_values($map);
+        usort($list, static function (array $a, array $b): int {
+            $timeA = (string) ($a['updated_at'] ?? '');
+            $timeB = (string) ($b['updated_at'] ?? '');
+            if ($timeA === $timeB) {
+                return strcmp((string) ($a['rootdomain'] ?? ''), (string) ($b['rootdomain'] ?? ''));
+            }
+            return strcmp($timeB, $timeA);
+        });
+        return $list;
     }
 
     private static function buildProviderCacheKey($sub): string

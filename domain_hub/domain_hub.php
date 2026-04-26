@@ -1917,7 +1917,8 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local_auto(string $rootdomai
         @set_time_limit(0);
     }
 
-    $cursor = 0;
+    $startCursor = max(0, intval($options['cursor'] ?? 0));
+    $cursor = $startCursor;
     $chunks = 0;
     $interrupted = false;
     $warnings = [];
@@ -1992,6 +1993,9 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local_auto(string $rootdomai
 
     $normalizedRoot = cfmod_normalize_rootdomain($rootdomain);
     $rrsets = cfmod_pdns_group_records_to_rrsets($records);
+    if ($startCursor > 0) {
+        $warnings[] = '本次自动连续导出从续传游标 cursor=' . $startCursor . ' 开始。';
+    }
     $warnings[] = '自动连续导出共执行 ' . $chunks . ' 段，每段间隔 ' . $sleepSeconds . ' 秒。';
 
     return [
@@ -2012,7 +2016,7 @@ function cfmod_collect_rootdomain_pdns_dataset_from_local_auto(string $rootdomai
         'partial_rule' => [
             'mode' => $limitMode,
             'limit_value' => $limitValue,
-            'cursor' => 0,
+            'cursor' => $startCursor,
             'next_cursor' => $cursor > 0 ? $cursor : null,
             'has_more' => $interrupted ? 1 : 0,
         ],
