@@ -4,7 +4,7 @@ $modalText = function (string $key, string $default, array $params = [], bool $e
 };
 $modalLanguage = strtolower((string) ($currentClientLanguage ?? 'english'));
 $modalIsChinese = $modalLanguage === 'chinese';
-$nsListLabelDefault = $modalIsChinese ? 'NS 服务器列表' : 'Name Server List';
+$nsListLabelDefault = $modalIsChinese ? 'DNS服务器列表' : 'DNS Server List';
 $nsAddButtonDefault = $modalIsChinese ? '[增加 DNS 服务器]' : '[Add DNS Server]';
 $nsSaveButtonDefault = $modalIsChinese ? '保存设置' : 'Save Settings';
 $nsForceShortDefault = $modalIsChinese ? '强制替换冲突记录' : 'Force replace conflicting records';
@@ -29,6 +29,32 @@ $expiryTelegramReminderBotUsername = trim((string) ($expiryTelegramReminderBotUs
 $expiryTelegramReminderDaysCsv = trim((string) ($expiryTelegramReminderDaysCsv ?? ''));
 if ($expiryTelegramReminderDaysCsv === '' && is_array($expiryTelegramReminderDays ?? null)) {
     $expiryTelegramReminderDaysCsv = implode(',', array_map('intval', $expiryTelegramReminderDays));
+}
+$expiryTelegramReminderDaysList = [];
+if ($expiryTelegramReminderDaysCsv !== '') {
+    foreach (preg_split('/\s*,\s*/', $expiryTelegramReminderDaysCsv) as $dayToken) {
+        if ($dayToken === '') {
+            continue;
+        }
+        $dayValue = max(0, (int) $dayToken);
+        if ($dayValue > 0) {
+            $expiryTelegramReminderDaysList[] = $dayValue;
+        }
+    }
+}
+$expiryTelegramReminderDaysList = array_values(array_unique($expiryTelegramReminderDaysList));
+$expiryTelegramReminderDaysZh = '-';
+$expiryTelegramReminderDaysEn = '-';
+if (!empty($expiryTelegramReminderDaysList)) {
+    $zhParts = array_map(static function (int $day): string {
+        return $day . '天';
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysZh = count($zhParts) === 2 ? ($zhParts[0] . '及' . $zhParts[1]) : implode('、', $zhParts);
+
+    $enParts = array_map(static function (int $day): string {
+        return $day . ' day' . ($day === 1 ? '' : 's');
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysEn = count($enParts) === 2 ? ($enParts[0] . ' and ' . $enParts[1]) : implode(', ', $enParts);
 }
 $expiryTelegramReminderDisplayName = $expiryTelegramReminderTelegramUsername !== ''
     ? '@' . ltrim($expiryTelegramReminderTelegramUsername, '@')
@@ -166,7 +192,7 @@ $dnsLineOptions = [
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
-                                    <label class="form-label"><?php echo $modalText('cfclient.modals.dns.label.ttl', 'TTL (秒)'); ?></label>
+                                    <label class="form-label"><?php echo $modalText('cfclient.modals.dns.label.ttl', 'TTL (分钟)'); ?></label>
                                     <select name="record_ttl" class="form-select">
                                         <?php foreach ($ttlOptions as $value => $label): ?>
                                             <option value="<?php echo htmlspecialchars($value); ?>"<?php echo $value === '600' ? ' selected' : ''; ?>><?php echo $label; ?></option>
@@ -196,8 +222,8 @@ $dnsLineOptions = [
                             <strong><?php echo $modalText('cfclient.modals.dns.alert.title', '提示：'); ?></strong>
                             <ul class="mb-0 mt-2">
                                 <li><?php echo $modalText('cfclient.modals.dns.alert.1', '修改DNS记录可能需要几分钟时间生效'); ?></li>
-                                <li><?php echo $modalText('cfclient.modals.dns.alert.2', 'DNS解析支持按线路（运营商/地域）返回记录'); ?></li>
-                                <li><strong><?php echo $modalText('cfclient.modals.dns.alert.3', '可以同时设置 @ 记录和三级域名记录，互不影响'); ?></strong></li>
+                                <li><?php echo $modalText('cfclient.modals.dns.alert.2', '可以同时设置 @ 记录和三级域名记录，互不影响'); ?></li>
+                                <li><strong><?php echo $modalText('cfclient.modals.dns.alert.3', '智能解析支持:域名us.ci与cn.mt 支持按线路（运营商/地域）精准解析'); ?></strong></li>
                             </ul>
                         </div>
                     </div>
@@ -646,7 +672,7 @@ $inviteRegMaxPerUser = intval($inviteRegistrationMaxPerUser ?? 0);
                 <hr>
                 <div class="mb-2 d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><?php echo $modalText('cfclient.invite_registration.logs_title', '我的邀请记录'); ?></h6>
-                    <small class="text-muted"><?php echo $modalText('cfclient.invite_registration.logs_hint', '最多展示最近 10 条记录，邮箱已脱敏'); ?></small>
+                    <small class="text-muted"><?php echo $modalText('cfclient.invite_registration.logs_hint', '展示最近 10 条邀请记录。'); ?></small>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle">
@@ -988,7 +1014,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     <div class="alert alert-light border small mb-3">
                         <i class="fas fa-info-circle me-1"></i>
-                        <?php echo $modalText('cfclient.expiry_telegram.modal.days', '提醒天数：%s（到期前自动发送）', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?>
+                        <?php echo $modalText('cfclient.expiry_telegram.modal.days', '提醒频率：系统会在到期前 %s 各发送一次telegram消息提醒。', [$modalIsChinese ? $expiryTelegramReminderDaysZh : $expiryTelegramReminderDaysEn]); ?>
                     </div>
 
                     <div class="mb-3">

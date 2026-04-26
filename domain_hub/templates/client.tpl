@@ -299,7 +299,7 @@ if ($cfClientHasToolFeatures) {
     $cfClientViewItems['tools'] = [
         'icon' => 'fas fa-toolbox',
         'label' => $cfClientNavText('cfclient.nav.tools', '功能中心', 'Feature Center'),
-        'description' => $cfClientNavText('cfclient.nav.tools_desc', '兑换与辅助功能入口', 'Redeem and utility features'),
+        'description' => $cfClientNavText('cfclient.nav.tools_desc', '额度兑换与邀请注册等功能', 'Quota redeem, invite registration, and more'),
     ];
 }
 if ($cfClientApiEnabled && $cfClientApiTemplateExists) {
@@ -1038,7 +1038,7 @@ window.__nsBySubId = <?php echo json_encode($nsBySubId ?? [], CFMOD_SAFE_JSON_FL
                                     <i class="fas fa-arrow-left"></i>
                                     <span class="cf-nav-text">
                                         <span class="cf-nav-label"><?php echo $cfClientNavText('cfclient.sidebar.back_portal', '返回客户中心', 'Back to Client Area'); ?></span>
-                                        <span class="cf-nav-desc"><?php echo $cfClientNavText('cfclient.sidebar.back_portal_desc', '返回 WHMCS 客户中心首页', 'Return to the WHMCS client portal home'); ?></span>
+                                        <span class="cf-nav-desc"><?php echo $cfClientNavText('cfclient.sidebar.back_portal_desc', '返回客户中心首页', 'Return to client portal home'); ?></span>
                                     </span>
                                 </a>
                             <?php endif; ?>

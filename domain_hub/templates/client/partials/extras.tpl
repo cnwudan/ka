@@ -15,7 +15,7 @@ $extrasTexts = [
     'searchPlaceholder' => cfclient_lang('cfclient.extras.search.placeholder', $isClientLanguageChinese ? '搜索关键字，例如：DNS 生效、解析报错、域名转赠' : 'Search keywords, e.g. DNS propagation, record errors, domain transfer', [], true),
     'searchEmpty' => cfclient_lang('cfclient.extras.search.empty', $isClientLanguageChinese ? '未找到匹配内容，请尝试更换关键字。' : 'No matching topics found. Try another keyword.', [], true),
     'banner' => cfclient_lang('cfclient.extras.banner', $isClientLanguageChinese ? '记录变更通常在几分钟内生效。如遇解析异常，请通过工单或 TG 社群获取实时支持。' : 'Record changes usually propagate within minutes. If DNS behaves unexpectedly, please open a ticket or contact TG community support for real-time help.', [], true),
-    'coreTitle' => cfclient_lang('cfclient.extras.section.core', $isClientLanguageChinese ? '高频问题（优先查看）' : 'Top Issues (Start Here)', [], true),
+    'coreTitle' => cfclient_lang('cfclient.extras.section.core', $isClientLanguageChinese ? '常见问题' : 'Common Questions', [], true),
     'domainTitle' => cfclient_lang('cfclient.extras.section.domain', $isClientLanguageChinese ? '域名规则与管理' : 'Domain Rules & Management', [], true),
     'dnsTitle' => cfclient_lang('cfclient.extras.section.dns', $isClientLanguageChinese ? 'DNS 记录说明' : 'DNS Record Guidance', [], true),
     'supportTitle' => cfclient_lang('cfclient.extras.support.title', $isClientLanguageChinese ? '自助支持入口' : 'Self-Service Support', [], true),
@@ -26,12 +26,12 @@ $extrasTexts = [
     'supportContact' => cfclient_lang('cfclient.extras.support.contact', $isClientLanguageChinese ? 'TG 社群' : 'TG Community', [], true),
     'supportTicketDesc' => cfclient_lang('cfclient.extras.support.ticket_desc', $isClientLanguageChinese ? '反馈解析异常、记录操作失败等问题' : 'Report DNS errors, failed record operations, and account issues', [], true),
     'supportAppealDesc' => cfclient_lang('cfclient.extras.support.appeal_desc', $isClientLanguageChinese ? '账号封禁或停用后提交人工复核申请' : 'Submit manual review requests for banned or disabled accounts', [], true),
-    'supportKbDesc' => cfclient_lang('cfclient.extras.support.kb_desc', $isClientLanguageChinese ? '查看 WHMCS 官方知识库文档与教程' : 'Browse WHMCS documentation and tutorials', [], true),
+    'supportKbDesc' => cfclient_lang('cfclient.extras.support.kb_desc', $isClientLanguageChinese ? '查看官方知识库文档与教程' : 'Browse official knowledge base documentation and tutorials', [], true),
     'supportContactDesc' => cfclient_lang('cfclient.extras.support.contact_desc', $isClientLanguageChinese ? '加入社群获取实时公告与交流支持' : 'Join the community for announcements and real-time support', [], true),
     'backToPortal' => cfclient_lang('cfclient.extras.back_to_portal', $isClientLanguageChinese ? '返回客户中心' : 'Back to Client Area', [], true),
     'aiButton' => cfclient_lang('cfclient.extras.ai.button', $isClientLanguageChinese ? 'AI 搜索/问答' : 'AI Search & Chat', [], true),
     'aiModalTitle' => cfclient_lang('cfclient.extras.ai.modal_title', $isClientLanguageChinese ? '帮助中心 AI 助手' : 'Help Center AI Assistant', [], true),
-    'aiModalHint' => cfclient_lang('cfclient.extras.ai.modal_hint', $isClientLanguageChinese ? '可咨询域名注册、续期、DNS 解析、API 密钥等插件相关问题。' : 'Ask about plugin topics such as registration, renewal, DNS records, and API keys.', [], true),
+    'aiModalHint' => cfclient_lang('cfclient.extras.ai.modal_hint', $isClientLanguageChinese ? '可咨询域名注册、续期、DNS 解析、API 密钥等域名相关问题。' : 'Ask about domain-related topics such as domain registration, renewal, DNS records, and API keys.', [], true),
     'aiInputPlaceholder' => cfclient_lang('cfclient.extras.ai.input_placeholder', $isClientLanguageChinese ? '请输入你的问题…' : 'Type your question…', [], true),
     'aiSend' => cfclient_lang('cfclient.extras.ai.send', $isClientLanguageChinese ? '发送' : 'Send', [], true),
     'aiThinking' => cfclient_lang('cfclient.extras.ai.thinking', $isClientLanguageChinese ? '思考中…' : 'Thinking…', [], true),
@@ -46,7 +46,7 @@ $deleteTipKey = !empty($clientDeleteEnabled) ? 'cfclient.extras.tips.domain.dele
 $deleteTipDefault = !empty($clientDeleteEnabled)
     ? ($privilegedDeleteHistoryEnabled
         ? ($isClientLanguageChinese ? '域名删除：您当前可提交任意域名的自助删除申请（含曾配置过解析的域名）。' : 'Domain deletion: you can submit self-service deletion requests for any domain, including domains with DNS history.')
-        : ($isClientLanguageChinese ? '域名删除：可在“查看详情”中提交自助删除申请。' : 'Domain deletion: submit a self-service request under “View details”.'))
+        : ($isClientLanguageChinese ? '域名删除：可在“查看详情”中查看您的域名是否支持删除操作。' : 'Domain deletion: check in “View details” whether your domain supports deletion.'))
     : ($isClientLanguageChinese ? '域名删除：域名成功注册后不支持删除。' : 'Domain deletion: domains cannot be removed after successful registration.');
 $coreTips = [
     cfclient_lang('cfclient.extras.tips.core.propagation', $isClientLanguageChinese ? '生效时间：DNS 记录新增、修改或删除通常在几分钟内完成生效，个别线路可能略有延迟。' : 'Propagation: DNS add/update/delete changes usually take effect within minutes, with occasional route delays.', [], true),

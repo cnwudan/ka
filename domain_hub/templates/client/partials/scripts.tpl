@@ -1558,7 +1558,7 @@ proxiedCheckbox.disabled = false;
                     rows.push([t('whoisRegistrantCity', '城市', 'City'), escapeHtml(cityValue || '-')]);
                     rows.push([t('whoisRegistrantAddress', '地址', 'Address'), escapeHtml(data.registrant_address || '-')]);
                 }
-                rows.push([t('whoisNameServers', 'NS 服务器', 'Name Servers'), nsHtml]);
+                rows.push([t('whoisNameServers', 'DNS服务器', 'DNS Servers'), nsHtml]);
 
                 var html = '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody>';
                 rows.forEach(function(row){
@@ -1582,7 +1582,7 @@ proxiedCheckbox.disabled = false;
                         privacy_enabled: privacyToggle.checked ? 1 : 0
                     }).then(function(res){
                         if (res && res.success) {
-                            showAlert('success', t('whoisPrivacySaved', 'WHOIS 隐私设置已保存并应用于全部免费域名', 'WHOIS privacy setting saved and applied to all your free domains'));
+                            showAlert('success', t('whoisPrivacySaved', 'WHOIS 隐私设置已保存并应用于当前账号下所有域名', 'WHOIS privacy setting saved and applied to all domains under your current account'));
                         } else {
                             showAlert('danger', (res && res.error) ? res.error : t('whoisPrivacySaveFailed', '保存失败，请稍后再试', 'Save failed, please try again'));
                         }
