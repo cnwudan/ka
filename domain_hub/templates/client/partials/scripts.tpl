@@ -325,6 +325,39 @@ function copyInviteRegCode() {
 }
 window.copyInviteRegCode = copyInviteRegCode;
 
+function showDomainPermanentUpgradeModal() {
+    var modalEl = document.getElementById('domainPermanentUpgradeModal');
+    if (!modalEl) { return; }
+    var instance = bootstrap.Modal.getInstance(modalEl) || new bootstrap.Modal(modalEl);
+    instance.show();
+}
+window.showDomainPermanentUpgradeModal = showDomainPermanentUpgradeModal;
+
+function copyDomainPermanentAssistCode(code) {
+    var value = String(code || '').trim();
+    if (!value) { return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).then(function () {
+            alert(cfLang('domainPermanentUpgradeCopySuccess', '助力码已复制'));
+        }).catch(function () {
+            alert(cfLang('domainPermanentUpgradeCopyFailed', '复制失败，请手动复制'));
+        });
+    } else {
+        try {
+            var input = document.createElement('input');
+            input.value = value;
+            document.body.appendChild(input);
+            input.select();
+            document.execCommand('copy');
+            document.body.removeChild(input);
+            alert(cfLang('domainPermanentUpgradeCopySuccess', '助力码已复制'));
+        } catch (err) {
+            alert(cfLang('domainPermanentUpgradeCopyFailed', '复制失败，请手动复制'));
+        }
+    }
+}
+window.copyDomainPermanentAssistCode = copyDomainPermanentAssistCode;
+
 // VPN检测配置
 const vpnDetectionDnsEnabled = <?php echo (!empty($vpnDetectionDnsEnabled) ? 'true' : 'false'); ?>;
 
@@ -772,7 +805,7 @@ proxiedCheckbox.disabled = false;
             return domainRegex.test(domain);
         }
         
-        // 自动关闭提示（保留封禁横幅不消失）
+        // 自动关闭提示（保留封���横幅不消失）
         setTimeout(function() {
             const alerts = document.querySelectorAll('.alert.alert-dismissible');
             alerts.forEach(alert => {
@@ -812,6 +845,10 @@ proxiedCheckbox.disabled = false;
                         try { detailsRow.scrollIntoView({behavior: 'smooth', block: 'start'}); } catch (err) {}
                     }, 150);
                 }
+            }
+
+            if (window.location.hash === '#domainPermanentUpgradeModal' && typeof showDomainPermanentUpgradeModal === 'function') {
+                showDomainPermanentUpgradeModal();
             }
         });
 

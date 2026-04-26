@@ -62,6 +62,35 @@ class CfClientViewModelBuilder
         $globals['domainGiftTtlHours'] = cfmod_get_domain_gift_ttl_hours($moduleSettings);
         $globals['quotaRedeemEnabled'] = in_array(($moduleSettings['enable_quota_redeem'] ?? '0'), ['1','on','yes','true','enabled'], true);
 
+        $domainPermanentUpgradeEnabled = class_exists('CfDomainPermanentUpgradeService')
+            && CfDomainPermanentUpgradeService::isEnabled($moduleSettings);
+        $domainPermanentUpgradeAssistRequired = class_exists('CfDomainPermanentUpgradeService')
+            ? CfDomainPermanentUpgradeService::getRequiredAssistCount($moduleSettings)
+            : max(1, min(100, intval($moduleSettings['domain_permanent_upgrade_assist_required'] ?? 3)));
+        $domainPermanentUpgradeState = [
+            'assist_required' => $domainPermanentUpgradeAssistRequired,
+            'eligible_domains' => [],
+            'requests' => [],
+            'pending_count' => 0,
+            'upgraded_count' => 0,
+            'pagination' => [
+                'page' => 1,
+                'perPage' => 10,
+                'total' => 0,
+                'totalPages' => 1,
+            ],
+        ];
+        if ($domainPermanentUpgradeEnabled && class_exists('CfDomainPermanentUpgradeService')) {
+            $permUpgradePage = isset($_GET['perm_upgrade_page']) ? max(1, (int) $_GET['perm_upgrade_page']) : 1;
+            try {
+                $domainPermanentUpgradeState = CfDomainPermanentUpgradeService::getUserState($userId, $moduleSettings, $permUpgradePage, 10);
+            } catch (\Throwable $e) {
+            }
+        }
+        $globals['domainPermanentUpgradeEnabled'] = $domainPermanentUpgradeEnabled;
+        $globals['domainPermanentUpgradeAssistRequired'] = $domainPermanentUpgradeAssistRequired;
+        $globals['domainPermanentUpgradeState'] = $domainPermanentUpgradeState;
+
         $prefixLimits = function_exists('cf_get_prefix_length_limits') ? cf_get_prefix_length_limits($moduleSettings) : ['min' => 3, 'max' => 32];
         $globals['prefixLengthLimits'] = $prefixLimits;
         $globals['subPrefixMinLength'] = $prefixLimits['min'];
@@ -591,6 +620,8 @@ class CfClientViewModelBuilder
             'invite_registration_telegram_bot_token' => '',
             'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
+            'enable_domain_permanent_upgrade' => '1',
+            'domain_permanent_upgrade_assist_required' => '3',
             'enable_github_star_reward' => '0',
             'github_star_repo_url' => '',
             'github_star_reward_amount' => '1',
