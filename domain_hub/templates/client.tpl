@@ -118,6 +118,7 @@ $domainGiftEnabled = !empty($domainGiftEnabled);
 $quotaRedeemEnabled = !empty($quotaRedeemEnabled);
 $sslRequestEnabled = !empty($sslRequestEnabled);
 $whoisFeatureEnabled = !empty($whoisFeatureEnabled);
+$domainPermanentUpgradeEnabled = !empty($domainPermanentUpgradeEnabled);
 
 $cfClientJsLang = [
     'registerEnterPrefix' => cfmod_trans('cfclient.js.register_enter_prefix', '请输入域名前缀'),
@@ -135,6 +136,8 @@ $cfClientJsLang = [
     'dnsUnlockRequired' => cfmod_trans('cfclient.js.dns_unlock_required', '请先完成 DNS 解锁后再操作。'),
     'dnsUnlockCopySuccess' => cfmod_trans('cfclient.js.dns_unlock_copy_success', '解锁码已复制'),
     'dnsUnlockCopyFailed' => cfmod_trans('cfclient.js.dns_unlock_copy_failed', '复制失败，请手动复制'),
+    'domainPermanentUpgradeCopySuccess' => cfmod_trans('cfclient.js.domain_permanent_upgrade.copy_success', '助力码已复制'),
+    'domainPermanentUpgradeCopyFailed' => cfmod_trans('cfclient.js.domain_permanent_upgrade.copy_failed', '复制失败，请手动复制'),
     'dnsNameEdgeError' => cfmod_trans('cfclient.js.dns_name_edge_error', '解析名称不能以点或连字符开头或结尾'),
     'dnsNameDoubleDot' => cfmod_trans('cfclient.js.dns_name_double_dot', '解析名称不能包含连续的点'),
     'dnsNameEmptyLabel' => cfmod_trans('cfclient.js.dns_name_empty_label', '解析名称不能包含空的标签片段'),
@@ -251,6 +254,7 @@ $cfClientHasToolFeatures = !empty($quotaRedeemEnabled)
     || $sslRequestEnabled
     || $dnsUnlockFeatureEnabled
     || $inviteRegistrationEnabled
+    || $domainPermanentUpgradeEnabled
     || $cfClientHasRootdomainInvite;
 
 $cfClientEntryScript = (class_exists('CfClientController') && method_exists('CfClientController', 'preferredClientEntryScript'))

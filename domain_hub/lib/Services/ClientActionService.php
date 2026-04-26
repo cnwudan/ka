@@ -344,6 +344,144 @@ class CfClientActionService
         }
 
 
+        if ($_POST['action'] === 'create_domain_permanent_upgrade_request') {
+            if (!class_exists('CfDomainPermanentUpgradeService')) {
+                $msg = self::actionText('domain_permanent_upgrade.service_missing', '服务暂不可用，请稍后再试。');
+                $msg_type = 'danger';
+            } elseif (!CfDomainPermanentUpgradeService::isEnabled($module_settings)) {
+                $msg = self::actionText('domain_permanent_upgrade.disabled', '当前未启用域名永久升级功能。');
+                $msg_type = 'warning';
+            } else {
+                $subdomainId = intval($_POST['perm_upgrade_subdomain_id'] ?? ($_POST['subdomain_id'] ?? 0));
+                try {
+                    $result = CfDomainPermanentUpgradeService::createOrGetRequest((int) ($userid ?? 0), $subdomainId, $module_settings);
+                    $msg = self::actionText(
+                        'domain_permanent_upgrade.create.success',
+                        '已创建助力任务：%1$s（%2$s/%3$s），请复制助力码邀请好友协助。',
+                        [
+                            (string) ($result['domain'] ?? ''),
+                            intval($result['assist_count'] ?? 0),
+                            intval($result['target_assists'] ?? 0),
+                        ]
+                    );
+                    $msg_type = 'success';
+                    if (function_exists('cloudflare_subdomain_log')) {
+                        cloudflare_subdomain_log('client_domain_permanent_upgrade_request', [
+                            'request_id' => intval($result['request_id'] ?? 0),
+                            'subdomain_id' => intval($result['subdomain_id'] ?? 0),
+                            'domain' => (string) ($result['domain'] ?? ''),
+                            'created' => !empty($result['created']),
+                        ], (int) ($userid ?? 0), intval($result['subdomain_id'] ?? 0));
+                    }
+                } catch (\InvalidArgumentException $e) {
+                    $reason = trim((string) $e->getMessage());
+                    if ($reason === 'invalid_subdomain') {
+                        $msg = self::actionText('domain_permanent_upgrade.create.invalid_subdomain', '请选择有效域名后再提交。');
+                    } elseif ($reason === 'already_permanent') {
+                        $msg = self::actionText('domain_permanent_upgrade.create.already', '该域名已是永久有效，无需重复发起。');
+                    } elseif ($reason === 'invalid_status') {
+                        $msg = self::actionText('domain_permanent_upgrade.create.invalid_status', '该域名当前状态不支持永久升级。');
+                    } elseif ($reason === 'feature_disabled') {
+                        $msg = self::actionText('domain_permanent_upgrade.disabled', '当前未启用域名永久升级功能。');
+                    } else {
+                        $msg = self::actionText('domain_permanent_upgrade.create.failed', '发起失败：%s', [$reason]);
+                    }
+                    $msg_type = 'danger';
+                } catch (\Throwable $e) {
+                    $msg = self::actionText('domain_permanent_upgrade.create.failed', '发起失败：%s', [$e->getMessage()]);
+                    $msg_type = 'danger';
+                }
+            }
+            return [
+                'msg' => $msg,
+                'msg_type' => $msg_type,
+                'registerError' => $registerError,
+            ];
+        }
+
+        if ($_POST['action'] === 'assist_domain_permanent_upgrade') {
+            if (!class_exists('CfDomainPermanentUpgradeService')) {
+                $msg = self::actionText('domain_permanent_upgrade.service_missing', '服务暂不可用，请稍后再试。');
+                $msg_type = 'danger';
+            } elseif (!CfDomainPermanentUpgradeService::isEnabled($module_settings)) {
+                $msg = self::actionText('domain_permanent_upgrade.disabled', '当前未启用域名永久升级功能。');
+                $msg_type = 'warning';
+            } else {
+                $assistCode = trim((string) ($_POST['perm_upgrade_assist_code'] ?? ''));
+                if ($assistCode === '') {
+                    $msg = self::actionText('domain_permanent_upgrade.assist.code_required', '请输入助力码后再提交。');
+                    $msg_type = 'warning';
+                } else {
+                    try {
+                        $helperEmail = self::resolveClientEmail((int) ($userid ?? 0));
+                        $helperIp = (string) ($_SERVER['REMOTE_ADDR'] ?? '');
+                        $result = CfDomainPermanentUpgradeService::assistByCode(
+                            (int) ($userid ?? 0),
+                            $assistCode,
+                            $helperEmail,
+                            $helperIp,
+                            $module_settings
+                        );
+                        if (!empty($result['upgraded'])) {
+                            $msg = self::actionText(
+                                'domain_permanent_upgrade.assist.upgraded',
+                                '助力成功！域名 %s 已升级为永久有效。',
+                                [(string) ($result['domain'] ?? '')]
+                            );
+                        } else {
+                            $msg = self::actionText(
+                                'domain_permanent_upgrade.assist.success',
+                                '助力成功：%1$s（%2$s/%3$s）',
+                                [
+                                    (string) ($result['domain'] ?? ''),
+                                    intval($result['assist_count'] ?? 0),
+                                    intval($result['target_assists'] ?? 0),
+                                ]
+                            );
+                        }
+                        $msg_type = 'success';
+                        if (function_exists('cloudflare_subdomain_log')) {
+                            cloudflare_subdomain_log('client_domain_permanent_upgrade_assist', [
+                                'request_id' => intval($result['request_id'] ?? 0),
+                                'owner_userid' => intval($result['owner_userid'] ?? 0),
+                                'domain' => (string) ($result['domain'] ?? ''),
+                                'assist_count' => intval($result['assist_count'] ?? 0),
+                                'target_assists' => intval($result['target_assists'] ?? 0),
+                                'upgraded' => !empty($result['upgraded']) ? 1 : 0,
+                            ], (int) ($userid ?? 0), null);
+                        }
+                    } catch (\InvalidArgumentException $e) {
+                        $reason = trim((string) $e->getMessage());
+                        if ($reason === 'invalid_code') {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.invalid_code', '助力码无效，请检查后重试。');
+                        } elseif ($reason === 'self_assist') {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.self', '不能使用自己的助力码。');
+                        } elseif ($reason === 'already_assisted') {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.already_assisted', '您已助力过该任务，无需重复提交。');
+                        } elseif ($reason === 'already_upgraded' || $reason === 'already_permanent') {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.already_upgraded', '该域名已完成永久升级。');
+                        } elseif ($reason === 'request_closed') {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.request_closed', '该助力任务已关闭，请联系发起人重新生成。');
+                        } elseif ($reason === 'feature_disabled') {
+                            $msg = self::actionText('domain_permanent_upgrade.disabled', '当前未启用域名永久升级功能。');
+                        } else {
+                            $msg = self::actionText('domain_permanent_upgrade.assist.failed', '助力失败：%s', [$reason]);
+                        }
+                        $msg_type = 'danger';
+                    } catch (\Throwable $e) {
+                        $msg = self::actionText('domain_permanent_upgrade.assist.failed', '助力失败：%s', [$e->getMessage()]);
+                        $msg_type = 'danger';
+                    }
+                }
+            }
+            return [
+                'msg' => $msg,
+                'msg_type' => $msg_type,
+                'registerError' => $registerError,
+            ];
+        }
+
+
         if ($_POST['action'] === 'submit_partner_application') {
             if ($userid <= 0) {
                 $msg = self::actionText('partner.invalid_user', '未找到登录信息，请刷新页面后重试。');
@@ -2963,7 +3101,7 @@ if($_POST['action'] == 'replace_ns_group' && isset($_POST['subdomain_id'])) {
     private static function resolveClientRateLimitScope(string $action): ?string
     {
         static $dnsActions = ['create_dns', 'update_dns', 'delete_dns_record', 'toggle_cdn', 'toggle_record_cdn', 'delete_subdomain'];
-        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'update_expiry_telegram_reminder', 'submit_partner_application'];
+        static $quotaActions = ['claim_invite', 'request_invite_reward', 'claim_github_star_reward', 'claim_telegram_group_reward', 'update_expiry_telegram_reminder', 'submit_partner_application', 'create_domain_permanent_upgrade_request', 'assist_domain_permanent_upgrade'];
         if ($action === 'register') {
             return CfRateLimiter::SCOPE_REGISTER;
         }

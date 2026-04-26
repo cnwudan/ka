@@ -2895,6 +2895,19 @@ function domain_hub_config() {
             "Default" => "yes",
             "Description" => "开启后，用户可以将解锁码分享给其他用户使用",
         ],
+        "enable_domain_permanent_upgrade" => [
+            "FriendlyName" => "启用域名永久升级助力",
+            "Type" => "yesno",
+            "Default" => "yes",
+            "Description" => "开启后，用户可通过助力码邀请好友协助，将域名升级为永久有效",
+        ],
+        "domain_permanent_upgrade_assist_required" => [
+            "FriendlyName" => "域名永久升级所需助力人数",
+            "Type" => "text",
+            "Size" => "5",
+            "Default" => "3",
+            "Description" => "达到该助力人数后，域名自动升级为永久有效（1-100）",
+        ],
         "invite_registration_gate_mode" => [
             "FriendlyName" => "新用户准入模式",
             "Type" => "dropdown",

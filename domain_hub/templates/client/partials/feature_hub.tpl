@@ -86,11 +86,14 @@ $sslCertificatesPage = max(1, (int) ($sslCertificates['page'] ?? 1));
 $sslCertificatesTotalPages = max(1, (int) ($sslCertificates['totalPages'] ?? 1));
 
 $inviteRegistrationInviteEnabled = !empty($inviteRegistrationInviteEnabled);
+$domainPermanentUpgradeEnabled = !empty($domainPermanentUpgradeEnabled);
+$domainPermanentUpgradeAssistRequired = max(1, intval($domainPermanentUpgradeAssistRequired ?? ($domainPermanentUpgradeState['assist_required'] ?? 3)));
 $digFeatureEnabled = !empty($digFeatureEnabled);
 $digSupportedTypes = is_array($digSupportedTypes ?? null) ? $digSupportedTypes : ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT', 'SRV'];
 $hasAnyFeature = !empty($quotaRedeemEnabled)
     || !empty($dnsUnlockFeatureEnabled)
     || $inviteRegistrationInviteEnabled
+    || $domainPermanentUpgradeEnabled
     || $hasRootdomainInvite
     || $sslRequestEnabled
     || $githubStarRewardEnabled
@@ -138,6 +141,21 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                         <button type="button" class="btn btn-outline-info" onclick="showInviteRegistrationModal()">
                             <i class="fas fa-id-card me-1"></i><?php echo $featureText('cfclient.feature.invite_registration.button', '打开邀请注册', 'Open Invite Registration'); ?>
                         </button>
+                    </div>
+                </div>
+            </div>
+        <?php endif; ?>
+
+        <?php if ($domainPermanentUpgradeEnabled): ?>
+            <div class="col-md-6">
+                <div class="card border-0 shadow-sm h-100">
+                    <div class="card-body d-flex flex-column">
+                        <h6 class="card-title"><i class="fas fa-infinity text-danger me-2"></i><?php echo $featureText('cfclient.feature.permanent_upgrade.title', '域名永久升级', 'Domain Permanent Upgrade'); ?></h6>
+                        <p class="text-muted small flex-grow-1 mb-3"><?php echo $featureText('cfclient.feature.permanent_upgrade.desc', '选择待升级域名，生成助力码邀请好友协助，达到目标后自动升级为永久有效。', 'Choose an eligible domain, share your assist code, and upgrade to permanent once the target is reached.'); ?></p>
+                        <button type="button" class="btn btn-outline-danger" onclick="showDomainPermanentUpgradeModal()">
+                            <i class="fas fa-rocket me-1"></i><?php echo $featureText('cfclient.feature.permanent_upgrade.button', '打开永久升级中心', 'Open Permanent Upgrade Center'); ?>
+                        </button>
+                        <small class="text-muted mt-2"><?php echo $featureText('cfclient.feature.permanent_upgrade.required', '当前目标：%s 位好友助力', 'Current target: %s assists', [$domainPermanentUpgradeAssistRequired]); ?></small>
                     </div>
                 </div>
             </div>

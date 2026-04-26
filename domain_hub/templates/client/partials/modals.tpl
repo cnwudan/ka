@@ -19,6 +19,19 @@ $dnsUnlockPurchasePrice = isset($dnsUnlockPurchasePrice) ? (float) $dnsUnlockPur
 $dnsUnlockPriceDisplay = number_format($dnsUnlockPurchasePrice, 2, '.', '');
 $dnsUnlockShareAllowed = !empty($dnsUnlockShareAllowed);
 
+$domainPermanentUpgradeEnabled = !empty($domainPermanentUpgradeEnabled);
+$domainPermanentUpgradeState = is_array($domainPermanentUpgradeState ?? null) ? $domainPermanentUpgradeState : [];
+$domainPermanentUpgradeAssistRequired = max(1, intval($domainPermanentUpgradeState['assist_required'] ?? ($domainPermanentUpgradeAssistRequired ?? 3)));
+$domainPermanentUpgradeEligibleDomains = is_array($domainPermanentUpgradeState['eligible_domains'] ?? null) ? $domainPermanentUpgradeState['eligible_domains'] : [];
+$domainPermanentUpgradeRequests = is_array($domainPermanentUpgradeState['requests'] ?? null) ? $domainPermanentUpgradeState['requests'] : [];
+$domainPermanentUpgradePagination = $domainPermanentUpgradeState['pagination'] ?? ['page' => 1, 'totalPages' => 1, 'perPage' => 10, 'total' => 0];
+$domainPermanentUpgradePage = max(1, intval($domainPermanentUpgradePagination['page'] ?? 1));
+$domainPermanentUpgradeTotalPages = max(1, intval($domainPermanentUpgradePagination['totalPages'] ?? 1));
+$domainPermanentUpgradeBaseParams = $_GET ?? [];
+unset($domainPermanentUpgradeBaseParams['perm_upgrade_page']);
+$domainPermanentUpgradeBaseQuery = http_build_query($domainPermanentUpgradeBaseParams);
+$domainPermanentUpgradeLinkPrefix = $domainPermanentUpgradeBaseQuery !== '' ? ('?' . $domainPermanentUpgradeBaseQuery . '&perm_upgrade_page=') : '?perm_upgrade_page=';
+
 $expiryTelegramReminderFeatureEnabled = !empty($expiryTelegramReminderFeatureEnabled);
 $expiryTelegramReminderConfigured = !empty($expiryTelegramReminderConfigured);
 $expiryTelegramReminderSubscribed = !empty($expiryTelegramReminderSubscribed);
@@ -715,6 +728,177 @@ $inviteRegMaxPerUser = intval($inviteRegistrationMaxPerUser ?? 0);
                             <?php $nextPage = min($inviteRegTotalPages, $inviteRegPage + 1); ?>
                             <li class="page-item <?php echo $inviteRegPage >= $inviteRegTotalPages ? 'disabled' : ''; ?>">
                                 <a class="page-link" href="<?php echo htmlspecialchars($inviteRegLinkPrefix . $nextPage, ENT_QUOTES); ?>#inviteRegistrationModal" aria-label="<?php echo $modalText('cfclient.invite_registration.pagination.next', '下一页'); ?>">&raquo;</a>
+                            </li>
+                        </ul>
+                    </nav>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
+</div>
+<?php endif; ?>
+
+
+<?php if ($domainPermanentUpgradeEnabled): ?>
+<div class="modal fade" id="domainPermanentUpgradeModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-infinity text-danger me-2"></i> <?php echo $modalText('cfclient.domain_permanent_upgrade.title', '域名永久升级中心'); ?></h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info mb-3">
+                    <i class="fas fa-info-circle me-1"></i>
+                    <?php echo $modalText('cfclient.domain_permanent_upgrade.notice', '选择您的域名并创建助力任务，达到 %s 次好友助力后将自动升级为永久有效。', [$domainPermanentUpgradeAssistRequired]); ?>
+                </div>
+
+                <div class="row g-3 mb-4">
+                    <div class="col-lg-6">
+                        <div class="card border-0 bg-light h-100">
+                            <div class="card-body">
+                                <h6 class="card-title mb-3"><i class="fas fa-rocket me-2 text-danger"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.create.title', '发起永久升级任务'); ?></h6>
+                                <?php if (!empty($domainPermanentUpgradeEligibleDomains)): ?>
+                                    <form method="post" class="d-flex flex-column gap-2">
+                                        <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
+                                        <input type="hidden" name="action" value="create_domain_permanent_upgrade_request">
+                                        <label class="small text-muted mb-0" for="permUpgradeSubdomainSelect"><?php echo $modalText('cfclient.domain_permanent_upgrade.create.domain_label', '选择域名'); ?></label>
+                                        <select class="form-select" id="permUpgradeSubdomainSelect" name="perm_upgrade_subdomain_id" required>
+                                            <?php foreach ($domainPermanentUpgradeEligibleDomains as $domainOption): ?>
+                                                <?php
+                                                $optionId = intval($domainOption['id'] ?? 0);
+                                                $optionDomain = trim((string) ($domainOption['domain'] ?? ''));
+                                                ?>
+                                                <?php if ($optionId > 0 && $optionDomain !== ''): ?>
+                                                    <option value="<?php echo $optionId; ?>"><?php echo htmlspecialchars($optionDomain, ENT_QUOTES); ?></option>
+                                                <?php endif; ?>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <button type="submit" class="btn btn-danger">
+                                            <i class="fas fa-bolt me-1"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.create.button', '创建助力任务'); ?>
+                                        </button>
+                                    </form>
+                                <?php else: ?>
+                                    <div class="alert alert-warning mb-0 small">
+                                        <i class="fas fa-exclamation-triangle me-1"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.create.empty', '暂无可升级域名（仅未永久有效且状态正常的域名可参与）。'); ?>
+                                    </div>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card border-0 bg-light h-100">
+                            <div class="card-body">
+                                <h6 class="card-title mb-3"><i class="fas fa-handshake me-2 text-success"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.assist.title', '输入好友助力码'); ?></h6>
+                                <form method="post" class="d-flex flex-column gap-2">
+                                    <input type="hidden" name="cfmod_csrf_token" value="<?php echo htmlspecialchars($_SESSION['cfmod_csrf'] ?? ''); ?>">
+                                    <input type="hidden" name="action" value="assist_domain_permanent_upgrade">
+                                    <label class="small text-muted mb-0" for="permUpgradeAssistCodeInput"><?php echo $modalText('cfclient.domain_permanent_upgrade.assist.label', '助力码'); ?></label>
+                                    <input type="text" class="form-control" id="permUpgradeAssistCodeInput" name="perm_upgrade_assist_code" maxlength="20" placeholder="<?php echo $modalText('cfclient.domain_permanent_upgrade.assist.placeholder', '请输入好友分享的助力码'); ?>" required>
+                                    <button type="submit" class="btn btn-outline-success">
+                                        <i class="fas fa-heart me-1"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.assist.button', '立即助力'); ?>
+                                    </button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-2 d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fas fa-history me-1"></i><?php echo $modalText('cfclient.domain_permanent_upgrade.history.title', '我的升级任务'); ?></h6>
+                    <small class="text-muted"><?php echo $modalText('cfclient.domain_permanent_upgrade.history.hint', '最多展示最近 10 条任务，可复制助力码分享给好友。'); ?></small>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th><?php echo $modalText('cfclient.domain_permanent_upgrade.history.domain', '域名'); ?></th>
+                                <th><?php echo $modalText('cfclient.domain_permanent_upgrade.history.code', '助力码'); ?></th>
+                                <th><?php echo $modalText('cfclient.domain_permanent_upgrade.history.progress', '进度'); ?></th>
+                                <th><?php echo $modalText('cfclient.domain_permanent_upgrade.history.helpers', '最近助力'); ?></th>
+                                <th><?php echo $modalText('cfclient.domain_permanent_upgrade.history.status', '状态'); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php if (!empty($domainPermanentUpgradeRequests)): ?>
+                                <?php foreach ($domainPermanentUpgradeRequests as $requestItem): ?>
+                                    <?php
+                                    $requestStatus = strtolower((string) ($requestItem['status'] ?? 'pending'));
+                                    $statusClass = 'secondary';
+                                    $statusText = $modalText('cfclient.domain_permanent_upgrade.status.pending', '进行中');
+                                    if ($requestStatus === 'upgraded') {
+                                        $statusClass = 'success';
+                                        $statusText = $modalText('cfclient.domain_permanent_upgrade.status.upgraded', '已永久');
+                                    } elseif ($requestStatus !== 'pending') {
+                                        $statusClass = 'dark';
+                                        $statusText = strtoupper($requestStatus);
+                                    }
+                                    $assistCount = max(0, intval($requestItem['assist_count'] ?? 0));
+                                    $targetAssists = max(1, intval($requestItem['target_assists'] ?? $domainPermanentUpgradeAssistRequired));
+                                    $progressPercent = min(100, (int) round(($assistCount / $targetAssists) * 100));
+                                    $helpersPreview = is_array($requestItem['helpers_preview'] ?? null) ? $requestItem['helpers_preview'] : [];
+                                    $assistCode = strtoupper(trim((string) ($requestItem['assist_code'] ?? '')));
+                                    $canCopyCode = !empty($requestItem['can_copy']) && $assistCode !== '';
+                                    ?>
+                                    <tr>
+                                        <td>
+                                            <div class="fw-semibold"><?php echo htmlspecialchars((string) ($requestItem['domain'] ?? '-'), ENT_QUOTES); ?></div>
+                                            <small class="text-muted"><?php echo htmlspecialchars((string) ($requestItem['created_at'] ?? '-'), ENT_QUOTES); ?></small>
+                                        </td>
+                                        <td>
+                                            <?php if ($assistCode !== ''): ?>
+                                                <div class="d-flex align-items-center gap-1">
+                                                    <code><?php echo htmlspecialchars($assistCode, ENT_QUOTES); ?></code>
+                                                    <?php if ($canCopyCode): ?>
+                                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="copyDomainPermanentAssistCode('<?php echo htmlspecialchars($assistCode, ENT_QUOTES); ?>')">
+                                                            <i class="fas fa-copy"></i>
+                                                        </button>
+                                                    <?php endif; ?>
+                                                </div>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td style="min-width: 180px;">
+                                            <div class="small mb-1"><?php echo $assistCount; ?>/<?php echo $targetAssists; ?></div>
+                                            <div class="progress" style="height: 8px;">
+                                                <div class="progress-bar bg-danger" role="progressbar" style="width: <?php echo $progressPercent; ?>%;"></div>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <?php if (!empty($helpersPreview)): ?>
+                                                <?php echo htmlspecialchars(implode(', ', $helpersPreview), ENT_QUOTES); ?>
+                                            <?php else: ?>
+                                                <span class="text-muted">-</span>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td><span class="badge bg-<?php echo $statusClass; ?>"><?php echo htmlspecialchars($statusText, ENT_QUOTES); ?></span></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php else: ?>
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted py-3"><?php echo $modalText('cfclient.domain_permanent_upgrade.history.empty', '暂无升级任务记录'); ?></td>
+                                </tr>
+                            <?php endif; ?>
+                        </tbody>
+                    </table>
+                </div>
+
+                <?php if ($domainPermanentUpgradeTotalPages > 1): ?>
+                    <nav class="mt-3">
+                        <ul class="pagination pagination-sm mb-0">
+                            <?php $permPrevPage = max(1, $domainPermanentUpgradePage - 1); ?>
+                            <li class="page-item <?php echo $domainPermanentUpgradePage <= 1 ? 'disabled' : ''; ?>">
+                                <a class="page-link" href="<?php echo htmlspecialchars($domainPermanentUpgradeLinkPrefix . $permPrevPage, ENT_QUOTES); ?>#domainPermanentUpgradeModal">&laquo;</a>
+                            </li>
+                            <?php for ($permPage = 1; $permPage <= $domainPermanentUpgradeTotalPages; $permPage++): ?>
+                                <li class="page-item <?php echo $permPage === $domainPermanentUpgradePage ? 'active' : ''; ?>">
+                                    <a class="page-link" href="<?php echo htmlspecialchars($domainPermanentUpgradeLinkPrefix . $permPage, ENT_QUOTES); ?>#domainPermanentUpgradeModal"><?php echo $permPage; ?></a>
+                                </li>
+                            <?php endfor; ?>
+                            <?php $permNextPage = min($domainPermanentUpgradeTotalPages, $domainPermanentUpgradePage + 1); ?>
+                            <li class="page-item <?php echo $domainPermanentUpgradePage >= $domainPermanentUpgradeTotalPages ? 'disabled' : ''; ?>">
+                                <a class="page-link" href="<?php echo htmlspecialchars($domainPermanentUpgradeLinkPrefix . $permNextPage, ENT_QUOTES); ?>#domainPermanentUpgradeModal">&raquo;</a>
                             </li>
                         </ul>
                     </nav>

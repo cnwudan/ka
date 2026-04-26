@@ -475,6 +475,40 @@ class CfModuleInstaller
                     });
                 }
 
+                if (!Capsule::schema()->hasTable('mod_cloudflare_domain_permanent_upgrade_requests')) {
+                    Capsule::schema()->create('mod_cloudflare_domain_permanent_upgrade_requests', function ($table) {
+                        $table->increments('id');
+                        $table->integer('userid')->unsigned();
+                        $table->integer('subdomain_id')->unsigned()->unique();
+                        $table->string('assist_code', 20)->unique();
+                        $table->integer('target_assists')->unsigned()->default(3);
+                        $table->integer('assist_count')->unsigned()->default(0);
+                        $table->string('status', 20)->default('pending');
+                        $table->dateTime('upgraded_at')->nullable();
+                        $table->timestamps();
+                        $table->index('userid');
+                        $table->index('status');
+                        $table->index('created_at');
+                    });
+                }
+
+                if (!Capsule::schema()->hasTable('mod_cloudflare_domain_permanent_upgrade_assists')) {
+                    Capsule::schema()->create('mod_cloudflare_domain_permanent_upgrade_assists', function ($table) {
+                        $table->increments('id');
+                        $table->integer('request_id')->unsigned();
+                        $table->integer('helper_userid')->unsigned();
+                        $table->string('helper_email', 191)->nullable();
+                        $table->string('helper_ip', 64)->nullable();
+                        $table->string('assist_code', 20);
+                        $table->timestamps();
+                        $table->unique(['request_id', 'helper_userid'], 'uniq_cf_perm_upgrade_helper_once');
+                        $table->index('request_id');
+                        $table->index('helper_userid');
+                        $table->index('assist_code');
+                        $table->index('created_at');
+                    });
+                }
+
                 if (!Capsule::schema()->hasTable('mod_cloudflare_invite_registration_github_bindings')) {
                     Capsule::schema()->create('mod_cloudflare_invite_registration_github_bindings', function ($table) {
                         $table->increments('id');
@@ -940,6 +974,8 @@ class CfModuleInstaller
                 Capsule::schema()->dropIfExists('mod_cloudflare_invite_leaderboard');
                 Capsule::schema()->dropIfExists('mod_cloudflare_invite_rewards');
                 Capsule::schema()->dropIfExists('mod_cloudflare_invite_registration_github_bindings');
+                Capsule::schema()->dropIfExists('mod_cloudflare_domain_permanent_upgrade_assists');
+                Capsule::schema()->dropIfExists('mod_cloudflare_domain_permanent_upgrade_requests');
                 Capsule::schema()->dropIfExists('mod_cloudflare_special_users');
                 Capsule::schema()->dropIfExists('mod_cloudflare_api_keys');
                 Capsule::schema()->dropIfExists('mod_cloudflare_api_logs');

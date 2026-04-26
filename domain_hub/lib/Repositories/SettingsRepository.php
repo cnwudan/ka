@@ -321,6 +321,8 @@ class CfSettingsRepository
             'invite_registration_telegram_bot_token' => '',
             'invite_registration_telegram_auth_max_age_seconds' => '86400',
             'invite_registration_inviter_min_months' => '0',
+            'enable_domain_permanent_upgrade' => '1',
+            'domain_permanent_upgrade_assist_required' => '3',
             'enable_help_ai_search' => '0',
             'help_ai_provider' => 'gemini',
             'help_ai_assistant_name' => 'AI 助手',
