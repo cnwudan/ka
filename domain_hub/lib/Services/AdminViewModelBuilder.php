@@ -367,6 +367,7 @@ class CfAdminViewModelBuilder
             'providerAccountMap' => $providers['accountMap'] ?? [],
             'forbiddenDomains' => [],
             'allKnownRootdomains' => [],
+            'pdnsLocalExportCursorStates' => [],
         ];
 
         try {
@@ -390,6 +391,14 @@ class CfAdminViewModelBuilder
                 $result['allKnownRootdomains'] = cfmod_get_known_rootdomains($moduleSettings);
             } catch (\Throwable $e) {
                 $result['allKnownRootdomains'] = [];
+            }
+        }
+
+        if (class_exists('CfAdminActionService') && method_exists('CfAdminActionService', 'getPdnsLocalExportCursorSummaryForView')) {
+            try {
+                $result['pdnsLocalExportCursorStates'] = CfAdminActionService::getPdnsLocalExportCursorSummaryForView();
+            } catch (\Throwable $e) {
+                $result['pdnsLocalExportCursorStates'] = [];
             }
         }
 

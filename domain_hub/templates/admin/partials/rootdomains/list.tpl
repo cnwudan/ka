@@ -8,6 +8,7 @@ $rootdomains = $rootdomainsView['rootdomains'] ?? [];
 $providerAccountMap = $rootdomainsView['providerAccountMap'] ?? [];
 $forbiddenDomains = $rootdomainsView['forbiddenDomains'] ?? [];
 $allKnownRootdomains = $rootdomainsView['allKnownRootdomains'] ?? [];
+$pdnsLocalExportCursorStates = $rootdomainsView['pdnsLocalExportCursorStates'] ?? [];
 $orderHeader = $lang['rootdomain_order_header'] ?? '排序';
 $orderHint = $lang['rootdomain_order_hint'] ?? '数值越小越靠前';
 $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
@@ -515,6 +516,35 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <label class="form-check-label" for="pdns_local_auto_continue">自动连续导出（每段导出后间隔 10 秒继续，直到导完）</label>
                     </div>
                     <div class="form-text text-muted">仅本地缓存模式生效，且需配合“仅前 N 个子域名的记录”或“仅前 N 条 DNS 记录”使用。</div>
+                    <div class="form-check mt-2">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_resume_cursor" name="pdns_local_resume_cursor" value="1" checked>
+                        <label class="form-check-label" for="pdns_local_resume_cursor">从上次游标续传（按根域名 + 限制模式 + N 自动匹配）</label>
+                    </div>
+                    <div class="form-check mt-1">
+                        <input class="form-check-input" type="checkbox" id="pdns_local_reset_cursor" name="pdns_local_reset_cursor" value="1">
+                        <label class="form-check-label" for="pdns_local_reset_cursor">本次重置续传游标，从头开始导出</label>
+                    </div>
+                    <?php if (!empty($pdnsLocalExportCursorStates)): ?>
+                    <div class="alert alert-secondary small mt-2 mb-0">
+                        <div class="fw-bold mb-1">当前本地导出续传游标（未完成）</div>
+                        <ul class="mb-0 ps-3">
+                            <?php foreach (array_slice($pdnsLocalExportCursorStates, 0, 8) as $cursorState): ?>
+                                <?php
+                                    $cursorRoot = htmlspecialchars((string) ($cursorState['rootdomain'] ?? '-'));
+                                    $cursorModeRaw = (string) ($cursorState['limit_mode'] ?? '');
+                                    $cursorMode = $cursorModeRaw === 'record' ? '记录数' : '子域名数';
+                                    $cursorLimit = intval($cursorState['limit_value'] ?? 0);
+                                    $cursorNext = intval($cursorState['next_cursor'] ?? 0);
+                                    $cursorUpdatedAt = htmlspecialchars((string) ($cursorState['updated_at'] ?? '-'));
+                                ?>
+                                <li><code><?php echo $cursorRoot; ?></code> / <?php echo htmlspecialchars($cursorMode); ?> N=<?php echo $cursorLimit; ?> / next_cursor=<?php echo $cursorNext; ?> <span class="text-muted">(更新时间 <?php echo $cursorUpdatedAt; ?>)</span></li>
+                            <?php endforeach; ?>
+                            <?php if (count($pdnsLocalExportCursorStates) > 8): ?>
+                                <li class="text-muted">…… 其余 <?php echo intval(count($pdnsLocalExportCursorStates) - 8); ?> 条已省略</li>
+                            <?php endif; ?>
+                        </ul>
+                    </div>
+                    <?php endif; ?>
                     <div class="form-check mt-2">
                         <input class="form-check-input" type="checkbox" id="pdns_segmented_export" name="pdns_segmented_export" value="1" checked>
                         <label class="form-check-label" for="pdns_segmented_export">分段导出（大规模记录推荐）</label>
