@@ -626,15 +626,18 @@ class CfAdminActionService
             self::redirect(self::HASH_ROOT_WHITELIST);
         }
         $sanitized = [];
+        $orderMin = -2147483648;
+        $orderMax = 2147483647;
         foreach ($orders as $id => $value) {
             if (!is_numeric($id)) {
                 continue;
             }
-            $orderValue = is_numeric($value) ? (int) $value : 0;
-            if ($orderValue < -1000000) {
-                $orderValue = -1000000;
-            } elseif ($orderValue > 1000000) {
-                $orderValue = 1000000;
+            $raw = trim((string) $value);
+            $orderValue = ($raw !== '' && is_numeric($raw)) ? (int) $raw : 0;
+            if ($orderValue < $orderMin) {
+                $orderValue = $orderMin;
+            } elseif ($orderValue > $orderMax) {
+                $orderValue = $orderMax;
             }
             $sanitized[(int) $id] = $orderValue;
         }
@@ -653,14 +656,22 @@ class CfAdminActionService
                 self::flashError('未找到对应的根域名');
                 self::redirect(self::HASH_ROOT_WHITELIST);
             }
+            $updatedCount = 0;
             foreach ($existingIds as $id) {
                 $orderValue = $sanitized[(int) $id] ?? 0;
-                Capsule::table('mod_cloudflare_rootdomains')->where('id', $id)->update([
+                $affected = Capsule::table('mod_cloudflare_rootdomains')->where('id', $id)->update([
                     'display_order' => $orderValue,
                     'updated_at' => $now,
                 ]);
+                if ($affected > 0) {
+                    $updatedCount++;
+                }
             }
-            self::flashSuccess('根域名排序已更新');
+            if ($updatedCount > 0) {
+                self::flashSuccess('根域名排序已更新（' . $updatedCount . ' 项）');
+            } else {
+                self::flash('未检测到排序变更，请确认输入值是否与当前一致。', 'warning');
+            }
         } catch (\Throwable $e) {
             self::flashError('更新排序失败：' . $e->getMessage());
         }

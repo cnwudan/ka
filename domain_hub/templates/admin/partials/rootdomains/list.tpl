@@ -86,6 +86,9 @@ $cfmodAdminCsrfTokenLocal = (string) ($_SESSION['cfmod_admin_csrf'] ?? '');
                             id="display_order_<?php echo intval($rdOrder->id); ?>"
                             name="display_order[<?php echo intval($rdOrder->id); ?>]"
                             value="<?php echo intval($rdOrder->display_order ?? 0); ?>"
+                            min="-2147483648"
+                            max="2147483647"
+                            step="1"
                         >
                     </div>
                 <?php endforeach; ?>
