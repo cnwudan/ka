@@ -4,7 +4,7 @@ $modalText = function (string $key, string $default, array $params = [], bool $e
 };
 $modalLanguage = strtolower((string) ($currentClientLanguage ?? 'english'));
 $modalIsChinese = $modalLanguage === 'chinese';
-$nsListLabelDefault = $modalIsChinese ? 'NS 服务器列表' : 'Name Server List';
+$nsListLabelDefault = $modalIsChinese ? 'DNS服务器列表' : 'DNS Server List';
 $nsAddButtonDefault = $modalIsChinese ? '[增加 DNS 服务器]' : '[Add DNS Server]';
 $nsSaveButtonDefault = $modalIsChinese ? '保存设置' : 'Save Settings';
 $nsForceShortDefault = $modalIsChinese ? '强制替换冲突记录' : 'Force replace conflicting records';
@@ -192,7 +192,7 @@ $dnsLineOptions = [
                             </div>
                             <div class="col-md-4">
                                 <div class="mb-3">
-                                    <label class="form-label"><?php echo $modalText('cfclient.modals.dns.label.ttl', 'TTL (秒)'); ?></label>
+                                    <label class="form-label"><?php echo $modalText('cfclient.modals.dns.label.ttl', 'TTL (分钟)'); ?></label>
                                     <select name="record_ttl" class="form-select">
                                         <?php foreach ($ttlOptions as $value => $label): ?>
                                             <option value="<?php echo htmlspecialchars($value); ?>"<?php echo $value === '600' ? ' selected' : ''; ?>><?php echo $label; ?></option>
@@ -222,8 +222,8 @@ $dnsLineOptions = [
                             <strong><?php echo $modalText('cfclient.modals.dns.alert.title', '提示：'); ?></strong>
                             <ul class="mb-0 mt-2">
                                 <li><?php echo $modalText('cfclient.modals.dns.alert.1', '修改DNS记录可能需要几分钟时间生效'); ?></li>
-                                <li><?php echo $modalText('cfclient.modals.dns.alert.2', 'DNS解析支持按线路（运营商/地域）返回记录'); ?></li>
-                                <li><strong><?php echo $modalText('cfclient.modals.dns.alert.3', '可以同时设置 @ 记录和三级域名记录，互不影响'); ?></strong></li>
+                                <li><?php echo $modalText('cfclient.modals.dns.alert.2', '可以同时设置 @ 记录和三级域名记录，互不影响'); ?></li>
+                                <li><strong><?php echo $modalText('cfclient.modals.dns.alert.3', '智能解析支持:域名us.ci与cn.mt 支持按线路（运营商/地域）精准解析'); ?></strong></li>
                             </ul>
                         </div>
                     </div>

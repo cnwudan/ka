@@ -1558,7 +1558,7 @@ proxiedCheckbox.disabled = false;
                     rows.push([t('whoisRegistrantCity', '城市', 'City'), escapeHtml(cityValue || '-')]);
                     rows.push([t('whoisRegistrantAddress', '地址', 'Address'), escapeHtml(data.registrant_address || '-')]);
                 }
-                rows.push([t('whoisNameServers', 'NS 服务器', 'Name Servers'), nsHtml]);
+                rows.push([t('whoisNameServers', 'DNS服务器', 'DNS Servers'), nsHtml]);
 
                 var html = '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><tbody>';
                 rows.forEach(function(row){

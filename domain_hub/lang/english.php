@@ -461,7 +461,7 @@ $_LANG['cfclient.modals.dns.label.value'] = 'Value';
 $_LANG['cfclient.modals.dns.hint.caa.flag'] = 'Flag: 0 = non-critical, 128 = critical';
 $_LANG['cfclient.modals.dns.hint.caa.tag'] = 'Tag: issue / issuewild / iodef';
 $_LANG['cfclient.modals.dns.hint.caa.value'] = 'Value: CA hostname or email';
-$_LANG['cfclient.modals.dns.label.ttl'] = 'TTL (seconds)';
+$_LANG['cfclient.modals.dns.label.ttl'] = 'TTL (minutes)';
 $_LANG['cfclient.modals.dns.hint.ttl'] = 'You normally don\'t need to change TTL.';
 $_LANG['cfclient.modals.dns.label.priority'] = 'Priority (MX/SRV)';
 $_LANG['cfclient.modals.dns.hint.priority'] = 'Lower number = higher priority';
@@ -475,7 +475,7 @@ $_LANG['cfclient.modals.dns.hint.line'] = 'Choose the carrier/region specific li
 $_LANG['cfclient.modals.dns.alert.title'] = 'Heads-up:';
 $_LANG['cfclient.modals.dns.alert.1'] = 'DNS changes may take a few minutes to propagate.';
 $_LANG['cfclient.modals.dns.alert.2'] = 'You can configure both @ and subdomain records simultaneously.';
-$_LANG['cfclient.modals.dns.alert.3'] = 'Only the domains us.ci and cn.mt support DNS resolution returning records by network line (ISP/region).';
+$_LANG['cfclient.modals.dns.alert.3'] = 'Smart DNS support: domains us.ci and cn.mt support precise line-based (ISP/region) DNS resolution.';
 $_LANG['cfclient.modals.dns.type.a'] = 'A (IPv4)';
 $_LANG['cfclient.modals.dns.type.aaaa'] = 'AAAA (IPv6)';
 $_LANG['cfclient.modals.dns.type.cname'] = 'CNAME (alias)';
@@ -514,7 +514,7 @@ $_LANG['cfclient.modals.register.alert.4'] = 'Free domains cannot be deleted. Co
 $_LANG['cfclient.modals.ns.title'] = 'DNS servers (delegation)';
 $_LANG['cfclient.modals.ns.label.domain'] = 'Domain';
 $_LANG['cfclient.modals.ns.label.current'] = 'Current NS';
-$_LANG['cfclient.modals.ns.label.lines'] = 'NS servers (one per line)';
+$_LANG['cfclient.modals.ns.label.lines'] = 'DNS servers (one per line)';
 $_LANG['cfclient.modals.ns.hint.lines'] = 'Replaces all @ NS records; trims blanks, dedups, lowercases.';
 $_LANG['cfclient.modals.ns.label.force'] = 'Force replace (delete conflicting records such as A/AAAA/CNAME/TXT/MX/SRV/CAA)';
 $_LANG['cfclient.modals.redeem.title'] = 'Redeem registration quota';
