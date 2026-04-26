@@ -12,6 +12,7 @@ $pdnsLocalExportCursorStates = $rootdomainsView['pdnsLocalExportCursorStates'] ?
 $orderHeader = $lang['rootdomain_order_header'] ?? '排序';
 $orderHint = $lang['rootdomain_order_hint'] ?? '数值越小越靠前';
 $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
+$cfmodAdminCsrfTokenLocal = (string) ($_SESSION['cfmod_admin_csrf'] ?? '');
 ?>
 
 <!-- 根域名白名单管理 -->
@@ -66,11 +67,29 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
             </div>
         </form>
         
-        <form method="post" id="rootdomain-order-form" class="d-flex align-items-center gap-2 mb-3">
+        <form method="post" id="rootdomain-order-form" class="mb-3">
             <input type="hidden" name="action" value="update_rootdomain_order">
-            <input type="hidden" name="display_order_snapshot" id="rootdomain-order-snapshot" value="">
-            <button type="submit" class="btn btn-outline-primary btn-sm"><?php echo htmlspecialchars($orderSaveLabel); ?></button>
-            <small class="text-muted"><?php echo htmlspecialchars($orderHint); ?></small>
+            <input type="hidden" name="cfmod_admin_csrf" value="<?php echo htmlspecialchars($cfmodAdminCsrfTokenLocal, ENT_QUOTES); ?>">
+            <div class="d-flex align-items-center gap-2 mb-2">
+                <button type="submit" class="btn btn-outline-primary btn-sm"><?php echo htmlspecialchars($orderSaveLabel); ?></button>
+                <small class="text-muted"><?php echo htmlspecialchars($orderHint); ?></small>
+            </div>
+            <div class="row g-2">
+                <?php foreach($rootdomains as $rdOrder): ?>
+                    <div class="col-sm-6 col-md-4 col-lg-3">
+                        <label class="form-label mb-1" for="display_order_<?php echo intval($rdOrder->id); ?>">
+                            <code><?php echo htmlspecialchars($rdOrder->domain ?? ''); ?></code>
+                        </label>
+                        <input
+                            type="number"
+                            class="form-control form-control-sm"
+                            id="display_order_<?php echo intval($rdOrder->id); ?>"
+                            name="display_order[<?php echo intval($rdOrder->id); ?>]"
+                            value="<?php echo intval($rdOrder->display_order ?? 0); ?>"
+                        >
+                    </div>
+                <?php endforeach; ?>
+            </div>
         </form>
         
         <div class="table-responsive">
@@ -105,7 +124,7 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
                         <td><?php echo $rd->id; ?></td>
                         <td><code><?php echo htmlspecialchars($rd->domain); ?></code></td>
                         <td style="width:110px;">
-                            <input type="number" class="form-control form-control-sm" name="display_order[<?php echo intval($rd->id); ?>]" value="<?php echo intval($rd->display_order ?? 0); ?>" form="rootdomain-order-form">
+                            <span class="badge bg-light text-dark"><?php echo intval($rd->display_order ?? 0); ?></span>
                         </td>
                         <td><small class="text-muted"><?php echo htmlspecialchars($rd->cloudflare_zone_id ?? ''); ?></small></td>
                         <td>
@@ -592,25 +611,4 @@ $orderSaveLabel = $lang['rootdomain_order_save'] ?? '保存排序';
     </div>
 </div>
 
-<script>
-(function () {
-    var orderForm = document.getElementById('rootdomain-order-form');
-    if (!orderForm) {
-        return;
-    }
-    orderForm.addEventListener('submit', function () {
-        var payload = {};
-        document.querySelectorAll("input[name^='display_order[']").forEach(function (input) {
-            var match = (input.name || '').match(/^display_order\[(\d+)\]$/);
-            if (!match) {
-                return;
-            }
-            payload[match[1]] = input.value;
-        });
-        var snapshot = document.getElementById('rootdomain-order-snapshot');
-        if (snapshot) {
-            snapshot.value = JSON.stringify(payload);
-        }
-    });
-})();
-</script>
+
