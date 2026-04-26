@@ -841,14 +841,14 @@ $_LANG['github_star_reward.error'] = 'Claim failed: %s';
 $_LANG['cfclient.feature.expiry_telegram.title'] = 'Telegram Expiry Reminder';
 $_LANG['cfclient.feature.expiry_telegram.enabled'] = 'Enabled';
 $_LANG['cfclient.feature.expiry_telegram.disabled'] = 'Disabled';
-$_LANG['cfclient.feature.expiry_telegram.desc'] = 'Bind your Telegram account to receive automatic reminders before domain expiration.';
-$_LANG['cfclient.feature.expiry_telegram.days'] = 'Reminder days: %s';
+$_LANG['cfclient.feature.expiry_telegram.desc'] = 'After binding your Telegram account, you can enable reminders for domains that are about to expire.';
+$_LANG['cfclient.feature.expiry_telegram.days'] = 'After enabling notifications, the system will send reminder messages at %s before expiration.';
 $_LANG['cfclient.feature.expiry_telegram.bound'] = 'Bound account: %s';
 $_LANG['cfclient.feature.expiry_telegram.button'] = 'Manage Telegram Reminder';
 $_LANG['cfclient.feature.expiry_telegram.misconfigured'] = 'Telegram reminder settings are incomplete. You can still disable existing reminders.';
 
 $_LANG['cfclient.expiry_telegram.modal.title'] = 'Telegram Expiry Reminder';
-$_LANG['cfclient.expiry_telegram.modal.days'] = 'Reminder days: %s (sent automatically before expiration)';
+$_LANG['cfclient.expiry_telegram.modal.days'] = 'Reminder frequency: the system will send one Telegram reminder at each configured time before expiration (%s).';
 $_LANG['cfclient.expiry_telegram.modal.account'] = 'Bound account';
 $_LANG['cfclient.expiry_telegram.modal.no_account'] = 'Not bound yet';
 $_LANG['cfclient.expiry_telegram.modal.enable'] = 'Enable Telegram expiry reminders';

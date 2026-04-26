@@ -30,6 +30,32 @@ $expiryTelegramReminderDaysCsv = trim((string) ($expiryTelegramReminderDaysCsv ?
 if ($expiryTelegramReminderDaysCsv === '' && is_array($expiryTelegramReminderDays ?? null)) {
     $expiryTelegramReminderDaysCsv = implode(',', array_map('intval', $expiryTelegramReminderDays));
 }
+$expiryTelegramReminderDaysList = [];
+if ($expiryTelegramReminderDaysCsv !== '') {
+    foreach (preg_split('/\s*,\s*/', $expiryTelegramReminderDaysCsv) as $dayToken) {
+        if ($dayToken === '') {
+            continue;
+        }
+        $dayValue = max(0, (int) $dayToken);
+        if ($dayValue > 0) {
+            $expiryTelegramReminderDaysList[] = $dayValue;
+        }
+    }
+}
+$expiryTelegramReminderDaysList = array_values(array_unique($expiryTelegramReminderDaysList));
+$expiryTelegramReminderDaysZh = '-';
+$expiryTelegramReminderDaysEn = '-';
+if (!empty($expiryTelegramReminderDaysList)) {
+    $zhParts = array_map(static function (int $day): string {
+        return $day . '天';
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysZh = count($zhParts) === 2 ? ($zhParts[0] . '及' . $zhParts[1]) : implode('、', $zhParts);
+
+    $enParts = array_map(static function (int $day): string {
+        return $day . ' day' . ($day === 1 ? '' : 's');
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysEn = count($enParts) === 2 ? ($enParts[0] . ' and ' . $enParts[1]) : implode(', ', $enParts);
+}
 $expiryTelegramReminderDisplayName = $expiryTelegramReminderTelegramUsername !== ''
     ? '@' . ltrim($expiryTelegramReminderTelegramUsername, '@')
     : ($expiryTelegramReminderTelegramUserId > 0 ? ('ID: ' . $expiryTelegramReminderTelegramUserId) : '');
@@ -988,7 +1014,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                     <div class="alert alert-light border small mb-3">
                         <i class="fas fa-info-circle me-1"></i>
-                        <?php echo $modalText('cfclient.expiry_telegram.modal.days', '提醒天数：%s（到期前自动发送）', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?>
+                        <?php echo $modalText('cfclient.expiry_telegram.modal.days', '提醒频率：系统会在到期前 %s 各发送一次telegram消息提醒。', [$modalIsChinese ? $expiryTelegramReminderDaysZh : $expiryTelegramReminderDaysEn]); ?>
                     </div>
 
                     <div class="mb-3">

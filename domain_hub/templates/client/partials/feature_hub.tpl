@@ -48,6 +48,32 @@ $expiryTelegramReminderDaysCsv = trim((string) ($expiryTelegramReminderDaysCsv ?
 if ($expiryTelegramReminderDaysCsv === '' && is_array($expiryTelegramReminderDays ?? null)) {
     $expiryTelegramReminderDaysCsv = implode(',', array_map('intval', $expiryTelegramReminderDays));
 }
+$expiryTelegramReminderDaysList = [];
+if ($expiryTelegramReminderDaysCsv !== '') {
+    foreach (preg_split('/\s*,\s*/', $expiryTelegramReminderDaysCsv) as $dayToken) {
+        if ($dayToken === '') {
+            continue;
+        }
+        $dayValue = max(0, (int) $dayToken);
+        if ($dayValue > 0) {
+            $expiryTelegramReminderDaysList[] = $dayValue;
+        }
+    }
+}
+$expiryTelegramReminderDaysList = array_values(array_unique($expiryTelegramReminderDaysList));
+$expiryTelegramReminderDaysZh = '-';
+$expiryTelegramReminderDaysEn = '-';
+if (!empty($expiryTelegramReminderDaysList)) {
+    $zhParts = array_map(static function (int $day): string {
+        return $day . '天';
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysZh = count($zhParts) === 2 ? ($zhParts[0] . '及' . $zhParts[1]) : implode('、', $zhParts);
+
+    $enParts = array_map(static function (int $day): string {
+        return $day . ' day' . ($day === 1 ? '' : 's');
+    }, $expiryTelegramReminderDaysList);
+    $expiryTelegramReminderDaysEn = count($enParts) === 2 ? ($enParts[0] . ' and ' . $enParts[1]) : implode(', ', $enParts);
+}
 $expiryTelegramReminderDisplayName = $expiryTelegramReminderTelegramUsername !== ''
     ? '@' . ltrim($expiryTelegramReminderTelegramUsername, '@')
     : ($expiryTelegramReminderTelegramUserId > 0 ? ('ID: ' . $expiryTelegramReminderTelegramUserId) : '');
@@ -345,8 +371,8 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                                 <span class="badge bg-secondary"><?php echo $featureText('cfclient.feature.expiry_telegram.disabled', '未开启', 'Disabled'); ?></span>
                             <?php endif; ?>
                         </div>
-                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.expiry_telegram.desc', '绑定telegram账号后可设置域名到期即将消息提醒服务。', 'Bind your Telegram account to receive automatic expiry reminders before domain expiration.'); ?></p>
-                        <p class="small mb-3"><?php echo $featureText('cfclient.feature.expiry_telegram.days', '提醒天数：%s', 'Reminder days: %s', [$expiryTelegramReminderDaysCsv !== '' ? $expiryTelegramReminderDaysCsv : '-']); ?></p>
+                        <p class="text-muted small mb-2"><?php echo $featureText('cfclient.feature.expiry_telegram.desc', '绑定telegram账号后可设置域名即将到期消息提醒服务。', 'After binding your Telegram account, you can enable reminders for domains that are about to expire.'); ?></p>
+                        <p class="small mb-3"><?php echo $featureText('cfclient.feature.expiry_telegram.days', '开启通知后系统将在到期前 %s 为您推送消息提醒。', 'After enabling notifications, the system will send reminder messages at %s before expiration.', [$featureIsChinese ? $expiryTelegramReminderDaysZh : $expiryTelegramReminderDaysEn]); ?></p>
                         <div class="d-flex flex-column gap-2 mt-auto">
                             <?php if ($expiryTelegramReminderDisplayName !== ''): ?>
                                 <div class="small text-muted"><?php echo $featureText('cfclient.feature.expiry_telegram.bound', '当前绑定账号：%s', 'Bound account: %s', [$expiryTelegramReminderDisplayName]); ?></div>

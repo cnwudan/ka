@@ -13,10 +13,10 @@ $whoisManagedDomainCount = max(0, (int) ($whoisManagedDomainCount ?? 0));
         <div class="card border-0 shadow-sm h-100">
             <div class="card-body">
                 <h6 class="card-title mb-3"><i class="fas fa-user-secret me-2 text-primary"></i><?php echo $whoisText('cfclient.whois.privacy.title', 'WHOIS 隐私总开关', 'WHOIS Privacy Master Toggle'); ?></h6>
-                <p class="text-muted small mb-3"><?php echo $whoisText('cfclient.whois.privacy.desc', '开启或关闭后将统一作用于当前账号下全部免费域名。', 'This switch applies to all free domains under your account.'); ?></p>
+                <p class="text-muted small mb-3"><?php echo $whoisText('cfclient.whois.privacy.desc', '开启或关闭将统一作用于当前账号下的所有域名。', 'Enabling or disabling this setting will apply to all domains under the current account.'); ?></p>
 
                 <div class="alert alert-light border small mb-3">
-                    <i class="fas fa-globe me-1"></i><?php echo $whoisText('cfclient.whois.privacy.domain_count', '当前管理域名数量：%s', 'Managed domains: %s', [$whoisManagedDomainCount]); ?>
+                    <i class="fas fa-globe me-1"></i><?php echo $whoisText('cfclient.whois.privacy.domain_count', '当前账户域名数量：%s', 'Current account domain count: %s', [$whoisManagedDomainCount]); ?>
                 </div>
 
                 <div class="mb-3">
@@ -37,7 +37,7 @@ $whoisManagedDomainCount = max(0, (int) ($whoisManagedDomainCount ?? 0));
         <div class="card border-0 shadow-sm h-100">
             <div class="card-body">
                 <h6 class="card-title mb-3"><i class="fas fa-search me-2 text-success"></i><?php echo $whoisText('cfclient.whois.lookup.title', 'WHOIS 查询', 'WHOIS Lookup'); ?></h6>
-                <p class="text-muted small mb-3"><?php echo $whoisText('cfclient.whois.lookup.desc', '可查询系统中任意免费二级域名（包括其他用户注册的域名）及外部域名 WHOIS。', 'You can query any free subdomain in this system, including those registered by other users, and external domains.'); ?></p>
+                <p class="text-muted small mb-3"><?php echo $whoisText('cfclient.whois.lookup.desc', '支持查询DNSHE提供注册的任意域名（含他人注册）及外部域名 WHOIS信息。', 'Supports WHOIS lookup for any domain registered via DNSHE (including domains registered by other users) and external domains.'); ?></p>
                 <form id="whoisLookupForm" class="d-flex flex-column gap-2">
                     <label class="form-label mb-0" for="whoisLookupDomainInput"><?php echo $whoisText('cfclient.whois.lookup.domain', '域名', 'Domain'); ?></label>
                     <input

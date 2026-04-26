@@ -1582,7 +1582,7 @@ proxiedCheckbox.disabled = false;
                         privacy_enabled: privacyToggle.checked ? 1 : 0
                     }).then(function(res){
                         if (res && res.success) {
-                            showAlert('success', t('whoisPrivacySaved', 'WHOIS 隐私设置已保存并应用于全部免费域名', 'WHOIS privacy setting saved and applied to all your free domains'));
+                            showAlert('success', t('whoisPrivacySaved', 'WHOIS 隐私设置已保存并应用于当前账号下所有域名', 'WHOIS privacy setting saved and applied to all domains under your current account'));
                         } else {
                             showAlert('danger', (res && res.error) ? res.error : t('whoisPrivacySaveFailed', '保存失败，请稍后再试', 'Save failed, please try again'));
                         }
