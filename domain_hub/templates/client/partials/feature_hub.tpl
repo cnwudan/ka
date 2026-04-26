@@ -108,7 +108,7 @@ $hasAnyFeature = !empty($quotaRedeemEnabled)
                         <h6 class="card-title"><i class="fas fa-ticket-alt text-success me-2"></i><?php echo $featureText('cfclient.feature.redeem.title', '额度兑换', 'Quota Redeem'); ?></h6>
                         <p class="text-muted small flex-grow-1 mb-3"><?php echo $featureText('cfclient.feature.redeem.desc', '输入兑换码获取更多注册额度。', 'Use redeem codes to unlock more registration quota.'); ?></p>
                         <button type="button" class="btn btn-outline-success" onclick="openQuotaRedeemModal()">
-                            <i class="fas fa-gift me-1"></i><?php echo $featureText('cfclient.feature.redeem.button', '打开兑换中心', 'Open Redeem Center'); ?>
+                            <i class="fas fa-gift me-1"></i><?php echo $featureText('cfclient.feature.redeem.button', '打开额度兑换', 'Open Quota Redeem'); ?>
                         </button>
                     </div>
                 </div>

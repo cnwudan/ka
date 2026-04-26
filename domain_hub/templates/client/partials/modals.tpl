@@ -672,7 +672,7 @@ $inviteRegMaxPerUser = intval($inviteRegistrationMaxPerUser ?? 0);
                 <hr>
                 <div class="mb-2 d-flex justify-content-between align-items-center">
                     <h6 class="mb-0"><?php echo $modalText('cfclient.invite_registration.logs_title', '我的邀请记录'); ?></h6>
-                    <small class="text-muted"><?php echo $modalText('cfclient.invite_registration.logs_hint', '最多展示最近 10 条记录，邮箱已脱敏'); ?></small>
+                    <small class="text-muted"><?php echo $modalText('cfclient.invite_registration.logs_hint', '展示最近 10 条邀请记录。'); ?></small>
                 </div>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped align-middle">
